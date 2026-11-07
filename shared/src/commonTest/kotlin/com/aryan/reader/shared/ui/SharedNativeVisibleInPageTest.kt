@@ -33,13 +33,17 @@ class SharedNativeVisibleInPageTest {
         paragraph(3, repeated)
     )
 
-    private fun paragraph(blockIndex: Int, text: String) = SemanticParagraph(
+    private fun paragraph(
+        blockIndex: Int,
+        text: String,
+        startCharOffsetInSource: Int = 0
+    ) = SemanticParagraph(
         text = text,
         spans = emptyList(),
         style = CssStyle(),
         elementId = null,
         cfi = "/4/${blockIndex * 2}",
-        startCharOffsetInSource = 0,
+        startCharOffsetInSource = startCharOffsetInSource,
         blockIndex = blockIndex
     )
 
@@ -53,6 +57,16 @@ class SharedNativeVisibleInPageTest {
         startOffset = 0,
         endOffset = 999,
         semanticBlocks = blockIndices.map { chapter()[it] }
+    )
+
+    private fun pageOf(pageIndex: Int, vararg blocks: SemanticTextBlock) = ReaderPage(
+        pageIndex = pageIndex,
+        chapterIndex = 0,
+        chapterTitle = "Chapter",
+        text = blocks.joinToString(" ") { it.text },
+        startOffset = blocks.minOfOrNull { it.startCharOffsetInSource } ?: 0,
+        endOffset = blocks.maxOfOrNull { it.startCharOffsetInSource + it.text.length } ?: 0,
+        semanticBlocks = blocks.toList()
     )
 
     private fun quoteOnly(text: String, id: String, chapterIndex: Int = 0) = UserHighlight(
@@ -91,6 +105,30 @@ class SharedNativeVisibleInPageTest {
 
         assertEquals(listOf("multi"), first.map { it.id })
         assertEquals(listOf("multi"), second.map { it.id })
+    }
+
+    @Test
+    fun `a split paragraph scopes each highlight to the fragment holding it`() {
+        val text = "alpha beta gamma delta epsilon zeta"
+        val full = paragraph(0, text, startCharOffsetInSource = 40)
+        val index = assertNotNull(EpubChapterTextIndex.of(0, listOf(full)))
+        val head = paragraph(0, text.substring(0, 16), startCharOffsetInSource = 40)
+        val tail = paragraph(0, text.substring(17), startCharOffsetInSource = 57)
+
+        // Every fragment keeps the paragraph's block index and CFI, so only the source offsets can
+        // tell the continuation page that this range belongs to the paragraph's beginning.
+        val fromStart = quoteOnly("beta gamma", id = "start")
+        assertEquals(listOf("start"), listOf(fromStart).visibleInPage(pageOf(0, head), index).map { it.id })
+        assertTrue(listOf(fromStart).visibleInPage(pageOf(1, tail), index).isEmpty())
+
+        // A highlight in the later fragment must still be scoped there rather than being lost.
+        val later = quoteOnly("epsilon zeta", id = "later")
+        assertTrue(listOf(later).visibleInPage(pageOf(0, head), index).isEmpty())
+        assertEquals(listOf("later"), listOf(later).visibleInPage(pageOf(1, tail), index).map { it.id })
+
+        val spanning = quoteOnly("gamma delta", id = "spanning")
+        assertEquals(listOf("spanning"), listOf(spanning).visibleInPage(pageOf(0, head), index).map { it.id })
+        assertEquals(listOf("spanning"), listOf(spanning).visibleInPage(pageOf(1, tail), index).map { it.id })
     }
 
     @Test

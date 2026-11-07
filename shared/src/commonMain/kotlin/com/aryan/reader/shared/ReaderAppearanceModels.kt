@@ -271,6 +271,18 @@ fun ReaderSettings.withReaderFormatFrom(format: ReaderSettings): ReaderSettings 
     pageSpreadGutterDp = format.pageSpreadGutterDp
 )
 
+/** Replaces only theme fields, preserving format and visual options. Mirrors [withReaderFormatFrom]. */
+fun ReaderSettings.withReaderThemeFrom(theme: ReaderSettings): ReaderSettings = copy(
+    darkMode = theme.darkMode,
+    themeId = theme.themeId,
+    textureId = theme.textureId,
+    textureAlpha = theme.textureAlpha,
+    backgroundColorArgb = theme.backgroundColorArgb,
+    textColorArgb = theme.textColorArgb,
+    pdfReverseColorMode = theme.pdfReverseColorMode,
+    pdfPreserveImageColors = theme.pdfPreserveImageColors
+)
+
 fun ReaderTheme.toReaderSettings(base: ReaderSettings = ReaderSettings()): ReaderSettings {
     return base.copy(
         darkMode = isDark,

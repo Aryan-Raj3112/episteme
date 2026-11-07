@@ -187,7 +187,14 @@ class PdfReaderPreferencesTest {
         saveExternalSearchPackage(context, "com.example.search")
         savePdfMusicianMode(context, true)
         savePdfScrollLocked(context, "book/one", true)
-        savePdfLockedState(context, "book/one", scale = 2.25f, offsetX = -10f, offsetY = 42f)
+        savePdfLockedState(
+            context,
+            "book/one",
+            scale = 2.25f,
+            offsetX = -10f,
+            offsetY = 42f,
+            displayMode = "PAGINATION"
+        )
         saveStylusOnlyMode(context, true)
         savePdfDarkMode(context, true)
 
@@ -200,8 +207,16 @@ class PdfReaderPreferencesTest {
         assertEquals("com.example.search", loadExternalSearchPackage(context))
         assertTrue(loadPdfMusicianMode(context))
         assertTrue(loadPdfScrollLocked(context, "book/one"))
-        assertEquals(Triple(2.25f, -10f, 42f), loadPdfLockedState(context, "book/one"))
-        assertNull(loadPdfLockedState(context, "missing"))
+        assertEquals(Triple(2.25f, -10f, 42f), loadPdfLockedState(context, "book/one", "PAGINATION"))
+        assertNull(loadPdfLockedState(context, "missing", "PAGINATION"))
+        // A vertical reader must not adopt a paginated camera: its offset is a page translation,
+        // not a scroll position, and applying it snapped the document to the first page.
+        assertNull(loadPdfLockedState(context, "book/one", "VERTICAL_SCROLL"))
+
+        // A camera from before cameras were kept per view is still readable as the paginated one.
+        prefs.edit().putFloat("pdf_locked_scale_book/legacy", 3.5f).putFloat("pdf_locked_offset_y_book/legacy", 9f).apply()
+        assertEquals(Triple(3.5f, 0f, 9f), loadLegacyPdfLockedState(context, "book/legacy"))
+        assertNull(loadLegacyPdfLockedState(context, "book/one"))
         assertTrue(loadStylusOnlyMode(context))
         assertTrue(loadPdfDarkMode(context))
     }

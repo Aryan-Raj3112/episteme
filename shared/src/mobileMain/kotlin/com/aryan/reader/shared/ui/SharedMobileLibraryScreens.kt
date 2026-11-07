@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -22,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.items
@@ -121,7 +124,10 @@ import com.aryan.reader.shared.SharedAudiobook
 import com.aryan.reader.shared.SharedAudiobookPlaybackState
 import com.aryan.reader.shared.SharedBookTtsListenState
 import com.aryan.reader.shared.SharedBookTtsListeningProgress
+import com.aryan.reader.shared.SharedListenAudioSource
+import com.aryan.reader.shared.SharedListenMediaOverlayInfo
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.resolveSharedListenAudioSource
 import com.aryan.reader.shared.SharedTtsListenItem
 import com.aryan.reader.shared.SharedTtsListenStartPolicy
 import com.aryan.reader.shared.Shelf
@@ -140,6 +146,8 @@ import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsEntry
 import com.aryan.reader.shared.opds.SharedOpdsDownloadLocation
 import com.aryan.reader.shared.opds.SharedOpdsScreenState
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
 import com.aryan.reader.shared.sortBooks
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -148,7 +156,7 @@ import kotlinx.coroutines.isActive
 import kotlin.math.roundToInt
 
 @Composable
-private fun MobileUnifiedLibraryDrawerLabel.readerString(): String = when (this) {
+internal fun MobileUnifiedLibraryDrawerLabel.readerString(): String = when (this) {
     MobileUnifiedLibraryDrawerLabel.HOME -> readerString("unified_library_home", "Home")
     MobileUnifiedLibraryDrawerLabel.AUDIOBOOKS -> readerString("listen_title", "Listen")
     MobileUnifiedLibraryDrawerLabel.SHELVES -> readerString("tab_shelves", "Shelves")
@@ -160,7 +168,7 @@ private fun MobileUnifiedLibraryDrawerLabel.readerString(): String = when (this)
     MobileUnifiedLibraryDrawerLabel.AI -> readerString("ai_settings_title", "AI settings")
 }
 
-private fun MobileUnifiedLibraryDrawerDestination.icon(): ImageVector = when (this) {
+internal fun MobileUnifiedLibraryDrawerDestination.icon(): ImageVector = when (this) {
     MobileUnifiedLibraryDrawerDestination.HOME -> Icons.Default.Home
     MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> Icons.AutoMirrored.Filled.VolumeUp
     MobileUnifiedLibraryDrawerDestination.SHELVES -> Icons.AutoMirrored.Filled.LibraryBooks
@@ -168,7 +176,7 @@ private fun MobileUnifiedLibraryDrawerDestination.icon(): ImageVector = when (th
     MobileUnifiedLibraryDrawerDestination.CATALOGS -> Icons.Default.Cloud
 }
 
-private fun MobileUnifiedLibraryDrawerAppearance.icon(): ImageVector = when (this) {
+internal fun MobileUnifiedLibraryDrawerAppearance.icon(): ImageVector = when (this) {
     MobileUnifiedLibraryDrawerAppearance.THEME -> Icons.Default.Palette
     MobileUnifiedLibraryDrawerAppearance.SETTINGS -> Icons.Default.Settings
     MobileUnifiedLibraryDrawerAppearance.FONTS -> Icons.Default.Fonts
@@ -225,7 +233,19 @@ fun SharedMobileUnifiedLibraryScreen(
     ttsListenState: SharedBookTtsListenState = SharedBookTtsListenState(),
     ttsProgress: List<SharedBookTtsListeningProgress> = emptyList(),
     ttsChapterTitles: Map<String, List<String>> = emptyMap(),
+    /** Publisher-narration availability by book, for Listen badges and the source switcher. */
+    ttsOverlayInfoByBook: Map<String, SharedListenMediaOverlayInfo> = emptyMap(),
+    /** Explicit TTS/narration choice by book. Absent means "prefer narration when present". */
+    listenSourceByBook: Map<String, SharedListenAudioSource> = emptyMap(),
+    onListenSourceChange: (BookItem, SharedListenAudioSource) -> Unit = { _, _ -> },
     onStartTtsListen: (BookItem, SharedTtsListenStartPolicy, Int?) -> Unit = { _, _, _ -> },
+    /**
+     * Prepares a book's Listen content (chapters, narration availability)
+     * without starting playback. Called when the player sheet opens idle so
+     * badges, the TTS/narration switcher and chapter titles match Android's
+     * connect-on-open; playback paths load through their start call instead.
+     */
+    onPrepareTtsListen: (BookItem) -> Unit = {},
     onToggleTtsPlayback: () -> Unit = {},
     onSeekTtsChunk: (Int) -> Unit = {},
     onSeekTtsChapter: (Int) -> Unit = {},
@@ -244,6 +264,22 @@ fun SharedMobileUnifiedLibraryScreen(
     selectionActions: SharedMobileUnifiedLibraryActions? = null,
     /** Pull-to-sync trigger; hosts own the sync pipeline. */
     onRefreshLibrary: () -> Unit = {},
+    /**
+     * Inside-files search. Value comes from [state.searchInsideFiles]; the
+     * chip shows only when [onSearchInsideFilesChange] is non-null and
+     * content matches arrive via [contentSearchBookIds]. Hosts without a
+     * content index keep the defaults and see no UI change.
+     */
+    onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
+    contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
+    /** Mirrors library keystrokes to the host (content-index search); local filtering is unchanged. */
+    onLibrarySearchQueryChange: (String) -> Unit = {},
+    /**
+     * Inside-file hit tap: the book, the chunk hit, and the query at tap time.
+     * The host deep-links into the reader (chapter/page + preloaded query).
+     * Header/cover taps keep resuming via [onOpenBook].
+     */
+    onContentHitClick: (BookItem, SharedGlobalSearchHit, String) -> Unit = { _, _, _ -> },
     // Android benchmark: readable file types differ per platform (FileCapabilities.kt).
     // Defaults to IOS to preserve current iOS callers; Android must pass ANDROID on adoption.
     platform: ReaderPlatform = ReaderPlatform.IOS,
@@ -280,6 +316,8 @@ fun SharedMobileUnifiedLibraryScreen(
         state.sortOrder,
         filter,
         query,
+        state.searchInsideFiles,
+        contentSearchResults,
     ) {
         mobileUnifiedLibraryBooks(
             books = state.rawLibraryBooks,
@@ -289,6 +327,8 @@ fun SharedMobileUnifiedLibraryScreen(
             sortOrder = state.sortOrder,
             // iOS books record the folder name while selections store Android's uriString.
             folderAliases = state.syncedFolders.associate { it.name to it.uriString },
+            searchInsideFiles = state.searchInsideFiles,
+            contentSearchResults = contentSearchResults,
         )
     }
     val continueReading = remember(state.rawLibraryBooks) {
@@ -316,8 +356,8 @@ fun SharedMobileUnifiedLibraryScreen(
             continueReading = continueReading,
         )
     }
-    val ttsItems = remember(state.rawLibraryBooks, ttsProgress) {
-        buildSharedTtsListenItems(state.rawLibraryBooks, ttsProgress)
+    val ttsItems = remember(state.rawLibraryBooks, ttsProgress, ttsOverlayInfoByBook) {
+        buildSharedTtsListenItems(state.rawLibraryBooks, ttsProgress, ttsOverlayInfoByBook)
     }
     val advancedFilterCount = state.libraryFilters.fileTypes.size +
         state.libraryFilters.sourceFolders.size +
@@ -342,9 +382,20 @@ fun SharedMobileUnifiedLibraryScreen(
         }
     }
 
-    ModalNavigationDrawer(
-        drawerState = unifiedDrawerState,
-        drawerContent = {
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val deviceLayout = LocalSharedDeviceLayout.current
+        val navMode = DuoLayoutPolicy.navMode(deviceLayout, maxWidth)
+        val railWidth = DuoLayoutPolicy.railWidth(deviceLayout, maxWidth)
+        val railTopInset = DuoLayoutPolicy.railTopInset(deviceLayout, maxHeight)
+        // The cover display held landscape is the one Duo pose too short for the standard
+        // chrome; it tightens the spaces around the content and never the content itself.
+        val homeDensity = DuoLayoutPolicy.libraryDensity(deviceLayout, maxHeight)
+        val duoGridCells = DuoLayoutPolicy.gridCells(deviceLayout, maxWidth, homeDensity)
+        SharedMobileLibraryShell(
+            navMode = navMode,
+            railOnTrailing = DuoLayoutPolicy.railOnTrailing(deviceLayout),
+            drawerState = unifiedDrawerState,
+            drawerContent = {
             ModalDrawerSheet {
                 Text(
                     readerString("unified_library_drawer_title", "Your library"),
@@ -393,8 +444,30 @@ fun SharedMobileUnifiedLibraryScreen(
                     )
                 }
             }
-        },
-    ) {
+            },
+            railContent = {
+                SharedMobileLibraryRail(
+                    destinations = drawerModel.destinations,
+                    selectedSection = section,
+                    appearance = drawerModel.appearance,
+                    width = railWidth,
+                    topInset = railTopInset,
+                    onDestinationSelected = { destination ->
+                        section = destination.section
+                        selectedShelfId = null
+                        onSectionChange(section.persistedValue)
+                    },
+                    onAppearanceSelected = { appearance ->
+                        when (appearance) {
+                            MobileUnifiedLibraryDrawerAppearance.THEME -> onOpenAppTheme()
+                            MobileUnifiedLibraryDrawerAppearance.SETTINGS -> onOpenSettings()
+                            MobileUnifiedLibraryDrawerAppearance.FONTS -> onOpenFonts()
+                            MobileUnifiedLibraryDrawerAppearance.AI -> onOpenAiSettings()
+                        }
+                    },
+                )
+            },
+        ) {
         SharedAndroidUnifiedScaffold(
         section = section,
         showingShelf = selectedShelfId != null,
@@ -442,6 +515,7 @@ fun SharedMobileUnifiedLibraryScreen(
                     } else null,
                 )
             } else {
+                Box(Modifier.fillMaxWidth()) {
                 SharedAndroidUnifiedTopBar(
                     title = selectedShelfId?.let { id -> state.shelves.firstOrNull { it.id == id }?.name }
                         ?: when (section) {
@@ -454,7 +528,11 @@ fun SharedMobileUnifiedLibraryScreen(
                     showingShelf = selectedShelfId != null,
                     drawerDescription = readerString("unified_library_drawer_title", "Your library"),
                     backToShelvesDescription = readerString("unified_library_back_to_shelves", "All shelves"),
-                    onMenu = { unifiedScope.launch { unifiedDrawerState.open() } },
+                    onMenu = if (navMode == SharedLibraryNavMode.DRAWER) {
+                        { unifiedScope.launch { unifiedDrawerState.open() } }
+                    } else {
+                        null
+                    },
                     onBackFromShelf = {
                         selectedShelfId = selectedShelfId
                             ?.let { id -> state.shelves.firstOrNull { it.id == id } }
@@ -465,8 +543,45 @@ fun SharedMobileUnifiedLibraryScreen(
                     searchQuery = query.takeIf { section == MobileUnifiedLibrarySection.HOME },
                     searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
                     clearSearchDescription = readerString("content_desc_clear_query", "Clear search"),
-                    onSearchQueryChange = { query = it },
+                    onSearchQueryChange = {
+                        query = it
+                        onLibrarySearchQueryChange(it)
+                    },
+                    searchInsideFiles = state.searchInsideFiles,
+                    onSearchInsideFilesChange = onSearchInsideFilesChange,
+                    searchInsideFilesLabel = readerString("unified_library_search_inside_files", "Search inside files"),
+                    density = homeDensity,
                 )
+                // Upright inner display: Apple keeps horizontal bars there, so the whole
+                // side column is transposed into the top strip, starting at the leading
+                // edge and ending before the system's time and status indicator.
+                if (navMode == SharedLibraryNavMode.HORIZONTAL) {
+                    val statusStripHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                    Box(
+                        Modifier.fillMaxWidth().height(statusStripHeight),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        SharedMobileLibraryHorizontalNav(
+                            destinations = drawerModel.destinations,
+                            selectedSection = section,
+                            appearance = drawerModel.appearance,
+                            onDestinationSelected = { destination ->
+                                section = destination.section
+                                selectedShelfId = null
+                                onSectionChange(section.persistedValue)
+                            },
+                            onAppearanceSelected = { appearance ->
+                                when (appearance) {
+                                    MobileUnifiedLibraryDrawerAppearance.THEME -> onOpenAppTheme()
+                                    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> onOpenSettings()
+                                    MobileUnifiedLibraryDrawerAppearance.FONTS -> onOpenFonts()
+                                    MobileUnifiedLibraryDrawerAppearance.AI -> onOpenAiSettings()
+                                }
+                            },
+                        )
+                    }
+                }
+                }
             }
         },
         bottomBar = {
@@ -499,7 +614,13 @@ fun SharedMobileUnifiedLibraryScreen(
         sectionContent = { displayedSection, padding ->
             when (displayedSection) {
                 MobileUnifiedLibrarySection.HOME -> {
-                    if (unifiedLibraryModel.showSearchResults) {
+                    // Inside-files mode replaces the plain search grid with one
+                    // row per book (Android benchmark:
+                    // SharedAndroidUnifiedLibraryHome contentSearchActive).
+                    // Metadata-only books still render as list items; books
+                    // with chunk hits render snippets with deep-link taps.
+                    val contentSearchActive = state.searchInsideFiles && query.isNotBlank()
+                    if (unifiedLibraryModel.showSearchResults && !contentSearchActive) {
                         BoxWithConstraints(Modifier.padding(padding)) {
                             SharedAndroidUnifiedLibrarySearch(
                                 books = unifiedLibraryModel.visibleBooks,
@@ -511,8 +632,14 @@ fun SharedMobileUnifiedLibraryScreen(
                                 noResultsLabel = readerString("no_results_found", "No results found for %1\$s", query),
                                 showSearchField = false,
                                 itemKey = { it.id },
-                                onQueryChange = { query = it },
-                                onClose = { query = "" },
+                                onQueryChange = {
+                                    query = it
+                                    onLibrarySearchQueryChange(it)
+                                },
+                                onClose = {
+                                    query = ""
+                                    onLibrarySearchQueryChange("")
+                                },
                                 bookCard = { book ->
                                     SharedMobileBookCard(
                                         book = book,
@@ -526,6 +653,7 @@ fun SharedMobileUnifiedLibraryScreen(
                                     )
                                 },
                                 widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                                gridCells = duoGridCells,
                                 modifier = Modifier.fillMaxSize(),
                             )
                         }
@@ -539,7 +667,11 @@ fun SharedMobileUnifiedLibraryScreen(
                                 advancedFilterCount = advancedFilterCount,
                                 useListView = useListView,
                                 strings = SharedAndroidUnifiedHomeStrings(
-                                    noBooks = readerString("unified_library_no_books", "No books in this view"),
+                                    noBooks = if (contentSearchActive) {
+                                        readerString("no_results_found", "No results found for %1\$s", query)
+                                    } else {
+                                        readerString("unified_library_no_books", "No books in this view")
+                                    },
                                     filterBooks = readerString("content_desc_filter", "Filter"),
                                     gridView = readerString("unified_library_grid_view", "Grid view"),
                                     listView = readerString("unified_library_list_view", "List view"),
@@ -571,10 +703,14 @@ fun SharedMobileUnifiedLibraryScreen(
                                             selected = false,
                                             pinned = book.id in state.pinnedLibraryBookIds,
                                             onTogglePinned = { onTogglePinned(book) },
-                                            modifier = coverModifier.size(94.dp, 146.dp),
+                                            modifier = coverModifier.size(
+                                                homeDensity.continueCoverWidth,
+                                                homeDensity.continueCoverHeight,
+                                            ),
                                             compact = true,
                                         )
                                     },
+                                    density = homeDensity,
                                     fileTypeBadge = {
                                         SharedMobileCoverTextBadge(
                                             text = book.type.name,
@@ -609,7 +745,22 @@ fun SharedMobileUnifiedLibraryScreen(
                                 )
                             },
                             widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                            gridCells = duoGridCells,
+                            density = homeDensity,
                             modifier = Modifier.fillMaxSize(),
+                            contentSearchActive = contentSearchActive,
+                            contentSearchResults = contentSearchResults,
+                            contentResultRow = { book, result, expanded, onToggleExpand ->
+                                SharedMobileLibraryContentRow(
+                                    book = book,
+                                    result = result,
+                                    expanded = expanded,
+                                    onToggleExpanded = onToggleExpand,
+                                    onOpenBook = { if (selectedIds.isEmpty()) onOpenBook(book) else onLongPressBook(book) },
+                                    onLongPressBook = { if (shouldSelectBookOnLongPress(book.id, selectedIds)) onLongPressBook(book) },
+                                    onHitClick = { hit -> onContentHitClick(book, hit, query) },
+                                )
+                            },
                         )
                         }
                     }
@@ -648,6 +799,8 @@ fun SharedMobileUnifiedLibraryScreen(
                                 )
                             },
                             widthClass = sharedMobileWidthClassForWidth(maxWidth),
+                            gridCells = duoGridCells,
+                            density = homeDensity,
                             modifier = Modifier.fillMaxSize(),
                             childShelves = selectedChildShelves,
                             onChildShelfSelected = { selectedShelfId = it.id },
@@ -666,6 +819,11 @@ fun SharedMobileUnifiedLibraryScreen(
                                     )
                                 }
                             },
+                            sortOrder = state.sortOrder,
+                            sortLabels = SortOrder.entries.associateWith { order -> order.sharedMobileLabel() },
+                            sortDescription = readerString("content_desc_sort", "Sort"),
+                            selectedSortDescription = readerString("content_desc_selected", "Selected"),
+                            onSortOrderChange = onSortOrderChange,
                         )
                     }
                 }
@@ -689,12 +847,21 @@ fun SharedMobileUnifiedLibraryScreen(
                     ttsPlayback = ttsListenState,
                     onAddAudiobook = { showAudiobookAddSheet = true },
                     onOpenPlayer = { book ->
-                        if (audiobookPlayback.bookId != book.bookId) onPlayAudiobook(book)
                         playerBook = book
                         showPlayerSheet = true
                     },
-                    onOpenTtsPlayer = { item, autoStart ->
-                        if (autoStart) onStartTtsListen(item.book, SharedTtsListenStartPolicy.RESUME, null)
+                    onPlayAudiobook = { book ->
+                        onPlayAudiobook(book)
+                        playerBook = book
+                        showPlayerSheet = true
+                    },
+                    onOpenTtsPlayer = { item, _ ->
+                        onPrepareTtsListen(item.book)
+                        ttsPlayerItem = item
+                        showTtsPlayerSheet = true
+                    },
+                    onPlayTtsPlayer = { item ->
+                        onStartTtsListen(item.book, SharedTtsListenStartPolicy.RESUME, null)
                         ttsPlayerItem = item
                         showTtsPlayerSheet = true
                     },
@@ -704,6 +871,7 @@ fun SharedMobileUnifiedLibraryScreen(
         },
         modifier = modifier,
         )
+        }
     }
     if (showLibraryControls) {
         SharedAndroidUnifiedLibraryControlsSheet(
@@ -899,7 +1067,14 @@ fun SharedMobileUnifiedLibraryScreen(
         }
     }
     if (showTtsPlayerSheet) {
-        ttsPlayerItem?.let { item ->
+        ttsPlayerItem?.let { rawItem ->
+            // The captured row predates preparation: overlay facts arrive
+            // asynchronously (Android's prepare, iOS's ensureContent), so the
+            // sheet must read the live map or the switcher stays hidden until
+            // the sheet is closed and reopened.
+            val item = rawItem.copy(
+                mediaOverlay = ttsOverlayInfoByBook[rawItem.book.id] ?: rawItem.mediaOverlay,
+            )
             SharedMobileTtsPlayerSheet(
                 item = item,
                 playback = ttsListenState,
@@ -926,6 +1101,11 @@ fun SharedMobileUnifiedLibraryScreen(
                 onStopPlayback = onStopTtsPlayback,
                 onDismiss = { showTtsPlayerSheet = false },
                 onOpenVoiceSettings = onOpenTtsVoiceSettings,
+                // Absent pick resolves here exactly like the controller does:
+                // narration when present, TTS otherwise. Never a silent switch.
+                listenSource = listenSourceByBook[item.book.id]
+                    ?: resolveSharedListenAudioSource(item.hasMediaOverlayNarration, null),
+                onListenSourceChange = { source -> onListenSourceChange(item.book, source) },
             )
         }
     }

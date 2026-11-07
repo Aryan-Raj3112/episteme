@@ -65,7 +65,7 @@ class ReaderTtsFileCacheManager(
                     matchingFilePaths = files.map { it.absolutePath }
                 )
             }
-            ?.sortedBy { it.chapterTitle }
+            ?.sortedWith(compareByNatural { it.chapterTitle })
             .orEmpty()
     }
 

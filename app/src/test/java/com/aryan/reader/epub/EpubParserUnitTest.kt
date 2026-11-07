@@ -4,10 +4,12 @@ import android.content.Context
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -176,6 +178,47 @@ class EpubParserUnitTest {
             listOf(book.chapters[0].absPath, book.chapters[0].absPath, book.chapters[1].absPath),
             book.tableOfContents.map { it.absolutePath }
         )
+
+        // Materialized section files keep the source shell (doctype, head) and only their own
+        // body content — regression cover for the shell-only clone in materializeTocSections.
+        val sectionHtmlFiles = book.chapters.map { File(book.extractionBasePath, it.htmlFilePath).readText() }
+        assertTrue(sectionHtmlFiles.all { it.contains("head-marker") })
+        assertTrue(sectionHtmlFiles.all { it.contains("<!doctype html>", ignoreCase = true) })
+        assertTrue(sectionHtmlFiles[0].contains("id=\"book\""))
+        assertTrue(sectionHtmlFiles[0].contains("id=\"nested\""))
+        assertFalse(sectionHtmlFiles[0].contains("id=\"later\""))
+        assertTrue(sectionHtmlFiles[1].contains("id=\"later\""))
+        assertFalse(sectionHtmlFiles[1].contains("id=\"book\""))
+    }
+
+    @Test
+    fun `cloneDocumentShell skips the body copy without changing shell output or the source document`() {
+        val source = Jsoup.parse(
+            """
+                <!DOCTYPE html>
+                <html lang="en">
+                    <head><title>Section</title><meta name="head-marker" content="kept"/></head>
+                    <body><h1 id="one">One</h1><p id="two">Two</p></body>
+                </html>
+            """.trimIndent(),
+            "UTF-8"
+        )
+        val originalHtml = source.outerHtml()
+        val originalBodyChildren = source.body().childNodes().toList()
+
+        val shell = cloneDocumentShell(source)
+
+        // Same output as the previous full clone followed by emptying the body.
+        val fullCloneWithEmptyBody = source.clone().apply { body().empty() }
+        assertEquals(0, shell.body().childNodes().size)
+        assertEquals(fullCloneWithEmptyBody.outerHtml(), shell.outerHtml())
+        assertTrue(shell.outerHtml().contains("head-marker"))
+        assertTrue(shell.outerHtml().contains("<!doctype html>", ignoreCase = true))
+
+        // The source document is restored exactly: same markup, same nodes, same parents.
+        assertEquals(originalHtml, source.outerHtml())
+        assertEquals(originalBodyChildren, source.body().childNodes())
+        source.body().childNodes().forEach { assertSame(source.body(), it.parent()) }
     }
 
     @Test
@@ -870,7 +913,11 @@ class EpubParserUnitTest {
                 <navPoint><navLabel><text>Later section</text></navLabel><content src="chapter.xhtml#later"/></navPoint>
             </navMap></ncx>
         """.trimIndent(),
-        "OEBPS/chapter.xhtml" to "<html><body><h1 id=\"book\">Book</h1><h2 id=\"nested\">Nested</h2><h1 id=\"later\">Later</h1></body></html>"
+        "OEBPS/chapter.xhtml" to """
+            <!DOCTYPE html>
+            <html><head><title>Fragment</title><meta name="head-marker" content="kept"/></head>
+            <body><h1 id="book">Book</h1><h2 id="nested">Nested</h2><h1 id="later">Later</h1></body></html>
+        """.trimIndent()
     )
 
     private fun minimalEpubBytesWithoutOptionalMetadata(): ByteArray = zipBytes(

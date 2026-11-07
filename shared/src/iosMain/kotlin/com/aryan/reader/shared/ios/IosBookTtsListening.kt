@@ -15,6 +15,25 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ReaderTtsReplacementEngine
 import com.aryan.reader.shared.ReaderTtsReplacementPreferences
+import com.aryan.reader.shared.SharedListenAudioSource
+import com.aryan.reader.shared.SharedListenMediaOverlayInfo
+import com.aryan.reader.shared.isOverlay
+import com.aryan.reader.shared.resolveSharedListenAudioSource
+import com.aryan.reader.shared.sharedListenMediaOverlayInfo
+import com.aryan.reader.shared.reader.SharedMediaOverlayDocument
+import com.aryan.reader.shared.reader.SharedMediaOverlayDocumentCache
+import com.aryan.reader.shared.reader.SharedMediaOverlayIndex
+import com.aryan.reader.shared.reader.SharedMediaOverlayPlayback
+import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackState
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjection
+import com.aryan.reader.shared.reader.SharedMediaOverlayProjectionSource
+import com.aryan.reader.shared.reader.SharedMediaOverlaySession
+import com.aryan.reader.shared.reader.IosMediaOverlayNarrationProgressStore
+import com.aryan.reader.shared.reader.IosSharedMediaOverlayPlayback
+import com.aryan.reader.shared.reader.iosMediaOverlaySmilReaderFor
+import com.aryan.reader.shared.reader.loadSharedEpubMediaOverlayIndex
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemIndexByChapter
+import com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemsInReadingOrder
 import com.aryan.reader.shared.LocalTtsInterruptionAction
 import com.aryan.reader.shared.LocalTtsInterruptionEvent
 import com.aryan.reader.shared.LocalTtsInterruptionState
@@ -45,6 +64,9 @@ import com.aryan.reader.shared.SharedTtsEngine
 import com.aryan.reader.shared.SharedTtsListenSavedProgress
 import com.aryan.reader.shared.SharedTtsPlaybackSnapshot
 import com.aryan.reader.shared.toSharedBookTtsListenState
+import com.aryan.reader.shared.SharedOverlayClipChunkSpan
+import com.aryan.reader.shared.sharedOverlayClipChunkSpans
+import com.aryan.reader.shared.sharedOverlayTranscriptChunkIndex
 import com.aryan.reader.shared.sharedTtsTranscriptWindow
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.ObjCSignatureOverride
@@ -118,6 +140,13 @@ internal const val IOS_TTS_LISTEN_TAG = "ReaderBookTtsIOS"
 private const val IOS_LISTEN_TTS_VOICE_OVERRIDE_KEY = "reader.bookTtsListening.voiceOverride"
 private const val IOS_READER_TTS_VOICE_KEY = "reader.tts.voiceIdentifier"
 /**
+ * Listen's own cloud-voice override. Same tri-state as the device voice above, resolved by the
+ * shared [ReaderTtsVoiceOverride]: absent inherits the reader's cloud speaker until the user
+ * picks here. Android benchmark: Listen's independent cloud speaker (`loadListenTtsSpeaker`
+ * never reads the reader-synced state for a Listen session).
+ */
+private const val IOS_LISTEN_TTS_CLOUD_VOICE_OVERRIDE_KEY = "reader.bookTtsListening.cloudVoiceOverride"
+/**
  * Listen's Cloud/Device engine choice. Absent means "follow the reader", which is why presence is
  * what matters, not the value. Android benchmark: `LISTEN_TTS_MODE_KEY` in `reader_prefs`.
  */
@@ -127,6 +156,8 @@ private const val ENGINE_OBSERVATION_INTERVAL_MS = 120L
 
 private const val IOS_LISTEN_TTS_FAVORITES_KEY = "reader.bookTtsListening.favoriteVoices"
 private const val IOS_LISTEN_TTS_SAMPLE_TEXT_KEY = "reader.bookTtsListening.previewSampleText"
+private const val IOS_LISTEN_TTS_OVERLAY_SPEED_KEY = "reader.bookTtsListening.overlaySpeed"
+private const val IOS_LISTEN_TTS_SOURCE_KEY_PREFIX = "reader.bookTtsListening.listenSource."
 private const val IOS_READER_TTS_RATE_KEY = "reader.tts.speechRate"
 private const val IOS_READER_TTS_PITCH_KEY = "reader.tts.pitch"
 
@@ -164,6 +195,9 @@ internal data class IosTtsListenBook(
     val bookId: String,
     val title: String,
     val chapters: List<IosTtsListenChapter>,
+    val mediaOverlay: SharedListenMediaOverlayInfo = SharedListenMediaOverlayInfo(),
+    val overlayIndex: SharedMediaOverlayIndex = SharedMediaOverlayIndex.EMPTY,
+    val chapterContentPaths: List<String> = emptyList(),
 )
 
 /**
@@ -215,6 +249,15 @@ internal class IosBookTtsListeningController(
     initialCloudModeEnabled: Boolean = false,
     /** Persists a Listen engine-mode change. The host owns the backing store. */
     private val onCloudModeChanged: (Boolean) -> Unit = {},
+    /**
+     * App-level publisher-narration engine, shared with the reader (Android
+     * benchmark: the singleton `MediaOverlayPlaybackService` behind both the
+     * reader and Listen overlay engines).
+     *
+     * Null when the host has none, in which case Listen reports no narration
+     * rather than offering a button that cannot play.
+     */
+    private val overlayEngine: SharedMediaOverlayPlayback? = null,
 ) {
     /**
      * The audiobook Listen state, projected out of the shared engine.
@@ -232,6 +275,10 @@ internal class IosBookTtsListeningController(
 
     val progressByBook: MutableMap<String, SharedBookTtsListeningProgress> = mutableStateMapOf()
     val chapterTitlesByBook: MutableMap<String, List<String>> = mutableStateMapOf()
+    /** Publisher-narration availability by book, for Listen badges and the source switcher. */
+    val overlayInfoByBook: MutableMap<String, SharedListenMediaOverlayInfo> = mutableStateMapOf()
+    /** Explicit TTS/narration choice by book. Absent means "prefer narration when present". */
+    val listenSourceByBook: MutableMap<String, SharedListenAudioSource> = mutableStateMapOf()
 
     /** Device voices offered in the Listen voice settings. */
     var availableVoices by mutableStateOf(emptyList<SharedMobileEpubVoice>())
@@ -267,6 +314,7 @@ internal class IosBookTtsListeningController(
     // consumed at the first delegate audio callback, cleared at stop().
     private var ttsStartMark: TimeMark? = null
     private var currentBookId: String? = null
+    private var currentBook: BookItem? = null
     private var currentBookTitle = ""
     private var currentBookAuthor: String? = null
     // Projector inputs below: observable because `state` reads them. Each changes on a
@@ -291,6 +339,25 @@ internal class IosBookTtsListeningController(
         private set
     /** Whether the *running* session is cloud. Set at start, cleared at stop. */
     private var sessionIsCloud = false
+    /** Whether the *running* session is publisher narration. Set at start, cleared at stop. */
+    private var sessionIsOverlay by mutableStateOf(false)
+    private var overlaySession: SharedMediaOverlaySession? = null
+    private var overlaySessionBookId: String? = null
+    private var overlayChapterIndexBySpine: Map<Int, Int> = emptyMap()
+    private var overlaySpineByChapter: Map<Int, Int> = emptyMap()
+    /**
+     * Clip-to-chunk anchors for the narrating chapter, built from the same
+     * text-element anchors the reader highlights. Empty until anchored (or
+     * when anchoring is impossible); the highlight falls back to the
+     * fractional estimate then, never to a stale table.
+     */
+    private var overlayClipSpans: List<SharedOverlayClipChunkSpan> = emptyList()
+    private var overlaySpansBookId: String? = null
+    private var overlaySpansChapter: Int = -1
+    private var overlayPlayback by mutableStateOf(SharedMediaOverlayPlaybackState())
+    private var overlayChapterIndex by mutableStateOf(0)
+    private var overlaySpeed by mutableStateOf(1f)
+    private var lastOverlaySpine: Int? = null
     private var remoteCommandsInstalled = false
     private var currentChunks: List<IosTtsListenChunk> = emptyList()
     private var currentChunkIndex = -1
@@ -302,13 +369,18 @@ internal class IosBookTtsListeningController(
     private var interruptionState = LocalTtsInterruptionState()
     private var sleepTimerJob: Job? = null
     private var persistJob: Job? = null
+    /** Replacements of the latest start, so a later resume restarts with the same text. */
+    private var lastReplacements: ReaderTtsReplacementPreferences = ReaderTtsReplacementPreferences()
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
 
     init {
         observeSharedEngine()
+        observeOverlayEngine()
         progressStore.load().forEach { (bookId, progress) ->
             progressByBook[bookId] = progress
         }
+        overlaySpeed = listenDefaults.doubleForKey(IOS_LISTEN_TTS_OVERLAY_SPEED_KEY)
+            .toFloat().takeIf { it in 0.5f..3.0f } ?: 1f
         availableVoices = enumerateListenVoices()
         selectedVoiceIdentifier = resolveListenVoiceIdentifier()
         favoriteVoiceIdentifiers = loadListenFavorites()
@@ -416,6 +488,7 @@ internal class IosBookTtsListeningController(
                 return@launch
             }
             contentCache[book.id] = content
+            rememberOverlayFor(book.id, content)
             chapterTitlesByBook[book.id] = content.chapters.map { it.title }
             iosTtsListenLog("ensureContent loaded bookId=${book.id} chapters=${content.chapters.size}")
         }
@@ -437,6 +510,7 @@ internal class IosBookTtsListeningController(
         )
         sleepTimerJob?.cancel()
         sleepTimerJob = null
+        lastReplacements = replacements
         scope.launch {
             val content = contentCache[bookId]
                 ?: withContext(Dispatchers.Default) { loadContentOrNull(book, replacements) }
@@ -447,11 +521,32 @@ internal class IosBookTtsListeningController(
                     return@launch
                 }
             contentCache[bookId] = content
+            rememberOverlayFor(bookId, content)
             chapterTitlesByBook[bookId] = content.chapters.map { it.title }
             iosTtsListenLog(
                 "start() content ready bookId=$bookId chapters=${content.chapters.size} " +
                     "chunks=${content.chapters.sumOf { it.chunks.size }}"
             )
+            // Prefer publisher narration when present; an explicit saved pick
+            // always wins. No silent fallback: the session stays on the
+            // resolved source until the user switches it.
+            if (listenSourceFor(bookId).isOverlay() && content.mediaOverlay.hasNarration && overlayEngine != null) {
+                val saved = progressByBook[bookId]
+                val savedChapter = saved?.chapterIndex?.coerceIn(0, content.chapters.lastIndex) ?: 0
+                val requestedChapter = when (policy) {
+                    SharedTtsListenStartPolicy.RESUME -> savedChapter
+                    SharedTtsListenStartPolicy.BEGINNING -> 0
+                    SharedTtsListenStartPolicy.READING_POSITION ->
+                        book.readerPosition?.chapterIndex ?: book.lastPageIndex ?: savedChapter
+                    SharedTtsListenStartPolicy.CHAPTER ->
+                        (chapterIndex ?: savedChapter).coerceIn(0, content.chapters.lastIndex)
+                }
+                sessionSpeechRate = (saved?.speechRate ?: 1f).coerceIn(0.5f, 3f)
+                sessionPitch = (saved?.pitch ?: 1f).coerceIn(0.5f, 2f)
+                startOverlaySession(book, content, requestedChapter)
+                return@launch
+            }
+            sessionIsOverlay = false
             val saved = progressByBook[bookId]
             val savedChapter = saved?.chapterIndex?.coerceIn(0, content.chapters.lastIndex) ?: 0
             val requestedChapter = when (policy) {
@@ -482,6 +577,7 @@ internal class IosBookTtsListeningController(
                 return@launch
             }
             currentBookId = bookId
+            currentBook = book
             currentBookTitle = book.title?.takeIf(String::isNotBlank) ?: book.displayName
             currentBookAuthor = book.author
             chapterCount = content.chapters.size
@@ -516,7 +612,20 @@ internal class IosBookTtsListeningController(
 
     fun pause() {
         interruptionState = LocalTtsInterruptionState()
+        if (sessionIsOverlay) {
+            pauseOverlay()
+            return
+        }
         pauseInternal()
+    }
+
+    private fun pauseOverlay() {
+        iosTtsListenLog("pauseOverlay() chapter=$currentChapterIndex")
+        wantsPlayback = false
+        generation += 1
+        overlayEngine?.pause()
+        persistNow(progressForOverlay(currentChapterIndex))
+        updateBookTtsNowPlaying()
     }
 
     private fun pauseInternal() {
@@ -531,6 +640,41 @@ internal class IosBookTtsListeningController(
 
     fun resume() {
         interruptionState = LocalTtsInterruptionState()
+        if (sessionIsOverlay) {
+            if (overlayPlayback.isPlaying || overlayPlayback.isLoading) return
+            iosTtsListenLog("resumeOverlay() chapter=$currentChapterIndex")
+            wantsPlayback = true
+            if (overlayPlayback.hasBook) {
+                overlayEngine?.resume()
+            } else {
+                val book = currentBook
+                val hasContent = currentBookId?.let(contentCache::get) != null
+                if (book != null && hasContent) {
+                    playOverlayChapterInternal(currentChapterIndex)
+                }
+            }
+            updateBookTtsNowPlaying()
+            return
+        }
+        // Selected narration but idle (e.g. right after switching sources):
+        // play starts it rather than stalling on empty TTS chunks.
+        val selectedBookId = currentBookId
+        val selectedBook = currentBook
+        if (selectedBookId != null && selectedBook != null &&
+            listenSourceFor(selectedBookId).isOverlay() &&
+            overlayInfoFor(selectedBookId).hasNarration && overlayEngine != null
+        ) {
+            iosTtsListenLog("resume() starting selected narration bookId=$selectedBookId")
+            start(selectedBook, SharedTtsListenStartPolicy.RESUME, null, lastReplacements)
+            return
+        }
+        // Switched back to TTS with no live chunks: restart from saved
+        // progress rather than stalling the play button.
+        if ((currentChunks.isEmpty() || currentChunkIndex < 0) && selectedBook != null) {
+            iosTtsListenLog("resume() restarting TTS bookId=$selectedBookId")
+            start(selectedBook, SharedTtsListenStartPolicy.RESUME, null, lastReplacements)
+            return
+        }
         if (currentChunks.isEmpty() || currentChunkIndex < 0) return
         if (state.isPlaying || state.isLoading) return
         iosTtsListenLog("resume() chunk=$currentChunkIndex wordOffset=$latestWordOffset")
@@ -543,15 +687,17 @@ internal class IosBookTtsListeningController(
     fun stop() {
         interruptionState = LocalTtsInterruptionState()
         ttsStartMark = null
-        iosTtsListenLog("stop() bookId=$currentBookId chunk=$currentChunkIndex")
+        iosTtsListenLog("stop() bookId=$currentBookId chunk=$currentChunkIndex overlay=$sessionIsOverlay")
         sleepTimerJob?.cancel()
         sleepTimerJob = null
         persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         generation += 1
         engineStop()
+        stopOverlaySession()
         currentChunks = emptyList()
         currentChunkIndex = -1
         currentBookId = null
+        currentBook = null
         wantsPlayback = false
         sessionEndedByStop = true
         deactivateAudioSession()
@@ -571,9 +717,14 @@ internal class IosBookTtsListeningController(
         if (!state.connected) return
         iosTtsListenLog("releaseForHandoff bookId=$currentBookId chapter=$currentChapterIndex")
         persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
+        // Narration owns real audio on the shared overlay engine, so unlike
+        // TTS it must be stopped rather than released: the winner speaks
+        // elsewhere and both would otherwise be heard at once.
+        stopOverlaySession()
         currentChunks = emptyList()
         currentChunkIndex = -1
         currentBookId = null
+        currentBook = null
         wantsPlayback = false
         sessionFinished = false
         sessionEndedByStop = true
@@ -605,7 +756,9 @@ internal class IosBookTtsListeningController(
         interruptionState = transition.state
         when (transition.action) {
             LocalTtsInterruptionAction.NONE -> Unit
-            LocalTtsInterruptionAction.PAUSE -> pauseInternal()
+            // pause(), not pauseInternal(): an interruption must also still
+            // narration, which owns real audio on another engine.
+            LocalTtsInterruptionAction.PAUSE -> pause()
             LocalTtsInterruptionAction.RESUME -> scope.launch {
                 // Activating the audio session blocks while the interrupting app
                 // releases the route, so keep it off the notification callback.
@@ -620,6 +773,9 @@ internal class IosBookTtsListeningController(
     fun nextChunk() = moveByChunk(1)
 
     fun seekToChunk(chunkIndex: Int) {
+        // Narration is clip-sequenced, not chunk-sequenced; the sheet hides
+        // these controls in narration mode, so reaching here is a no-op.
+        if (sessionIsOverlay) return
         if (currentChunks.isEmpty() || currentChunkIndex < 0) return
         val target = chunkIndex.coerceIn(0, currentChunks.lastIndex)
         if (target == currentChunkIndex && (state.isPlaying || state.isLoading)) return
@@ -633,8 +789,357 @@ internal class IosBookTtsListeningController(
     fun nextChapter() = moveChapterBy(1)
 
     fun selectChapter(index: Int) {
+        // No TTS fallback: a chapter without narration in narration mode is
+        // unreachable by tapping (the sheet disables it).
+        if (sessionIsOverlay) {
+            val bookId = currentBookId ?: return
+            val content = contentCache[bookId] ?: return
+            if (index in content.mediaOverlay.narratedChapterIndices) playOverlayChapterInternal(index)
+            return
+        }
         val content = contentCache[currentBookId ?: return] ?: return
         playChapterInternal(index.coerceIn(0, content.chapters.lastIndex), 0)
+    }
+
+    private fun playOverlayChapterInternal(index: Int) {
+        val book = currentBook ?: return
+        val bookId = currentBookId ?: return
+        val content = contentCache[bookId] ?: return
+        if (index !in content.mediaOverlay.narratedChapterIndices) return
+        iosTtsListenLog("playOverlayChapterInternal chapter=$index")
+        currentChapterIndex = index
+        overlayChapterIndex = index
+        persistNow(progressForOverlay(index))
+        sessionFinished = false
+        wantsPlayback = true
+        scope.launch {
+            overlaySession?.setSpeed(overlaySpeed)
+            val started = overlaySession?.start(index, readerOffset = null) ?: false
+            if (!started) preparedError = "This chapter has no narration audio"
+            else refreshOverlayClipSpans(bookId, index)
+            updateBookTtsNowPlaying()
+        }
+    }
+
+    /** Publisher-narration availability for a book, or none when unknown. */
+    fun overlayInfoFor(bookId: String): SharedListenMediaOverlayInfo =
+        overlayInfoByBook[bookId] ?: SharedListenMediaOverlayInfo()
+
+    /** Explicit TTS/narration choice, defaulting to narration when present. Never a silent switch. */
+    fun listenSourceFor(bookId: String): SharedListenAudioSource =
+        resolveSharedListenAudioSource(
+            hasNarration = overlayInfoFor(bookId).hasNarration && overlayEngine != null,
+            savedPreference = listenSourceByBook[bookId],
+        )
+
+    /**
+     * Explicit source choice. Never starts playback: switching stops the other
+     * engine outright and records the pick, and the next play tap starts the
+     * newly chosen source from where it left off. The host arbitrates first
+     * (`onMediaOverlayStarting` / `onListenSessionStarting`), so the engines
+     * stopped here belong to the outgoing session.
+     */
+    fun selectListenSource(book: BookItem, source: SharedListenAudioSource) {
+        // Guard before persisting: an unavailable source must never pin the
+        // book to a choice that cannot play.
+        if (source.isOverlay() && (!overlayInfoFor(book.id).hasNarration || overlayEngine == null)) return
+        listenDefaults.setObject(source.name, forKey = IOS_LISTEN_TTS_SOURCE_KEY_PREFIX + book.id)
+        listenSourceByBook[book.id] = source
+        if (source.isOverlay()) {
+            engineStop()
+        } else {
+            stopOverlaySession()
+        }
+    }
+
+    /** Source-aware speed: publisher-narration speed or the TTS rate. */
+    fun setListenSpeed(rate: Float) {
+        if (sessionIsOverlay) {
+            setOverlaySpeed(rate)
+            return
+        }
+        setParameters(rate, sessionPitch)
+    }
+
+    fun setOverlaySpeed(speed: Float) {
+        val resolved = speed.coerceIn(0.5f, 3.0f)
+        overlaySpeed = resolved
+        listenDefaults.setDouble(resolved.toDouble(), forKey = IOS_LISTEN_TTS_OVERLAY_SPEED_KEY)
+        overlaySession?.setSpeed(resolved)
+    }
+
+    private fun loadListenSource(bookId: String) {
+        // Stored picks only: absent means "prefer narration when present",
+        // resolved per call by [listenSourceFor]. Storing a default here
+        // would pin TTS and silently defeat the overlay preference.
+        val raw = listenDefaults.stringForKey(IOS_LISTEN_TTS_SOURCE_KEY_PREFIX + bookId)
+        val saved = raw?.let { runCatching { SharedListenAudioSource.valueOf(it) }.getOrNull() }
+        if (saved != null) {
+            listenSourceByBook[bookId] = saved
+        } else {
+            listenSourceByBook.remove(bookId)
+        }
+    }
+
+    /**
+     * Records narration availability for prepared content.
+     *
+     * Cheap facts only (OPF index + chapter mapping); SMIL bodies stay lazy
+     * behind the session's document cache. Called wherever content is cached
+     * so badges and the source switcher agree with the player.
+     */
+    private fun rememberOverlayFor(bookId: String, content: IosTtsListenBook) {
+        overlayInfoByBook[bookId] = content.mediaOverlay
+        if (!listenSourceByBook.containsKey(bookId)) loadListenSource(bookId)
+        iosTtsListenLog(
+            "rememberOverlay bookId=$bookId hasNarration=${content.mediaOverlay.hasNarration} " +
+                "narrated=${content.mediaOverlay.narratedChapterIndices.size} " +
+                "source=${listenSourceFor(bookId)}"
+        )
+    }
+
+    private fun overlaySessionFor(book: BookItem, content: IosTtsListenBook): SharedMediaOverlaySession? {
+        val engine = overlayEngine ?: return null
+        if (!content.mediaOverlay.hasNarration) return null
+        if (overlaySession != null && overlaySessionBookId == book.id) return overlaySession
+        val readSmil = iosMediaOverlaySmilReaderFor(book.path ?: "") ?: return null
+        val cache = SharedMediaOverlayDocumentCache(
+            content.overlayIndex,
+            readSmil = readSmil,
+        )
+        val spineByChapter = sharedMediaOverlaySpineItemIndexByChapter(
+            chapterContentPaths = content.chapterContentPaths,
+            overlayIndex = content.overlayIndex,
+        )
+        overlayChapterIndexBySpine = spineByChapter.entries
+            .sortedBy { it.key }
+            .associate { (chapter, spine) -> spine to chapter }
+        overlaySpineByChapter = spineByChapter
+        // Last starter owns continuation on the shared engine: the reader's
+        // session reinstalls its own hook on its next start, and vice versa.
+        // Without this, whoever stopped last would keep narrating the other.
+        (engine as? IosSharedMediaOverlayPlayback)?.attachArchive(book)
+        val session = SharedMediaOverlaySession(
+            engine = engine,
+            projector = IosListenOverlayProjector(cache, overlayChapterIndexBySpine),
+            bookId = book.id,
+            bookTitle = content.title,
+            narrator = content.mediaOverlay.narrator,
+            totalDurationMs = content.overlayIndex.totalDurationMs,
+            overlayIndex = content.overlayIndex,
+            spineItemIndexByChapter = spineByChapter,
+            spineItemsInReadingOrder = sharedMediaOverlaySpineItemsInReadingOrder(
+                content.chapters.size,
+                spineByChapter,
+            ),
+            // The reader's store: a listener who stops in Listen resumes at the same sentence when
+            // they open the book, and the reverse.
+            narrationProgressStore = IosMediaOverlayNarrationProgressStore.shared,
+        )
+        overlaySession = session
+        overlaySessionBookId = book.id
+        return session
+    }
+
+    /**
+     * Listen-side overlay projector: chapter-level only.
+     *
+     * Same contract as Android's (`ListenOverlayProjector`): Listen has no
+     * text surface in narration mode, so positions resolve to chapters and
+     * fragments stay null — audio-first, with nothing faked for paint.
+     */
+    private class IosListenOverlayProjector(
+        private val cache: SharedMediaOverlayDocumentCache,
+        private val chapterIndexBySpine: Map<Int, Int>,
+    ) : SharedMediaOverlayProjectionSource {
+        override fun document(spineItemIndex: Int): SharedMediaOverlayDocument? =
+            cache.document(spineItemIndex)
+
+        override suspend fun project(spineItemIndex: Int, clipIndex: Int): SharedMediaOverlayProjection? {
+            val document = cache.document(spineItemIndex) ?: return null
+            val clip = document.clips.getOrNull(clipIndex) ?: return null
+            return SharedMediaOverlayProjection(
+                spineItemIndex = spineItemIndex,
+                clipIndex = clipIndex,
+                chapterIndex = chapterIndexBySpine[spineItemIndex],
+                fragment = null,
+                elementId = clip.elementId?.takeIf(String::isNotBlank),
+            )
+        }
+
+        override suspend fun clipIndexForReaderPosition(spineItemIndex: Int, readerOffset: Int): Int? = null
+    }
+
+    private fun startOverlaySession(
+        book: BookItem,
+        content: IosTtsListenBook,
+        chapterIndex: Int,
+    ) {
+        val session = overlaySessionFor(book, content) ?: run {
+            preparedError = "Publisher narration is unavailable for this book"
+            return
+        }
+        val narrated = content.mediaOverlay.narratedChapterIndices
+        // Nearest narrated chapter at or after the target, else the first —
+        // navigation within narration, never a switch back to synthesis.
+        val target = chapterIndex.takeIf { it in narrated }
+            ?: narrated.filter { it >= chapterIndex }.minOrNull()
+            ?: narrated.minOrNull()
+            ?: run {
+                preparedError = "This book has no narrated chapters"
+                return
+            }
+        currentBookId = book.id
+        currentBook = book
+        currentBookTitle = content.title
+        currentBookAuthor = book.author
+        chapterCount = content.chapters.size
+        currentChapterIndex = target
+        overlayChapterIndex = target
+        currentChunks = emptyList()
+        currentChunkIndex = -1
+        chunksWereStartedForThisChapter = false
+        preparedError = null
+        sessionFinished = false
+        sessionEndedByStop = false
+        sleepTimerRemainingMs = 0L
+        sessionIsCloud = false
+        sessionIsOverlay = true
+        lastOverlaySpine = null
+        wantsPlayback = true
+        persistNow(progressForOverlay(target))
+        configureAudioSession(active = true)
+        installBookTtsRemoteCommands()
+        generation += 1
+        iosTtsListenLog("startOverlaySession chapter=$target bookId=${book.id}")
+        scope.launch {
+            session.setSpeed(overlaySpeed)
+            val started = session.start(target, readerOffset = null)
+            if (!started) {
+                preparedError = "This chapter has no narration audio"
+            } else {
+                refreshOverlayClipSpans(book.id, target)
+            }
+            updateBookTtsNowPlaying()
+        }
+        updateBookTtsNowPlaying()
+    }
+
+    private fun progressForOverlay(chapterIndex: Int): SharedBookTtsListeningProgress {
+        val bookId = currentBookId ?: return SharedBookTtsListeningProgress(bookId = "")
+        val safeChapterCount = chapterCount.coerceAtLeast(1)
+        return SharedBookTtsListeningProgress(
+            bookId = bookId,
+            chapterIndex = chapterIndex.coerceIn(0, safeChapterCount - 1),
+            chunkIndex = 0,
+            progressPercent = (chapterIndex.coerceIn(0, safeChapterCount - 1).toFloat() / safeChapterCount * 100f)
+                .coerceIn(0f, 99.9f),
+            speechRate = sessionSpeechRate,
+            pitch = sessionPitch,
+            completed = false,
+            updatedAt = currentTimestamp(),
+        )
+    }
+
+    private fun stopOverlaySession() {
+        overlaySession?.stop()
+        overlaySessionBookId = null
+        lastOverlaySpine = null
+        sessionIsOverlay = false
+        overlayClipSpans = emptyList()
+        overlaySpansBookId = null
+        overlaySpansChapter = -1
+    }
+
+    /**
+     * Drops narration bookkeeping when another surface claims the shared
+     * overlay engine (arbiter's `stopListenOverlay`).
+     *
+     * The engine is already stopped by the winner's claim; this only clears
+     * Listen's session flags and persists position, so the sheet never
+     * reports a session it no longer owns.
+     */
+    fun stopOverlayForHandoff() {
+        if (!sessionIsOverlay) return
+        iosTtsListenLog("stopOverlayForHandoff bookId=$currentBookId chapter=$currentChapterIndex")
+        persistNow(progressForOverlay(currentChapterIndex))
+        overlaySessionBookId = null
+        lastOverlaySpine = null
+        sessionIsOverlay = false
+        overlayClipSpans = emptyList()
+        overlaySpansBookId = null
+        overlaySpansChapter = -1
+    }
+
+    /** Transcript rows for a narrating chapter: the same texts the panel shows. */
+    private fun overlayChapterTranscriptTexts(bookId: String, chapter: Int): List<String> =
+        contentCache[bookId]?.chapters?.getOrNull(chapter)
+            ?.chunks?.map { it.text }?.filter { it.isNotBlank() }
+            .orEmpty()
+
+    /**
+     * Anchors the narrating chapter's clips to its transcript chunks, using
+     * the same text-element anchors the reader highlights — one line at a
+     * time instead of the fractional estimate. Clears (rather than keeps) on
+     * any mismatch, so a stale chapter's anchors can never display.
+     */
+    private suspend fun refreshOverlayClipSpans(bookId: String, chapter: Int) {
+        val chunkTexts = overlayChapterTranscriptTexts(bookId, chapter)
+        val session = overlaySession?.takeIf {
+            sessionIsOverlay && overlaySessionBookId == bookId &&
+                it.currentSpineItemIndex == overlaySpineByChapter[chapter]
+        }
+        val entries = session?.currentPlanEntries.orEmpty()
+        if (entries.isEmpty() || chunkTexts.isEmpty()) {
+            if (overlaySpansBookId == bookId && overlaySpansChapter == chapter) {
+                overlayClipSpans = emptyList()
+            }
+            return
+        }
+        val book = currentBook?.takeIf { it.id == bookId } ?: return
+        val readHtml = iosMediaOverlaySmilReaderFor(book.path ?: "") ?: return
+        val spans = withContext(Dispatchers.Default) {
+            runCatching {
+                sharedOverlayClipChunkSpans(
+                    clips = entries,
+                    readHtml = { path -> runCatching { readHtml(path) }.getOrNull() },
+                    chunkTexts = chunkTexts,
+                )
+            }.getOrDefault(emptyList())
+        }
+        // The chapter moved on while anchoring: never display the old table.
+        if (!sessionIsOverlay || currentBookId != bookId || overlayChapterIndex != chapter) return
+        if (overlaySession?.currentPlanEntries != entries) return
+        overlayClipSpans = spans
+        overlaySpansBookId = bookId
+        overlaySpansChapter = chapter
+    }
+
+    private fun observeOverlayEngine() {
+        val engine = overlayEngine ?: return
+        scope.launch {
+            engine.state.collect { state ->
+                // The engine is shared with the reader: only track it while a
+                // Listen narration session owns the book. Anything else is
+                // the reader's playback, which must not move Listen's UI.
+                if (!sessionIsOverlay || overlaySessionBookId != currentBookId) return@collect
+                overlayPlayback = state
+                val spine = state.spineItemIndex ?: run {
+                    lastOverlaySpine = null
+                    return@collect
+                }
+                if (spine == lastOverlaySpine) return@collect
+                lastOverlaySpine = spine
+                val chapter = overlayChapterIndexBySpine[spine] ?: return@collect
+                overlayChapterIndex = chapter
+                currentChapterIndex = chapter
+                persistNow(progressForOverlay(chapter))
+                // Narration crossing into a new chapter carries the transcript
+                // anchors with it, like Android's host reload does.
+                currentBookId?.let { refreshOverlayClipSpans(it, chapter) }
+                updateBookTtsNowPlaying()
+            }
+        }
     }
 
     /** Stops only the voice-preview utterance, leaving book playback untouched. */
@@ -688,7 +1193,37 @@ internal class IosBookTtsListeningController(
     /** Tracks the cloud voice chosen in the shared settings sheet. */
     fun setCloudVoiceIdentifier(identifier: String?) {
         cloudVoiceIdentifier = identifier
+        listenDefaults.setObject(
+            ReaderTtsVoiceOverride.encodeVoiceOverride(identifier),
+            forKey = IOS_LISTEN_TTS_CLOUD_VOICE_OVERRIDE_KEY,
+        )
+        iosTtsListenLog("setCloudVoice voice=${identifier ?: "<inherit>"}")
     }
+
+    /** Whether Listen picked its own cloud voice instead of following the reader's speaker. */
+    fun hasOwnCloudVoice(): Boolean =
+        listenDefaults.objectForKey(IOS_LISTEN_TTS_CLOUD_VOICE_OVERRIDE_KEY) != null
+
+    /**
+     * Follows the reader's live speaker while no override is stored; never persists, so the
+     * absent-key tri-state survives the host's sync. Once Listen picks its own voice this is a
+     * no-op and reader edits stop reaching it.
+     */
+    fun inheritCloudVoiceIdentifier(identifier: String?) {
+        if (hasOwnCloudVoice() || cloudVoiceIdentifier == identifier) return
+        cloudVoiceIdentifier = identifier
+    }
+
+    /**
+     * Effective cloud voice for a new session: Listen's pick when stored, else the reader's
+     * live speaker. Android benchmark: `loadListenTtsSpeaker` with reader inheritance.
+     */
+    fun resolveListenCloudVoiceIdentifier(inheritedVoiceIdentifier: String?): String? =
+        ReaderTtsVoiceOverride.resolveVoiceIdentifier(
+            isOverrideStored = hasOwnCloudVoice(),
+            storedOverride = listenDefaults.stringForKey(IOS_LISTEN_TTS_CLOUD_VOICE_OVERRIDE_KEY),
+            inheritedVoiceIdentifier = inheritedVoiceIdentifier,
+        )
 
     /** True when this build can serve cloud speech for Listen. */
     val isCloudAvailable: Boolean get() = cloudTts != null
@@ -701,7 +1236,9 @@ internal class IosBookTtsListeningController(
         persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         val chunk = currentChunks.getOrNull(currentChunkIndex) ?: return
         // Only the device engine has rate/pitch: cloud synthesis takes them server-side.
-        if (!sessionEngineIsCloud) localEngine.setSpeechParameters(safeRate, safePitch)
+        // In-memory push (see startEngineAt): Listen's rate must not rewrite
+        // the reader's stored pick.
+        if (!sessionEngineIsCloud) localEngine.applySessionVoice(selectedVoiceIdentifier, safeRate, safePitch)
         if ((state.isPlaying || state.isLoading) && currentChunkIndex >= 0) {
             startEngineAt(currentChunkIndex, playWhenReady = true)
         }
@@ -735,6 +1272,12 @@ internal class IosBookTtsListeningController(
     }
 
     private fun moveByChunk(delta: Int) {
+        // Lock-screen previous/next stepping: clips in narration mode, TTS
+        // chunks otherwise. Both stay inside the running source.
+        if (sessionIsOverlay) {
+            if (delta > 0) overlaySession?.nextClip() else overlaySession?.previousClip()
+            return
+        }
         if (currentChunks.isEmpty() || currentChunkIndex < 0) return
         val target = currentChunkIndex + delta
         if (target !in 0..currentChunks.lastIndex) return
@@ -743,6 +1286,13 @@ internal class IosBookTtsListeningController(
     }
 
     private fun moveChapterBy(direction: Int) {
+        // Narration steps across narrated chapters only: skipping an
+        // un-narrated middle is navigation within narration, and ending the
+        // run there would strand the listener on silence.
+        if (sessionIsOverlay) {
+            moveOverlayChapterBy(direction)
+            return
+        }
         val content = contentCache[currentBookId ?: return] ?: return
         val target = if (direction > 0) {
             content.chapters.indexOfFirst { it.index > currentChapterIndex && it.chunks.isNotEmpty() }
@@ -750,6 +1300,19 @@ internal class IosBookTtsListeningController(
             content.chapters.indexOfLast { it.index < currentChapterIndex && it.chunks.isNotEmpty() }
         }
         if (target >= 0) playChapterInternal(target, 0)
+    }
+
+    private fun moveOverlayChapterBy(direction: Int) {
+        val bookId = currentBookId ?: return
+        val content = contentCache[bookId] ?: return
+        val narrated = content.mediaOverlay.narratedChapterIndices.sorted()
+        if (narrated.isEmpty()) return
+        val target = if (direction > 0) {
+            narrated.firstOrNull { it > currentChapterIndex }
+        } else {
+            narrated.lastOrNull { it < currentChapterIndex }
+        } ?: return
+        playOverlayChapterInternal(target)
     }
 
     private fun playChapterInternal(requested: Int, chunkIndex: Int) {
@@ -824,6 +1387,12 @@ internal class IosBookTtsListeningController(
                 continueSession = continueSession,
                 playbackSource = SHARED_TTS_PLAYBACK_SOURCE_AUDIOBOOK,
                 totalChapters = chapterCount,
+                // Surface separation (Android `startBookListeningChapter` parity): Listen speaks
+                // with its own pinned cloud decision and its own cloud voice, never the
+                // reader's settings. The engine trusts the caller and still enforces backend
+                // availability and wallet spend itself.
+                speakerId = cloudVoiceIdentifier,
+                cloudModeAsserted = true,
             )
             return
         }
@@ -832,9 +1401,11 @@ internal class IosBookTtsListeningController(
             "startEngineAt chapter=$currentChapterIndex chunk=$safeChunk of ${chunks.size} " +
                 "playWhenReady=$playWhenReady"
         )
-        // Listen's own voice/rate choices, applied to the shared engine for this session.
-        localEngine.setSpeechParameters(sessionSpeechRate, sessionPitch)
-        selectedVoiceIdentifier?.let { localEngine.setVoice(it) }
+        // Listen's own voice/rate choices, applied to the shared engine for this
+        // session only: applySessionVoice is in-memory, so Listen's picks never
+        // leak into the reader's stored settings, and a null (system-default)
+        // pick clears the engine's stored voice instead of leaving a stale one.
+        localEngine.applySessionVoice(selectedVoiceIdentifier, sessionSpeechRate, sessionPitch)
         localEngine.start(
             chunks = engineChunks,
             bookTitle = currentBookTitle,
@@ -963,6 +1534,49 @@ internal class IosBookTtsListeningController(
      * coordinator-only signals the engine has no field for are merged back in afterwards.
      */
     private fun projectListenState(): SharedBookTtsListenState {
+        // Narration mode projects the overlay engine, not the TTS engines:
+        // the sheet stays on one source with no silent crossover. The
+        // transcript is the same chapter text TTS would speak, with the
+        // highlight anchored to the exact narrated line (the same
+        // text-element anchors the reader highlights) and the fractional
+        // estimate only as fallback — audio-first, never word sync.
+        if (sessionIsOverlay && currentBookId != null) {
+            val saved = currentBookId?.let(progressByBook::get)
+            val titles = currentBookId?.let(chapterTitlesByBook::get).orEmpty()
+            val bookId = currentBookId
+            val chapterTexts = overlayChapterTranscriptTexts(bookId ?: "", overlayChapterIndex)
+            val spans = overlayClipSpans.takeIf {
+                overlaySpansBookId == bookId && overlaySpansChapter == overlayChapterIndex
+            }.orEmpty()
+            val estimatedChunk = sharedOverlayTranscriptChunkIndex(
+                clipPlaybackIndex = overlayPlayback.clipIndex,
+                clipCount = overlaySession?.clipCount ?: 0,
+                chunkCount = chapterTexts.size,
+                clipFraction = overlayPlayback.clipProgress,
+                spans = spans,
+            )
+            val window = sharedTtsTranscriptWindow(estimatedChunk, chapterTexts.size)
+            return SharedBookTtsListenState(
+                connected = overlayPlayback.hasBook,
+                bookId = currentBookId,
+                isPlaying = overlayPlayback.isPlaying,
+                isLoading = overlayPlayback.isLoading,
+                chapterIndex = overlayChapterIndex,
+                chapterCount = chapterCount,
+                chunkIndex = estimatedChunk,
+                chunkCount = chapterTexts.size,
+                chapterTitle = titles.getOrNull(overlayChapterIndex),
+                progressPercent = ((saved?.progressPercent ?: 0f) / 100f).coerceIn(0f, 1f),
+                speechRate = overlayPlayback.speed.takeIf { it > 0f } ?: overlaySpeed,
+                pitch = sessionPitch,
+                sleepTimerRemainingMs = sleepTimerRemainingMs,
+                sessionFinished = sessionFinished,
+                sessionEndedByStop = sessionEndedByStop,
+                error = preparedError ?: overlayPlayback.error,
+                transcriptStartIndex = window.firstOrNull() ?: 0,
+                transcriptChunks = if (window.isEmpty()) emptyList() else window.map { chapterTexts[it] },
+            )
+        }
         val projected = engineSnapshot().toSharedBookTtsListenState(
             progress = SharedTtsListenSavedProgress(
                 chapterIndex = currentChapterIndex,
@@ -1041,9 +1655,13 @@ internal class IosBookTtsListeningController(
         persistNow(progressFor(currentChapterIndex, currentChunkIndex.coerceAtLeast(0), completed = false))
         generation += 1
         localEngine.stop()
+        // The sleep timer owns the whole Listen session, whichever engine
+        // holds it: narration must not outlive the timer that stopped TTS.
+        stopOverlaySession()
         currentChunks = emptyList()
         currentChunkIndex = -1
         currentBookId = null
+        currentBook = null
         wantsPlayback = false
         sessionEndedByStop = true
         deactivateAudioSession()
@@ -1119,15 +1737,28 @@ internal class IosBookTtsListeningController(
     ): IosTtsListenBook {
         val startedAt = currentTimestamp()
         iosTtsListenLog("buildIosTtsListenContent type=${book.type} path=${book.path ?: "<null>"}")
-        val chapters = when (book.type) {
-            FileType.PDF -> buildIosPdfListenChapters(book, replacements)
+        val bookTitle = book.title?.takeIf(String::isNotBlank)
+            ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
+        when (book.type) {
+            FileType.PDF -> return IosTtsListenBook(
+                bookId = book.id,
+                title = bookTitle,
+                chapters = buildIosPdfListenChapters(book, replacements),
+            )
             FileType.EPUB -> {
                 val built = buildIosEpubListenChapters(book, replacements)
                 iosTtsListenLog(
-                    "buildIosTtsListenContent fast EPUB path chapters=${built.size} " +
+                    "buildIosTtsListenContent fast EPUB path chapters=${built.chapters.size} " +
                         "elapsed=${currentTimestamp() - startedAt}ms"
                 )
-                built
+                return IosTtsListenBook(
+                    bookId = book.id,
+                    title = bookTitle,
+                    chapters = built.chapters,
+                    mediaOverlay = sharedListenMediaOverlayInfo(built.contentPaths, built.overlayIndex),
+                    overlayIndex = built.overlayIndex,
+                    chapterContentPaths = built.contentPaths,
+                )
             }
             else -> {
                 val shared = loadIosEpubBook(book)
@@ -1136,7 +1767,9 @@ internal class IosBookTtsListeningController(
                     "buildIosTtsListenContent loadIosEpubBook OK chapters=${shared.chapters.size} " +
                         "elapsed=${splitStart - startedAt}ms; splitting chunks..."
                 )
-                shared.chapters.mapIndexed { index, chapter ->
+                // Non-EPUB types never carry media overlays: narration is an
+                // EPUB 3 package fact, so there is nothing to map here.
+                val chapters = shared.chapters.mapIndexed { index, chapter ->
                     if (index % 10 == 0) {
                         iosTtsListenLog(
                             "buildIosTtsListenContent splitting chapter $index of ${shared.chapters.size} " +
@@ -1168,28 +1801,43 @@ internal class IosBookTtsListeningController(
                         },
                     )
                 }
+                return IosTtsListenBook(
+                    bookId = book.id,
+                    title = bookTitle,
+                    chapters = chapters,
+                )
             }
         }
-        return IosTtsListenBook(
-            bookId = book.id,
-            title = book.title?.takeIf { it.isNotBlank() }
-                ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName },
-            chapters = chapters,
-        )
     }
+
+    private data class IosEpubListenContent(
+        val chapters: List<IosTtsListenChapter>,
+        val overlayIndex: SharedMediaOverlayIndex,
+        val contentPaths: List<String>,
+    )
 
     private fun buildIosEpubListenChapters(
         book: BookItem,
         replacements: ReaderTtsReplacementPreferences,
-    ): List<IosTtsListenChapter> {
-        val path = book.path.resolveIosEpubSourcePath()
+    ): IosEpubListenContent {
+        val archive = openIosZipArchive(book.path)
             ?: error("EPUB path is unavailable")
+        // Register the stable path (not this transient instance) so
+        // narration's SMIL/audio borrows resolve through the store for a book
+        // the reader never opened. Without this the OPF index above reports
+        // narration while every archive read fails, which presents as
+        // per-chapter "no narration audio" on a narrated book. Path-only, so
+        // a reader-open book keeps its instance and nothing doubles the
+        // resident 124 MB reference.
+        book.path?.takeIf { it.isNotBlank() }?.let { IosEpubResourceStore.register(book.id, it) }
+        val overlayIndex = runCatching { loadSharedEpubMediaOverlayIndex(archive) }
+            .getOrDefault(SharedMediaOverlayIndex.EMPTY)
         val spineChapters = loadSharedEpubTtsChapters(
-            archive = IosZipEpubArchive(path),
-            fileName = book.displayName.ifBlank { path.substringAfterLast('/') },
+            archive = archive,
+            fileName = book.displayName.ifBlank { (book.path ?: "").substringAfterLast('/') },
         )
-        iosTtsListenLog("buildIosEpubListenChapters spineDocs=${spineChapters.size} path=$path")
-        return spineChapters.mapIndexed { index, spineChapter ->
+        iosTtsListenLog("buildIosEpubListenChapters spineDocs=${spineChapters.size} ref=${book.path}")
+        val chapters = spineChapters.mapIndexed { index, spineChapter ->
             // Same stable-CFI contract as the shared-book path above: real
             // offsets, no `headless/...`, so progress survives into the reader.
             val plainText = spineChapter.plainText
@@ -1213,6 +1861,11 @@ internal class IosBookTtsListeningController(
                 chunks = chunks,
             )
         }
+        return IosEpubListenContent(
+            chapters = chapters,
+            overlayIndex = overlayIndex,
+            contentPaths = spineChapters.map { it.contentPath },
+        )
     }
 
     private suspend fun buildIosPdfListenChapters(
@@ -1271,6 +1924,17 @@ internal class IosBookTtsListeningController(
     }
 
     private suspend fun extractIosPdfPageTexts(path: String): List<String> {
+        // Scoped resolve: folder-book refs need held scope across FPDF open.
+        // `resolveIosReadablePath` alone dies on device before FPDF reads.
+        val scope = acquireScopeForBookPath(path)
+        try {
+            return extractIosPdfPageTextsScoped(path)
+        } finally {
+            scope?.close()
+        }
+    }
+
+    private suspend fun extractIosPdfPageTextsScoped(path: String): List<String> {
         // `resolveIosReadablePath` is the single resolver for the three shapes a book path can
         // take. This used to be a local file://-only copy, so a folder-book ref
         // (`ios-folder-book://...`) was handed to PDFium verbatim and every PDF failed with
@@ -1384,6 +2048,13 @@ internal class IosBookTtsListeningController(
             MPNowPlayingInfoPropertyPlaybackRate to if (state.isPlaying) state.speechRate.toDouble() else 0.0,
         )
         val commands = MPRemoteCommandCenter.sharedCommandCenter()
+        if (sessionIsOverlay) {
+            // Narration steps by clip, not by TTS chunk: keep both directions
+            // live while a chapter is loaded rather than reporting chunk -1.
+            commands.previousTrackCommand.enabled = overlayPlayback.hasBook
+            commands.nextTrackCommand.enabled = overlayPlayback.hasBook
+            return
+        }
         commands.previousTrackCommand.enabled = state.chunkIndex > 0
         commands.nextTrackCommand.enabled = state.chunkIndex in 0 until (state.chunkCount - 1)
     }

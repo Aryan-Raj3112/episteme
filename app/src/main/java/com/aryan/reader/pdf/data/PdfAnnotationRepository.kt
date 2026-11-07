@@ -26,6 +26,7 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationSidecarCodec
 import com.aryan.reader.shared.pdf.SharedPdfLegacyInkStreamEncoder
 import com.aryan.reader.data.writeJsonAtomically
 import com.aryan.reader.data.writeJsonAtomicallyIfChanged
+import com.aryan.reader.data.withSidecarIoLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -64,7 +65,9 @@ class PdfAnnotationRepository(private val context: Context) {
 
                 if (annotations.isEmpty()) {
                     val file = getFile(bookId)
-                    if (file.exists()) file.delete()
+                    file.withSidecarIoLock {
+                        if (file.exists()) file.delete()
+                    }
                     return@withContext
                 }
 
@@ -102,16 +105,22 @@ class PdfAnnotationRepository(private val context: Context) {
         return withContext(Dispatchers.IO) {
             try {
                 val file = getFile(bookId)
-                if (file.exists()) {
-                    Timber.tag("AnnotationSync").d("Loaded local JSON for $bookId. Size: ${file.length()}")
-                    // Streaming decode: annotation sidecars can grow to many MB and
-                    // materializing the whole document OOMs under memory pressure.
-                    file.inputStream().use { stream ->
-                        AnnotationSerializer.fromJson(stream)
+                // Read under the same lock writers use: without it a reader can
+                // land between the writer's backup rotation and staging install,
+                // see no destination, and return empty state that a later save
+                // persists as a wipe.
+                file.withSidecarIoLock {
+                    if (file.exists()) {
+                        Timber.tag("AnnotationSync").d("Loaded local JSON for $bookId. Size: ${file.length()}")
+                        // Streaming decode: annotation sidecars can grow to many MB and
+                        // materializing the whole document OOMs under memory pressure.
+                        file.inputStream().use { stream ->
+                            AnnotationSerializer.fromJson(stream)
+                        }
+                    } else {
+                        Timber.tag("AnnotationSync").d("No local annotation file found for $bookId")
+                        emptyMap()
                     }
-                } else {
-                    Timber.tag("AnnotationSync").d("No local annotation file found for $bookId")
-                    emptyMap()
                 }
             } catch (e: Exception) {
                 Timber.tag("AnnotationSync").e(e, "Failed to load local annotations")
@@ -138,19 +147,21 @@ class PdfAnnotationRepository(private val context: Context) {
         if (ids.isEmpty()) return
         withContext(Dispatchers.IO) {
             val file = getDeletedFile(bookId)
-            val existing = if (file.isFile) {
-                SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(file.readText())
-            } else {
-                emptyMap()
-            }
-            val next = existing.toMutableMap()
-            ids.forEach { id -> next[id] = maxOf(next[id] ?: 0L, deletedAt) }
-            val json = SharedPdfAnnotationSidecarCodec.annotationDeletionsJson(next)
-            if (file.isFile && file.readText() == json) return@withContext
-            file.writeJsonAtomically(json)
-            logCloudAnnotationSyncTrace {
-                "android.repository.mark_deleted_ink book=$bookId ids=${ids.sorted()} " +
-                    "bytes=${file.length()} ts=${file.lastModified()}"
+            file.withSidecarIoLock {
+                val existing = if (file.isFile) {
+                    SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(file.readText())
+                } else {
+                    emptyMap()
+                }
+                val next = existing.toMutableMap()
+                ids.forEach { id -> next[id] = maxOf(next[id] ?: 0L, deletedAt) }
+                val json = SharedPdfAnnotationSidecarCodec.annotationDeletionsJson(next)
+                if (file.isFile && file.readText() == json) return@withSidecarIoLock
+                file.writeJsonAtomically(json)
+                logCloudAnnotationSyncTrace {
+                    "android.repository.mark_deleted_ink book=$bookId ids=${ids.sorted()} " +
+                        "bytes=${file.length()} ts=${file.lastModified()}"
+                }
             }
         }
     }
@@ -162,28 +173,32 @@ class PdfAnnotationRepository(private val context: Context) {
     ) {
         withContext(Dispatchers.IO) {
             val file = getDeletedFile(bookId)
-            if (deletions.isEmpty()) {
-                if (file.exists()) file.delete()
-                return@withContext
-            }
-            val json = SharedPdfAnnotationSidecarCodec.annotationDeletionsJson(deletions)
-            if (!file.isFile || file.readText() != json) {
-                file.writeJsonAtomically(json)
-            }
-            timestamp?.takeIf { it > 0L }?.let(file::setLastModified)
-            logCloudAnnotationSyncTrace {
-                "android.repository.replace_deleted_ink book=$bookId count=${deletions.size} " +
-                    "bytes=${file.length()} ts=${file.lastModified()}"
+            file.withSidecarIoLock {
+                if (deletions.isEmpty()) {
+                    if (file.exists()) file.delete()
+                    return@withSidecarIoLock
+                }
+                val json = SharedPdfAnnotationSidecarCodec.annotationDeletionsJson(deletions)
+                if (!file.isFile || file.readText() != json) {
+                    file.writeJsonAtomically(json)
+                }
+                timestamp?.takeIf { it > 0L }?.let(file::setLastModified)
+                logCloudAnnotationSyncTrace {
+                    "android.repository.replace_deleted_ink book=$bookId count=${deletions.size} " +
+                        "bytes=${file.length()} ts=${file.lastModified()}"
+                }
             }
         }
     }
 
     fun getDeletedAnnotationsFileForSync(bookId: String): File? {
         val file = getDeletedFile(bookId)
-        val deletions = if (file.isFile) {
-            SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(file.readText())
-        } else {
-            emptyMap()
+        val deletions = file.withSidecarIoLock {
+            if (file.isFile) {
+                SharedPdfAnnotationSidecarCodec.annotationDeletionsFromJson(file.readText())
+            } else {
+                emptyMap()
+            }
         }
         return if (deletions.isNotEmpty()) file else null
     }

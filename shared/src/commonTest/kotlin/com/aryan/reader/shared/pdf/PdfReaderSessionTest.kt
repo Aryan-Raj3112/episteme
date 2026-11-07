@@ -118,6 +118,30 @@ class PdfReaderSessionTest {
     }
 
     @Test
+    fun `local pdf theme keeps persisted state while global uses defaults`() {
+        val persisted = SharedPdfReaderState.initial(pageCount = 4)
+            .reduce(SharedPdfReaderAction.ThemeChanged("sepia"))
+        val defaults = com.aryan.reader.shared.reader.ReaderSettings(themeId = "no_theme")
+
+        val local = initialSharedPdfReaderState(
+            persistedState = persisted,
+            defaults = defaults,
+            initialPageIndex = 0,
+            isLocalTheme = true,
+            localThemeSettings = com.aryan.reader.shared.reader.ReaderSettings(themeId = "sepia"),
+        )
+        assertEquals("sepia", local.themeId)
+
+        val global = initialSharedPdfReaderState(
+            persistedState = persisted,
+            defaults = defaults,
+            initialPageIndex = 0,
+            isLocalTheme = false,
+        )
+        assertEquals("no_theme", global.themeId)
+    }
+
+    @Test
     fun `reverse color mode and image policy persist while legacy state defaults to rgb`() {
         val state = SharedPdfReaderState.initial(pageCount = 2)
             .reduce(SharedPdfReaderAction.ReverseColorModeChanged(PdfReverseColorMode.LUMA_SRGB_LINEAR))
@@ -163,11 +187,11 @@ class PdfReaderSessionTest {
     }
 
     @Test
-    fun `scroll lock supports one thousand percent and clamps larger restored values`() {
+    fun `scroll lock supports five thousand percent and clamps larger restored values`() {
         val atMaximum = SharedPdfReaderState.initial(pageCount = 1)
-            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 10f, 1f, 2f))
+            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 50f, 1f, 2f))
         val aboveMaximum = atMaximum
-            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 25f, 3f, 4f))
+            .reduce(SharedPdfReaderAction.ScrollLockChanged(true, 75f, 3f, 4f))
 
         assertEquals(PDF_MAX_ZOOM_SCALE, atMaximum.lockedZoomScale)
         assertEquals(PDF_MAX_ZOOM_SCALE, aboveMaximum.lockedZoomScale)

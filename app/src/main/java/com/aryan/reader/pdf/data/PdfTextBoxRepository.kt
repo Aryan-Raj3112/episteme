@@ -23,6 +23,7 @@ import android.content.Context
 import com.aryan.reader.data.AndroidBookArtifactPaths
 import com.aryan.reader.logCloudAnnotationSyncTrace
 import com.aryan.reader.data.writeJsonAtomically
+import com.aryan.reader.data.withSidecarIoLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -44,22 +45,24 @@ class PdfTextBoxRepository(private val context: Context) {
     suspend fun saveTextBoxes(bookId: String, textBoxes: List<PdfTextBox>) {
         withContext(Dispatchers.IO) {
             val file = getFile(bookId)
-            if (textBoxes.isEmpty()) {
-                if (file.exists()) file.delete()
-                return@withContext
-            }
-            val json = TextBoxSerializer.toJson(textBoxes)
-            if (file.exists() && file.readText() == json) {
+            file.withSidecarIoLock {
+                if (textBoxes.isEmpty()) {
+                    if (file.exists()) file.delete()
+                    return@withSidecarIoLock
+                }
+                val json = TextBoxSerializer.toJson(textBoxes)
+                if (file.exists() && file.readText() == json) {
+                    logCloudAnnotationSyncTrace {
+                        "android.repository.save_textboxes_noop book=$bookId count=${textBoxes.size} " +
+                            "bytes=${file.length()} ts=${file.lastModified()}"
+                    }
+                    return@withSidecarIoLock
+                }
+                file.writeJsonAtomically(json)
                 logCloudAnnotationSyncTrace {
-                    "android.repository.save_textboxes_noop book=$bookId count=${textBoxes.size} " +
+                    "android.repository.save_textboxes book=$bookId count=${textBoxes.size} " +
                         "bytes=${file.length()} ts=${file.lastModified()}"
                 }
-                return@withContext
-            }
-            file.writeJsonAtomically(json)
-            logCloudAnnotationSyncTrace {
-                "android.repository.save_textboxes book=$bookId count=${textBoxes.size} " +
-                    "bytes=${file.length()} ts=${file.lastModified()}"
             }
         }
     }
@@ -67,10 +70,16 @@ class PdfTextBoxRepository(private val context: Context) {
     suspend fun loadTextBoxes(bookId: String): List<PdfTextBox> {
         return withContext(Dispatchers.IO) {
             val file = getFile(bookId)
-            if (file.exists()) {
-                TextBoxSerializer.fromJson(file.readText())
-            } else {
-                emptyList()
+            // Read under the sidecar lock: a reader landing between the
+            // writer's backup rotation and staging install would otherwise
+            // see no destination and return empty state that a later save
+            // persists as a wipe.
+            file.withSidecarIoLock {
+                if (file.exists()) {
+                    TextBoxSerializer.fromJson(file.readText())
+                } else {
+                    emptyList()
+                }
             }
         }
     }
@@ -88,6 +97,8 @@ class PdfTextBoxRepository(private val context: Context) {
 
     fun deleteForBook(bookId: String) {
         val file = getFile(bookId)
-        if(file.exists()) file.delete()
+        file.withSidecarIoLock {
+            if (file.exists()) file.delete()
+        }
     }
 }

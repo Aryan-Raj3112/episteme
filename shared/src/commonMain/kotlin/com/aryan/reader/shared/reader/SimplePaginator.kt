@@ -1,6 +1,8 @@
 package com.aryan.reader.shared.reader
 
 import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.shared.sharedNativeFontSizeSp
+import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 
 class SimplePaginator : SharedReaderPaginator {
     override suspend fun paginate(
@@ -141,8 +143,10 @@ class SimplePaginator : SharedReaderPaginator {
     ): Int {
         val usableWidth = (viewportWidth - settings.resolvedHorizontalMargin * 2).coerceAtLeast(360)
         val usableHeight = (viewportHeight - settings.resolvedVerticalMargin * 2).coerceAtLeast(360)
-        val averageCharWidth = settings.fontSize * 0.55f
-        val lineHeight = settings.fontSize * settings.lineSpacing
+        val averageCharWidth = settings.sharedNativeFontSizeSp() * 0.55f
+        // Native pagination leading, Android benchmark parity: the estimate has to
+        // use the leading the measured paginator draws with.
+        val lineHeight = settings.sharedPaginationBaseLineHeightSp()
         val charsPerLine = (usableWidth / averageCharWidth).toInt().coerceAtLeast(35)
         val linesPerPage = (usableHeight / lineHeight).toInt().coerceAtLeast(12)
         return (charsPerLine * linesPerPage).coerceIn(900, 4_500)

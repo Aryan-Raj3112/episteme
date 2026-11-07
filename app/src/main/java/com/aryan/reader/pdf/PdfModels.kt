@@ -42,6 +42,22 @@ internal fun restorePdfAnnotationsById(
     return current.map { annotation -> byId[annotation.id] ?: annotation }
 }
 
+/**
+ * Annotations that [after] no longer holds, matched by id across pages.
+ *
+ * Undo and redo both edit the visible annotation set, and both have to hand
+ * the removed strokes to the sidecar writer: an annotation that merely
+ * disappears from memory stays in the persisted file and in any folder sidecar
+that already merged it, which is how an undone stroke came back on reopen.
+ */
+internal fun removedPdfAnnotations(
+    before: Map<Int, List<PdfAnnotation>>,
+    after: Map<Int, List<PdfAnnotation>>,
+): List<PdfAnnotation> = before.entries.flatMap { (page, annotations) ->
+    val survivingIds = (after[page] ?: emptyList()).mapTo(HashSet()) { it.id }
+    annotations.filterNot { it.id in survivingIds }
+}
+
 internal typealias DockLocation = com.aryan.reader.shared.DockLocation
 
 internal typealias DisplayMode = com.aryan.reader.shared.PdfDisplayMode

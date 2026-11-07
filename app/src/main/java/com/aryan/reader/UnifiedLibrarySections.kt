@@ -40,6 +40,8 @@ import androidx.compose.ui.unit.dp
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.SortOrder
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
 import com.aryan.reader.shared.ui.AppIcon
 
 /**
@@ -182,6 +184,8 @@ internal fun UnifiedLibraryTopBar(
     onAccountClick: () -> Unit,
     searchQuery: String?,
     onSearchQueryChange: (String) -> Unit,
+    searchInsideFiles: Boolean = false,
+    onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
 ) {
     val title = selectedShelf?.name ?: when (section) {
         UnifiedLibrarySection.HOME -> null
@@ -207,6 +211,9 @@ internal fun UnifiedLibraryTopBar(
         searchPlaceholder = stringResource(R.string.unified_library_search_books),
         clearSearchDescription = stringResource(R.string.content_desc_clear_query),
         onSearchQueryChange = onSearchQueryChange,
+        searchInsideFiles = searchInsideFiles,
+        onSearchInsideFilesChange = onSearchInsideFilesChange,
+        searchInsideFilesLabel = stringResource(R.string.unified_library_search_inside_files),
     )
 }
 
@@ -258,7 +265,13 @@ internal fun UnifiedLibraryHome(
     onCloseTab: (RecentFileItem) -> Unit,
     onCloseAllTabs: () -> Unit,
     widthSizeClass: WindowWidthSizeClass,
+    searchInsideFiles: Boolean = false,
+    contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
+    onContentHitClick: (RecentFileItem, SharedGlobalSearchHit, String) -> Unit = { _, _, _ -> },
 ) {
+    // Content search replaces the grid: one row per matching book, its matched
+    // text, and an expand affordance for the rest of that book's matches.
+    val contentSearchActive = searchInsideFiles && query.isNotBlank()
     com.aryan.reader.shared.ui.SharedAndroidUnifiedLibraryHome(
         books = books,
         continueReading = continueReading.takeIf { filter == UnifiedLibraryFilter.ALL && query.isBlank() },
@@ -267,13 +280,31 @@ internal fun UnifiedLibraryHome(
         advancedFilterCount = advancedFilterCount,
         useListView = useListView,
         strings = com.aryan.reader.shared.ui.SharedAndroidUnifiedHomeStrings(
-            noBooks = stringResource(R.string.unified_library_no_books),
+            noBooks = if (contentSearchActive) {
+                stringResource(R.string.library_content_search_no_results)
+            } else {
+                stringResource(R.string.unified_library_no_books)
+            },
             filterBooks = stringResource(R.string.content_desc_filter),
             gridView = stringResource(R.string.unified_library_grid_view),
             listView = stringResource(R.string.unified_library_list_view),
             filterLabels = UnifiedLibraryFilter.entries.associateWith { stringResource(it.labelRes) },
         ),
         itemKey = { it.bookId },
+        contentSearchActive = contentSearchActive,
+        contentSearchResults = contentSearchResults,
+        contentResultRow = { item, result, expanded, onToggleExpanded ->
+            LibraryContentSearchResultRow(
+                item = item,
+                result = result,
+                expanded = expanded,
+                onToggleExpanded = onToggleExpanded,
+                onClick = { onBookClick(item) },
+                onLongClick = { onBookLongClick(item) },
+                onHitClick = { hit -> onContentHitClick(item, hit, query) },
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
         onFilterChange = onFilterChange,
         onControls = onControlsClick,
         onAdvancedFilters = onAdvancedFiltersClick,
@@ -333,8 +364,10 @@ internal fun UnifiedShelvesSection(
     downloadingBookIds: Set<String>,
     usePdfFileNameAsDisplayName: Boolean,
     widthSizeClass: WindowWidthSizeClass,
+    sortOrder: SortOrder,
     onShelfSelected: (Shelf) -> Unit,
     onBreadcrumbNavigate: (String?) -> Unit,
+    onSortOrderChange: (SortOrder) -> Unit,
     onRenameShelf: (String) -> Unit,
     onDeleteShelf: (String) -> Unit,
     onAddBooks: (String) -> Unit,
@@ -406,6 +439,11 @@ internal fun UnifiedShelvesSection(
                 usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             )
         },
+        sortOrder = sortOrder,
+        sortLabels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
+        sortDescription = stringResource(R.string.content_desc_sort),
+        selectedSortDescription = stringResource(R.string.content_desc_selected),
+        onSortOrderChange = onSortOrderChange,
     )
 }
 

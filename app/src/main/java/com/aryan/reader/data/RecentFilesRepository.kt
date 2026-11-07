@@ -134,6 +134,7 @@ class RecentFilesRepository(
             database.customFontDao().clearAll()
             database.audiobookDao().clearAll()
             database.bookTtsListeningProgressDao().clearAll()
+            database.mediaOverlayNarrationProgressDao().clearAll()
             database.shelfDao().clearAllBookShelfCrossRefs()
             database.shelfDao().clearAll()
             database.tagDao().clearAllBookTagCrossRefs()

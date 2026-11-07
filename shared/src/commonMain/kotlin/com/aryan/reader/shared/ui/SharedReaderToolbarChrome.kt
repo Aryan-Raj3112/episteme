@@ -159,10 +159,16 @@ fun SharedReaderToolbarSurface(
 }
 
 @Composable
-fun SharedEpubTopToolbarRow(content: @Composable RowScope.() -> Unit) {
+fun SharedEpubTopToolbarRow(
+    topInset: Dp = 0.dp,
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxSize()
+            // The inset lives inside the toolbar's Surface so the bar's colour reaches the
+            // screen edge behind the status bar instead of leaving an unpainted strip.
+            .padding(top = topInset)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -170,12 +176,25 @@ fun SharedEpubTopToolbarRow(content: @Composable RowScope.() -> Unit) {
     )
 }
 
+/**
+ * The EPUB bottom bar's row: Android's benchmark layout.
+ *
+ * `height` is explicit because the bar's Surface cannot fix its own height - iOS paints the bottom
+ * safe-area inset *inside* that Surface (so the tonal background reaches the screen edge), which
+ * means the Surface wraps its content and `fillMaxSize()` would collapse the row to the buttons'
+ * minimum interactive size (48dp) instead of the 45dp every host's stacking maths reserves.
+ * `SharedReaderEpubBottomBarHeight` is that 45dp and the default here has to stay equal to it.
+ */
 @Composable
-fun SharedEpubBottomToolbarRow(content: @Composable RowScope.() -> Unit) {
+fun SharedEpubBottomToolbarRow(
+    height: Dp = SharedReaderEpubBottomBarHeight,
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(
         modifier = Modifier
-            .fillMaxSize()
+            .fillMaxWidth()
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+            .height(height)
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceAround,
@@ -235,6 +254,7 @@ fun <T> SharedReaderOverflowSectionList(
  * jump bar. Keeping the heights and stacking in one place guarantees the
  * slider can never overlap the jump bar in any chrome/safe-area state.
  */
+val SharedReaderEpubTopBarHeight = 55.dp
 val SharedReaderEpubBottomBarHeight = 45.dp
 val SharedReaderPdfBottomBarHeight = 56.dp
 val SharedReaderJumpBarHeight = 40.dp

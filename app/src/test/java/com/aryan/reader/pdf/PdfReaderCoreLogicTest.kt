@@ -48,6 +48,44 @@ class PdfReaderCoreLogicTest {
     }
 
     @Test
+    fun `undo and redo report exactly the strokes that left the annotation set`() {
+        fun stroke(id: String, page: Int) = PdfAnnotation(
+            type = AnnotationType.INK,
+            pageIndex = page,
+            points = listOf(PdfPoint(0.1f, 0.2f, 1L)),
+            color = Color.Red,
+            strokeWidth = 0.01f,
+            id = id,
+        )
+
+        val kept = stroke("kept", page = 0)
+        val undone = stroke("undone", page = 0)
+        val otherPage = stroke("other", page = 1)
+        val before = mapOf(0 to listOf(kept, undone), 1 to listOf(otherPage))
+
+        // Undoing a draw removes that stroke, and the sidecar writer has to be
+        // told so it can drop and tombstone it; otherwise the next merge puts
+        // the stroke back on reopen.
+        assertEquals(
+            listOf("undone"),
+            removedPdfAnnotations(before, mapOf(0 to listOf(kept), 1 to listOf(otherPage))).map { it.id },
+        )
+
+        // Redoing an erase removes nothing: it only puts a stroke back.
+        assertEquals(
+            emptyList<String>(),
+            removedPdfAnnotations(mapOf(0 to listOf(kept)), before).map { it.id },
+        )
+
+        // A stroke that was only moved is still the same stroke.
+        val moved = kept.copy(points = listOf(PdfPoint(0.5f, 0.5f, 2L)))
+        assertEquals(
+            emptyList<String>(),
+            removedPdfAnnotations(before, mapOf(0 to listOf(moved, undone), 1 to listOf(otherPage))).map { it.id },
+        )
+    }
+
+    @Test
     fun `text dock applies IME padding only when the host has not already resized`() {
         assertTrue(
             shouldApplyPdfTextDockImePadding(

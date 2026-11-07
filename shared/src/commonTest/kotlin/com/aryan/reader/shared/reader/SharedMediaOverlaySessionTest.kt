@@ -150,6 +150,100 @@ class SharedMediaOverlaySessionTest {
         assertEquals(2, session.clipCount)
     }
 
+    // --- resuming ---------------------------------------------------------------------------
+
+    /**
+     * Reopening a book resumes the narration at the sentence that was last heard, not at the page the
+     * reader restored to.
+     *
+     * The saved reading position is page-granular — and a backgrounded reader observes no pages at
+     * all — so on a chapter of several hundred sentences the clip it resolves to can be the chapter's
+     * first. The stored narration position is the only record of what was actually played.
+     */
+    @Test
+    fun `a stored narration position wins over the reader's page`() = runTest {
+        val store = RecordingProgressStore(saved = progress(chapterIndex = 1, clipIndex = 2))
+        val session = session(
+            projector = projector(clip(0, 0, 1_000), clip(1, 1_000, 2_000), clip(2, 2_000, 3_000)),
+            store = store
+        )
+
+        assertTrue(session.start(chapterIndex = 1, readerOffset = 200))
+
+        assertEquals(2, engine.played.last().startPlaybackIndex)
+    }
+
+    /**
+     * A chapter the reader moved to deliberately narrates from *their* position. Resuming the stored
+     * position there would rewind a reader who tapped a chapter.
+     */
+    @Test
+    fun `an explicit move narrates the reader's position over the stored one`() = runTest {
+        val store = RecordingProgressStore(saved = progress(chapterIndex = 1, clipIndex = 2))
+        val session = session(
+            projector = projector(clip(0, 0, 1_000), clip(1, 1_000, 2_000), clip(2, 2_000, 3_000)),
+            store = store
+        )
+
+        assertTrue(session.start(chapterIndex = 1, readerOffset = 200, resumeSavedNarration = false))
+
+        assertEquals(0, engine.played.last().startPlaybackIndex)
+    }
+
+    /**
+     * Reading on within the chapter narration stopped in is the reader reading on: the *later* of the
+     * two positions wins, so they hear from where they are looking.
+     */
+    @Test
+    fun `a reader positioned past the stored clip starts from the reader`() = runTest {
+        val store = RecordingProgressStore(saved = progress(chapterIndex = 1, clipIndex = 1))
+        val session = session(
+            projector = projector(clip(0, 0, 1_000), clip(1, 1_000, 2_000), clip(2, 2_000, 3_000)),
+            store = store
+        )
+
+        assertTrue(session.start(chapterIndex = 1, readerOffset = 2_400))
+
+        assertEquals(2, engine.played.last().startPlaybackIndex)
+    }
+
+    /**
+     * A TOC-split book has several reader chapters on one spine item, so a stored position there is
+     * not automatically this chapter's: narration must not jump into a different chapter's text.
+     */
+    @Test
+    fun `a stored position in another chapter of the same spine item is ignored`() = runTest {
+        val store = RecordingProgressStore(saved = progress(chapterIndex = 2, clipIndex = 2))
+        val session = session(
+            projector = projector(clip(0, 0, 1_000), clip(1, 1_000, 2_000), clip(2, 2_000, 3_000)),
+            store = store
+        )
+
+        assertTrue(session.start(chapterIndex = 1, readerOffset = null))
+
+        assertEquals(0, engine.played.last().startPlaybackIndex)
+    }
+
+    /**
+     * Every clip announces itself to the store, which is what makes the position survive a close: the
+     * save happens on the clip boundary, not on a page turn the reader may never make.
+     */
+    @Test
+    fun `each clip entered is recorded`() = runTest {
+        val store = RecordingProgressStore()
+        val session = session(
+            projector = projector(clip(0, 0, 1_000), clip(1, 1_000, 2_000)),
+            store = store
+        )
+
+        session.start(chapterIndex = 1, readerOffset = null)
+        session.nextClip()
+
+        assertEquals(listOf(0, 1), store.recorded.map { it.clipIndex })
+        assertEquals("book", store.recorded.first().bookId)
+        assertEquals(1, store.recorded.last().spineItemIndex)
+    }
+
     // --- continuation -----------------------------------------------------------------------
 
     /**
@@ -412,7 +506,10 @@ class SharedMediaOverlaySessionTest {
      * Chapter 1 -> spine 1 is the arrangement every other test uses, because it is the one a reader
      * pressing play in the middle of a chapter actually produces.
      */
-    private fun session(projector: SharedMediaOverlayProjectionSource): SharedMediaOverlaySession {
+    private fun session(
+        projector: SharedMediaOverlayProjectionSource,
+        store: SharedMediaOverlayNarrationProgressStore? = null,
+    ): SharedMediaOverlaySession {
         engine = RecordingEngine()
         return SharedMediaOverlaySession(
             engine = engine,
@@ -423,8 +520,35 @@ class SharedMediaOverlaySessionTest {
             totalDurationMs = null,
             overlayIndex = index(1 to "OEBPS/Text/c.xhtml"),
             spineItemIndexByChapter = mapOf(1 to 1),
-            spineItemsInReadingOrder = listOf(1)
+            spineItemsInReadingOrder = listOf(1),
+            narrationProgressStore = store
         )
+    }
+
+    /** The book's stored narration position, for the resume cases. */
+    private fun progress(
+        chapterIndex: Int?,
+        clipIndex: Int,
+        spineItemIndex: Int = 1
+    ) = SharedMediaOverlayNarrationProgress(
+        bookId = "book",
+        spineItemIndex = spineItemIndex,
+        chapterIndex = chapterIndex,
+        clipIndex = clipIndex
+    )
+
+    /** Records what the session persists, and answers with a fixed stored position. */
+    private class RecordingProgressStore(
+        private val saved: SharedMediaOverlayNarrationProgress? = null
+    ) : SharedMediaOverlayNarrationProgressStore {
+        val recorded = mutableListOf<SharedMediaOverlayNarrationProgress>()
+
+        override suspend fun load(bookId: String): SharedMediaOverlayNarrationProgress? =
+            saved?.takeIf { it.bookId == bookId }
+
+        override fun record(progress: SharedMediaOverlayNarrationProgress) {
+            recorded += progress
+        }
     }
 
     /**

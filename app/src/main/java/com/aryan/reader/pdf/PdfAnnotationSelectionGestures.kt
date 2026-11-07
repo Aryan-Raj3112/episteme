@@ -14,6 +14,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.PointerType
 import androidx.compose.ui.input.pointer.positionChanged
 import com.aryan.reader.pdf.data.PdfAnnotation
+import com.aryan.reader.shared.pdf.sharedPdfSelectionDispatchSlopPx
 
 internal data class PdfSelectionCamera(val zoom: Float, val panX: Float, val panY: Float)
 
@@ -105,14 +106,18 @@ internal suspend fun PointerInputScope.detectPdfInkSelectionGestures(
             }
         }
 
-        // 2. Stroke hit: tap selects, drag moves.
+        // 2. Stroke hit: tap selects, drag moves. The dispatch hit is tight
+        // (sharedPdfSelectionDispatchSlopPx: a fraction of the finger slop) so
+        // lassos can start in the gaps between strokes; a down that ends as a
+        // tap re-hits generously in the lasso session below, keeping small
+        // strokes tappable (shared parity rule, same as the shared engine).
         val hit = findPdfTopmostSelectionHit(
             annotations = pageAnnotations,
             normX = startNorm.x,
             normY = startNorm.y,
             pageWidthPx = page.width.coerceAtLeast(1f),
             pageAspectRatio = aspect,
-            tapSlopPx = touchSlopPx,
+            tapSlopPx = sharedPdfSelectionDispatchSlopPx(touchSlopPx),
         )
         if (hit != null) {
             runTapOrMoveSession(
@@ -156,6 +161,7 @@ internal suspend fun PointerInputScope.detectPdfInkSelectionGestures(
             page = page,
             downId = down.id,
             touchSlopPx = touchSlopPx,
+            pageAspectRatio = aspect,
             cameraProvider = cameraProvider,
             layoutInfo = layoutInfo,
             pageAnnotations = pageAnnotations,
@@ -185,7 +191,12 @@ private suspend fun AwaitPointerEventScope.runSelectionTransformSession(
     try {
         do {
             val event = awaitPointerEvent()
-            if (event.changes.size > 1) {
+            // Cancel only on a real second pressed finger (pinch intent). A
+            // stale lift batch reporting unpressed must not kill the session.
+            // Deliberately not consumed (unlike the shared engine): this is a
+            // single document-level stream sharing arbitration with pinch-zoom,
+            // so the second finger must still reach the zoom handler.
+            if (event.changes.any { it.id != downId && it.pressed }) {
                 cancelled = true
                 break
             }
@@ -251,7 +262,9 @@ private suspend fun AwaitPointerEventScope.runTapOrMoveSession(
     try {
         do {
             val event = awaitPointerEvent()
-            if (event.changes.size > 1) {
+            // Pressed-only pinch cancellation (see the transform session above
+            // for why the rival finger is not consumed here).
+            if (event.changes.any { it.id != downId && it.pressed }) {
                 cancelled = true
                 break
             }
@@ -297,6 +310,7 @@ private suspend fun AwaitPointerEventScope.runLassoSession(
     page: PdfPageLayout,
     downId: androidx.compose.ui.input.pointer.PointerId,
     touchSlopPx: Float,
+    pageAspectRatio: Float,
     cameraProvider: () -> PdfSelectionCamera,
     layoutInfo: List<PdfPageLayout>,
     pageAnnotations: List<PdfAnnotation>,
@@ -317,7 +331,9 @@ private suspend fun AwaitPointerEventScope.runLassoSession(
     try {
         do {
             val event = awaitPointerEvent()
-            if (event.changes.size > 1) {
+            // Pressed-only pinch cancellation (see the transform session above
+            // for why the rival finger is not consumed here).
+            if (event.changes.any { it.id != downId && it.pressed }) {
                 cancelled = true
                 break
             }
@@ -360,7 +376,22 @@ private suspend fun AwaitPointerEventScope.runLassoSession(
                 )
                 onLassoResult(page.index, ids)
             } else if (!isLasso) {
-                onTapResult(page.index, null)
+                // Tap without a lasso: re-hit generously at the down point
+                // (the dispatch hit above is tight so lassos can start near
+                // ink). A near miss still selects a small stroke; only a true
+                // empty tap clears.
+                val downNorm = trail.firstOrNull()?.let { docToNorm(page, it) }
+                val tapHit = downNorm?.let {
+                    findPdfTopmostSelectionHit(
+                        annotations = pageAnnotations,
+                        normX = it.x,
+                        normY = it.y,
+                        pageWidthPx = page.width.coerceAtLeast(1f),
+                        pageAspectRatio = pageAspectRatio,
+                        tapSlopPx = touchSlopPx,
+                    )
+                }
+                onTapResult(page.index, tapHit?.id)
             }
         }
     }

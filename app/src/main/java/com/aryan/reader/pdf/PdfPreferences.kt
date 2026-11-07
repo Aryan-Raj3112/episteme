@@ -377,6 +377,66 @@ internal fun loadPdfThemeId(context: Context): String {
     return prefs.getString(PDF_THEME_KEY, "no_theme") ?: "no_theme"
 }
 
+private const val PDF_THEME_IS_LOCAL_PREFIX = "pdf_theme_is_local_"
+private const val PDF_LOCAL_THEME_ID_PREFIX = "pdf_local_theme_id_"
+private const val PDF_LOCAL_THEME_TRANSPARENCY_PREFIX = "pdf_local_theme_transparency_"
+private const val PDF_LOCAL_REVERSE_MODE_PREFIX = "pdf_local_reverse_mode_"
+private const val PDF_LOCAL_EXCLUDE_IMAGES_PREFIX = "pdf_local_exclude_images_"
+
+internal fun loadPdfThemeIsLocal(context: Context, bookId: String): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(PDF_THEME_IS_LOCAL_PREFIX + bookId, false)
+}
+
+internal fun savePdfThemeIsLocal(context: Context, bookId: String, isLocal: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_THEME_IS_LOCAL_PREFIX + bookId, isLocal) }
+}
+
+internal fun loadPdfLocalThemeId(context: Context, bookId: String): String? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(PDF_LOCAL_THEME_ID_PREFIX + bookId, null)
+}
+
+internal fun savePdfLocalThemeId(context: Context, bookId: String, themeId: String) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PDF_LOCAL_THEME_ID_PREFIX + bookId, themeId) }
+}
+
+internal fun loadPdfLocalTextureTransparency(context: Context, bookId: String): Float? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return if (prefs.contains(PDF_LOCAL_THEME_TRANSPARENCY_PREFIX + bookId)) {
+        prefs.getFloat(PDF_LOCAL_THEME_TRANSPARENCY_PREFIX + bookId, 0f)
+    } else null
+}
+
+internal fun savePdfLocalTextureTransparency(context: Context, bookId: String, transparency: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(PDF_LOCAL_THEME_TRANSPARENCY_PREFIX + bookId, transparency) }
+}
+
+internal fun loadPdfLocalReverseColorMode(context: Context, bookId: String): String? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(PDF_LOCAL_REVERSE_MODE_PREFIX + bookId, null)
+}
+
+internal fun savePdfLocalReverseColorMode(context: Context, bookId: String, modeId: String) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(PDF_LOCAL_REVERSE_MODE_PREFIX + bookId, modeId) }
+}
+
+internal fun loadPdfLocalExcludeImages(context: Context, bookId: String): Boolean? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return if (prefs.contains(PDF_LOCAL_EXCLUDE_IMAGES_PREFIX + bookId)) {
+        prefs.getBoolean(PDF_LOCAL_EXCLUDE_IMAGES_PREFIX + bookId, false)
+    } else null
+}
+
+internal fun savePdfLocalExcludeImages(context: Context, bookId: String, exclude: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(PDF_LOCAL_EXCLUDE_IMAGES_PREFIX + bookId, exclude) }
+}
+
 internal fun loadUseOnlineDict(context: Context): Boolean {
     @Suppress("KotlinConstantConditions") if (BuildConfig.FLAVOR == "oss" && BuildConfig.IS_OFFLINE) return false
     // Android benchmark: Smart AI is the default engine. The shared module owns
@@ -517,16 +577,48 @@ internal fun loadPdfAutoScrollSpeed(context: Context): Float {
     return prefs.getFloat(PDF_AUTO_SCROLL_SPEED_KEY, 3.0f)
 }
 
-internal fun savePdfLockedState(context: Context, bookId: String, scale: Float, offsetX: Float, offsetY: Float) {
+/**
+ * The camera panning was locked at, per book *and per view*.
+ *
+ * A paginated camera (scale plus a translation inside the page) and a vertical camera (scale plus a
+document scroll offset) are different quantities. Keyed on the book alone, a vertical reader could
+restore a paginated pan - or nothing at all - and snapped the document to its first page.
+ */
+internal fun savePdfLockedState(
+    context: Context,
+    bookId: String,
+    scale: Float,
+    offsetX: Float,
+    offsetY: Float,
+    displayMode: String,
+) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit {
-        putFloat("pdf_locked_scale_$bookId", scale)
-        putFloat("pdf_locked_offset_x_$bookId", offsetX)
-        putFloat("pdf_locked_offset_y_$bookId", offsetY)
+        putFloat(pdfLockedScaleKey(bookId, displayMode), scale)
+        putFloat(pdfLockedOffsetXKey(bookId, displayMode), offsetX)
+        putFloat(pdfLockedOffsetYKey(bookId, displayMode), offsetY)
     }
 }
 
-internal fun loadPdfLockedState(context: Context, bookId: String): Triple<Float, Float, Float>? {
+internal fun loadPdfLockedState(context: Context, bookId: String, displayMode: String): Triple<Float, Float, Float>? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    val scaleKey = pdfLockedScaleKey(bookId, displayMode)
+    if (!prefs.contains(scaleKey)) return null
+    return Triple(
+        prefs.getFloat(scaleKey, 1f),
+        prefs.getFloat(pdfLockedOffsetXKey(bookId, displayMode), 0f),
+        prefs.getFloat(pdfLockedOffsetYKey(bookId, displayMode), 0f)
+    )
+}
+
+/**
+ * A camera stored before cameras were kept per view.
+ *
+ * Only the paginated reader may adopt one: it was written from the paginated camera, and a vertical
+ * reader applying that offset lands on the first page. Left readable so upgrading does not lose the
+ * zoom paginated readers already had; the next camera change rewrites it under the new key.
+ */
+internal fun loadLegacyPdfLockedState(context: Context, bookId: String): Triple<Float, Float, Float>? {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     if (!prefs.contains("pdf_locked_scale_$bookId")) return null
     return Triple(
@@ -535,6 +627,12 @@ internal fun loadPdfLockedState(context: Context, bookId: String): Triple<Float,
         prefs.getFloat("pdf_locked_offset_y_$bookId", 0f)
     )
 }
+
+private fun pdfLockedScaleKey(bookId: String, displayMode: String) = "pdf_locked_scale_${bookId}_$displayMode"
+
+private fun pdfLockedOffsetXKey(bookId: String, displayMode: String) = "pdf_locked_offset_x_${bookId}_$displayMode"
+
+private fun pdfLockedOffsetYKey(bookId: String, displayMode: String) = "pdf_locked_offset_y_${bookId}_$displayMode"
 
 internal fun saveOcrLanguage(context: Context, language: OcrLanguage) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)

@@ -51,6 +51,14 @@ object NativePdfiumBridge {
     @JvmStatic external fun getAnnotSubtypeAtPoint(pagePtr: Long, x: Double, y: Double): Int
     @JvmStatic external fun getAnnotRectAtPoint(pagePtr: Long, x: Double, y: Double): FloatArray?
     @JvmStatic external fun checkActionSupport(): Boolean
+
+    /**
+     * Per-page `[widthPx, heightPx, rotationDegrees]` from the source document, or null.
+     * Width/height are the rotated display sizes (page `/Rotate` applied) that the export
+     * bridge also uses to map ink strokes, so /AP geometry can match /InkList.
+     */
+    @JvmStatic external fun readPageGeometry(sourcePath: String): IntArray?
+
     @JvmStatic external fun exportAnnotatedPdf(
         sourcePath: String,
         destPath: String,

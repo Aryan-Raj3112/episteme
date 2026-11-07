@@ -18,7 +18,30 @@ import kotlin.math.roundToLong
 import kotlin.time.TimeSource
 
 private const val SharedEpubPaginationCacheSchemaVersion = 1
-private const val SharedEpubPaginationProcessingVersion = 18
+// 18 -> 19: measured pagination now honors letter-spacing/font-weight with the
+// Android benchmark line breaking, and shared semantic blocks carry the merged
+// book CSS, so pages measured under 18 must rebuild.
+// 19 -> 20: default leading is the reader base (never size-scaled), block
+// weight/family/style follow the Android whole-text-span priority, and sub/sup
+// baseline shifts are measured; pages measured under 19 must rebuild.
+// 20 -> 21: chapters are restyled per pagination config with live reader size,
+// density and viewport (Android benchmark parity), so pages carrying nominal
+// load-time styles must rebuild.
+// 21 -> 22: measured pagination commits a chapter's trailing partial page (the
+// Android benchmark already does), and native pagination leading converts the
+// stored CSS line spacing to the Compose multiplier Android uses, so pages
+// measured under 21 are both short of their chapter tail and too loosely led.
+// 22 -> 23: native pagination renders the stored WebView-based font size at
+// Android's 16sp bodyLarge base instead of 18sp, so pages measured under 22
+// are set ~12.5% too large on every line, heading and paragraph gap.
+// 23 -> 24: header relative sizes resolve once instead of twice (spans under
+// a sized header no longer compound to ~75% too large), header default
+// leading is level-scaled like Android draws, and spacers measure the same
+// density-aware 8.dp / base-font heights both platforms render.
+// 24 -> 25: em/ex-sized math SVGs resolve against the ambient font like
+// Android instead of falling back to the viewBox, so their measured size
+// (and any page break after them) moves.
+private const val SharedEpubPaginationProcessingVersion = 25
 private const val SharedEpubPaginationPageCacheVersion = 3
 
 data class SharedEpubPaginationCacheKey(
@@ -359,6 +382,8 @@ class SharedEpubPaginationCache(
             density.roundCacheValue(),
             fontScale.roundCacheValue(),
             settings.fontSize,
+            settings.fontWeight,
+            settings.letterSpacing.roundCacheValue(),
             settings.lineSpacing.roundCacheValue(),
             settings.resolvedHorizontalMargin,
             settings.resolvedVerticalMargin,

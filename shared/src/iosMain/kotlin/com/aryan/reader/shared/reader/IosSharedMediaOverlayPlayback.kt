@@ -46,11 +46,17 @@ class IosSharedMediaOverlayPlayback(
     /**
      * The archive the recording is streamed from, while the reader that owns it is open.
      *
+     * The path, not the archive: the reader screen attaches on composition, which runs before the
+     * loader registers the archive on its background dispatcher, so capturing the instance then
+     * pinned a null for the whole first open (same race that hid the toolbar icon until reopen).
+     * Resolving per read borrows whatever the store holds when playback actually needs bytes,
+     * which is the cached instance once loaded.
+     *
      * Null between books, and that is the whole lifetime contract: the bytes belong to a reader
      * screen, and a resource loader still answering after the screen is gone would serve a book
      * the reader has already left.
      */
-    private var archive: SharedMediaOverlayArchiveReader? = null
+    private var archivePath: String? = null
 
     /**
      * Points the engine at the open book's archive.
@@ -65,21 +71,29 @@ class IosSharedMediaOverlayPlayback(
      * worse than no button.
      *
      * The bridge callbacks are reinstalled here rather than once in `init` so that they close over
-     * *this* engine's current archive. That makes a null archive the whole of "detached": there is no
+     * *this* engine's current book. That makes a null path the whole of "detached": there is no
      * callback left pointing at a reader that has gone away, and a loader still asking gets a null
      * range rather than the wrong recording's bytes.
      */
     override fun attachArchive(book: BookItem?) {
-        val path = book?.path?.resolveIosEpubSourcePath()
-        archive = path?.let { SharedMediaOverlayArchiveReader.at(it) }
+        // Store the stable ref, not a scope-dead resolved path. The store
+        // re-opens scoped via openIosZipArchive, so a resolved absolute dies on
+        // device while the ref survives — Android parity (content:// URI).
+        archivePath = book?.path?.takeIf { it.isNotBlank() }
         bridge.setMediaOverlayAudioSource(
             readEntryRange = { entryPath, offset, length -> readEntryRange(entryPath, offset, length) },
-            entryLength = { entryPath -> archive?.entryLengthOrNull(entryPath) ?: 0L }
+            entryLength = { entryPath -> entryLengthOrNull(entryPath) }
         )
     }
 
+    private fun entryLengthOrNull(entryPath: String): Long {
+        val path = archivePath ?: return 0L
+        return SharedMediaOverlayArchiveReader.at(path)?.entryLengthOrNull(entryPath) ?: 0L
+    }
+
     private fun readEntryRange(entryPath: String, offset: Long, length: Long): NSData? {
-        val bytes = archive?.readEntryRange(entryPath, offset, length) ?: return null
+        val path = archivePath ?: return null
+        val bytes = SharedMediaOverlayArchiveReader.at(path)?.readEntryRange(entryPath, offset, length) ?: return null
         if (bytes.isEmpty()) {
             // A zero-length NSData is how a resource loader is told "this is the end of the resource",
             // which is the honest answer for an entry the archive could not produce. `null` would be

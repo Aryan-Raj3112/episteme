@@ -1,12 +1,17 @@
 @file:Suppress("UnstableApiUsage")
 
+import com.android.build.api.artifact.SingleArtifact
 import java.util.Properties
+import java.io.File
 import java.io.StringReader
 import javax.xml.parsers.DocumentBuilderFactory
-import com.android.build.api.artifact.SingleArtifact
-import org.gradle.api.tasks.PathSensitivity
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.GradleException
 import org.gradle.api.tasks.Copy
+import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.TaskProvider
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.xml.sax.InputSource
 
 plugins {
@@ -64,8 +69,8 @@ android {
         applicationId = "com.aryan.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 64
-        versionName = "1.0.58"
+        versionCode = 65
+        versionName = "1.0.59"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         externalNativeBuild {
@@ -224,6 +229,209 @@ fun String.toAndroidResourceConfiguration(): String {
     } else {
         this
     }
+}
+
+// ===================================================================
+// office_oxide_bridge (Rust) — see rust/office-oxide-bridge
+// ===================================================================
+// Cargo target triple per Android ABI this app ships. x86_64 is included so
+// debug builds on an x86_64 emulator keep working; the release packaging step
+// still strips x86 ABIs (see the androidComponents block below).
+val officeOxideAbis = mapOf(
+    "arm64-v8a" to "aarch64-linux-android",
+    "armeabi-v7a" to "armv7-linux-androideabi",
+    "x86_64" to "x86_64-linux-android",
+    // 32-bit x86 is only ever built for debug emulators; release packaging
+    // strips x86 ABIs (see the androidComponents block below).
+    "x86" to "i686-linux-android",
+)
+
+val officeOxideCrateDir = rootProject.layout.projectDirectory.dir("rust/office-oxide-bridge")
+val officeOxideJniLibsDir = layout.buildDirectory.dir("generated/officeOxideJni")
+fun resolveCargoExecutable(): String? {
+    val pathEntries = System.getenv("PATH").orEmpty().split(File.pathSeparator).filter { it.isNotBlank() }
+    val candidates = buildList {
+        addAll(pathEntries.map { File(it, "cargo") })
+        add(File(System.getProperty("user.home"), ".cargo/bin/cargo"))
+    }
+    return candidates.firstOrNull { it.canExecute() }?.absolutePath
+}
+
+/**
+ * Builds `liboffice_oxide_bridge.so` for one ABI with cargo, then stages it into
+ * `build/generated/officeOxideJni/<abi>/`, which the Android plugin packages as
+ * a jniLib. Staging (rather than pointing at cargo's own output directory) keeps
+ * the packaged path ABI-shaped and lets Gradle model the dependency.
+ */
+fun registerOfficeOxideLibrary(abi: String, cargoTriple: String): TaskProvider<Sync> {
+    val label = abi.replaceFirstChar { it.uppercase() }
+
+    // Everything below is resolved here, at configuration time, into plain
+    // Strings: the tasks themselves then carry no closures, which keeps them
+    // compatible with the configuration cache (org.gradle.configuration-cache=true).
+    //
+    // Resolution is deliberately lenient: a machine without the Rust toolchain
+    // (IDE sync, partial builds) must still configure. The tasks simply skip
+    // via onlyIf, and CMake fails later with an actionable message if the .so
+    // is actually needed but missing.
+    val cargo: String? = resolveCargoExecutable()
+    if (cargo == null) {
+        logger.warn(
+            "office_oxide: cargo not found; :app:buildOfficeOxide* tasks will skip. " +
+                "Install the Rust toolchain from https://rustup.rs to build native Office support."
+        )
+    }
+    // The NDK's clang wrapper is the only linker that understands the flags
+    // rustc emits for Android. Without this cargo falls back to the host `cc`
+    // and fails with `ld: unknown options: --version-script ...`.
+    val ndkLinker: String? = runCatching {
+        File(
+            resolveNdkDir(),
+            "toolchains/llvm/prebuilt/${hostNdkPrebuilt()}/bin/${abiToNdkClang(abi)}",
+        ).absolutePath
+    }.getOrNull()
+
+    val cargoBuild = tasks.register<Exec>("buildOfficeOxide$label") {
+        group = "build"
+        description = "Builds the office_oxide Rust bridge for $abi ($cargoTriple)."
+        onlyIf("Rust toolchain (cargo) is installed") { cargo != null }
+        workingDir = officeOxideCrateDir.asFile
+
+        inputs.dir(officeOxideCrateDir.dir("src"))
+        inputs.files(
+            officeOxideCrateDir.file("Cargo.toml"),
+            officeOxideCrateDir.file("Cargo.lock"),
+            officeOxideCrateDir.file("rust-toolchain.toml"),
+        )
+        outputs.dir(officeOxideCrateDir.dir("target/$cargoTriple/release"))
+
+        commandLine(
+            cargo ?: "cargo",
+            "build",
+            "--release",
+            "--lib",
+            "--target", cargoTriple,
+            // Keep the artifact out of Gradle's way; the Sync task below
+            // copies only what gets packaged.
+            "--target-dir", "${officeOxideCrateDir.asFile}/target",
+        )
+        if (ndkLinker != null) {
+            environment(
+                "CARGO_TARGET_${cargoTriple.uppercase().replace('-', '_')}_LINKER",
+                ndkLinker,
+            )
+        }
+    }
+
+    return tasks.register<Sync>("stageOfficeOxide${label}JniLibs") {
+        group = "build"
+        description = "Stages liboffice_oxide_bridge.so for $abi into the packaged jniLibs."
+        onlyIf("Rust toolchain (cargo) is installed") { cargo != null }
+        dependsOn(cargoBuild)
+        from(officeOxideCrateDir.file("target/$cargoTriple/release/liboffice_oxide_bridge.so"))
+        into(officeOxideJniLibsDir.map { it.dir(abi) })
+    }
+}
+
+/** NDK clang wrapper name for an ABI. */
+fun abiToNdkClang(abi: String): String = when (abi) {
+    "arm64-v8a" -> "aarch64-linux-android26-clang"
+    "armeabi-v7a" -> "armv7a-linux-androideabi26-clang"
+    "x86" -> "i686-linux-android26-clang"
+    "x86_64" -> "x86_64-linux-android26-clang"
+    else -> throw GradleException("No NDK clang wrapper known for ABI '$abi'")
+}
+
+/** NDK prebuilt directory name for this host OS. */
+fun hostNdkPrebuilt(): String = if (System.getProperty("os.name").startsWith("Mac", ignoreCase = true)) {
+    "darwin-x86_64"
+} else {
+    "linux-x86_64"
+}
+
+/**
+ * Locates the NDK directory from the standard environment variables, an
+ * explicit `ndk.dir`, or the highest side-by-side NDK under the SDK. Called at
+ * configuration time, so it must not touch the `android` extension (which AGP
+ * finalizes later); the side-by-side heuristic matches AGP's own default NDK
+ * selection.
+ */
+fun resolveNdkDir(): File {
+    // Deliberately no `android.ndkPath` here: this runs at configuration time,
+    // when AGP has not finalized it, and capturing the extension would break
+    // the configuration cache.
+    listOf("ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "NDK_HOME", "NDK_ROOT").forEach { key ->
+        System.getenv(key)
+            ?.takeIf { it.isNotBlank() }
+            ?.let { File(it) }
+            ?.takeIf { it.isDirectory }
+            ?.let { return it }
+    }
+    // Explicit ndk.dir wins over side-by-side discovery.
+    localProperties.getProperty("ndk.dir")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { File(it) }
+        ?.takeIf { it.isDirectory }
+        ?.let { return it }
+    val sdkDir = localProperties.getProperty("sdk.dir")
+        ?: System.getenv("ANDROID_SDK_ROOT")
+        ?: System.getenv("ANDROID_HOME")
+        ?: File(System.getProperty("user.home"), "Library/Android/sdk").absolutePath
+    val sideBySide = File(File(sdkDir), "ndk")
+        .listFiles { file -> file.isDirectory }
+        ?.sortedByDescending { it.name }
+        ?.firstOrNull()
+        ?: throw GradleException(
+            "Could not locate the Android NDK (tried " +
+                "ANDROID_NDK_HOME/ANDROID_NDK_ROOT/NDK_HOME/NDK_ROOT, ndk.dir, " +
+                "and $sdkDir/ndk/*)."
+        )
+    return sideBySide
+}
+
+android {
+    sourceSets {
+        getByName("main") {
+            // Cargo output staged by the stageOfficeOxide*JniLibs tasks.
+            // `srcDir` is deprecated in AGP 9; `directories` is its replacement.
+            jniLibs.directories.add(officeOxideJniLibsDir.get().asFile.absolutePath)
+        }
+    }
+}
+
+val officeOxideStagingTasks = officeOxideAbis.map { (abi, triple) ->
+    registerOfficeOxideLibrary(abi, triple)
+}
+
+// Every variant's native build links the Rust .so, and every merge has to see the
+// staged copy in jniLibs before packaging.
+tasks.matching { it.name.startsWith("buildCMake") }.configureEach {
+    dependsOn(officeOxideStagingTasks)
+}
+// CMakeLists.txt hard-fails when the .so is absent, so the per-ABI configure step
+// must run after cargo produced it. Ordering it against buildCMake alone is not
+// enough: configure* is an input of buildCMake*, so the two can be scheduled in
+// either order (and in parallel), which broke clean builds with
+// "Missing liboffice_oxide_bridge.so for <abi>".
+tasks.matching { it.name.startsWith("configureCMake") }.configureEach {
+    dependsOn(officeOxideStagingTasks)
+}
+// Both consumers of the staged jniLibs: merge*NativeLibs (packaging) and
+// merge*JniLibFolders (source-set merging). Without the explicit dependsOn,
+// Gradle fails validation with an "implicit dependency" error.
+tasks.matching {
+    it.name.startsWith("merge") &&
+        (it.name.endsWith("NativeLibs") || it.name.contains("JniLibFolders"))
+}.configureEach {
+    dependsOn(officeOxideStagingTasks)
+}
+
+// One task to warm every ABI, mirroring the message CMake prints when the .so is
+// missing. `./gradlew :app:buildOfficeOxideLibraries` is the documented entry point.
+tasks.register("buildOfficeOxideLibraries") {
+    group = "build"
+    description = "Builds the office_oxide Rust bridge for every shipped Android ABI."
+    dependsOn(officeOxideStagingTasks)
 }
 
 kover {

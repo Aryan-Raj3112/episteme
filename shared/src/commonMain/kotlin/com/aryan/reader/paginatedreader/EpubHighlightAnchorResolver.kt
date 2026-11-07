@@ -48,8 +48,33 @@ data class HighlightBlockSegment(
     val absoluteStart: Int,
     val absoluteEnd: Int,
     val localStart: Int,
-    val localEnd: Int
-)
+    val localEnd: Int,
+    /**
+     * The `startCharOffsetInSource` of the indexed block [localStart]/[localEnd] are relative to.
+     *
+     * A chapter is indexed either by its full blocks or, on some shared surfaces, by the page
+     * fragments those blocks were split into. Either way a renderer can hold a different fragment of
+     * the same block, so the segment has to remember which origin its local offsets came from. That
+     * field is element-relative and cannot compare two blocks, but fragments of one block share the
+     * same origin, so the difference between their starts is exact.
+     */
+    val blockSourceStart: Int
+) {
+    /**
+     * Maps this segment into a page fragment of the same block.
+     *
+     * [fragmentSourceStart] is the fragment's own `startCharOffsetInSource`; subtracting the
+     * segment's origin shifts the full-block range into the fragment's coordinates. Anything outside
+     * the fragment is clipped away, so the first page paints the beginning of a split paragraph and
+     * the continuation page does not paint the same range over unrelated text.
+     */
+    fun rangeInFragment(fragmentSourceStart: Int, fragmentTextLength: Int): IntRange? {
+        val shift = fragmentSourceStart - blockSourceStart
+        val from = (localStart - shift).coerceIn(0, fragmentTextLength)
+        val to = (localEnd - shift).coerceIn(from, fragmentTextLength)
+        return if (to > from) from until to else null
+    }
+}
 
 /** A highlight's resolved position within one chapter. */
 data class ResolvedHighlightAnchor(
@@ -221,29 +246,41 @@ class EpubChapterTextIndex private constructor(
     }
 
     /**
-     * The slice [highlight] occupies in one block, in that block's own coordinates.
+     * The slice [highlight] occupies in one page fragment of a block, in the fragment's coordinates.
      *
-     * This is what a text renderer needs, and it is the answer for exactly one block: a highlight
+     * This is what a text renderer needs, and it is the answer for exactly one fragment: a highlight
      * spanning three paragraphs yields a segment in each of them, and a highlight whose text appears
      * in several paragraphs yields a segment in only the one it was resolved to. Returning null for
-     * every other block is what stops a repeated sentence painting on all of them.
+     * every other fragment is what stops a repeated sentence painting on all of them.
+     *
+     * A fragment is not the same thing as a block. The paginator splits a tall paragraph while
+     * keeping its `blockIndex` and CFI, so several fragments can match the same segment. Mapping each
+     * candidate through [HighlightBlockSegment.rangeInFragment] and keeping the ones that intersect
+     * this fragment is what chooses the right copy.
      *
      * Blocks are matched by index, and by CFI when both sides have one, because a caller can be
      * holding a re-styled copy of the block rather than the parsed original.
      */
-    fun rangeInBlock(
+    fun rangeInBlockFragment(
         highlight: UserHighlight,
         blockIndex: Int?,
-        blockCfi: String?
-    ): HighlightBlockSegment? {
+        blockCfi: String?,
+        fragmentSourceStart: Int,
+        fragmentTextLength: Int
+    ): IntRange? {
         val anchor = anchorFor(highlight) ?: return null
-        val segment = anchor.segments.firstOrNull { candidate ->
-            val indexMatches = blockIndex != null && candidate.blockIndex == blockIndex
-            val cfiMatches = blockCfi != null && candidate.blockCfi != null &&
-                candidate.blockCfi == blockCfi
-            indexMatches || cfiMatches
-        } ?: return null
-        return segment
+        var start = Int.MAX_VALUE
+        var end = -1
+        for (segment in anchor.segments) {
+            val indexMatches = blockIndex != null && segment.blockIndex == blockIndex
+            val cfiMatches = blockCfi != null && segment.blockCfi != null &&
+                segment.blockCfi == blockCfi
+            if (!indexMatches && !cfiMatches) continue
+            val range = segment.rangeInFragment(fragmentSourceStart, fragmentTextLength) ?: continue
+            if (range.first < start) start = range.first
+            if (range.last + 1 > end) end = range.last + 1
+        }
+        return if (end > start) start until end else null
     }
 
     /**
@@ -312,7 +349,8 @@ fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
                 absoluteStart = blockStart + (position - origin - blockStart),
                 absoluteEnd = blockStart + (runEnd - origin - blockStart),
                 localStart = position - origin - blockStart,
-                localEnd = runEnd - origin - blockStart
+                localEnd = runEnd - origin - blockStart,
+                blockSourceStart = textBlocks[block].startCharOffsetInSource
             )
             position = runEnd
         }
@@ -451,7 +489,8 @@ fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
                 absoluteStart = blockStart + localStart,
                 absoluteEnd = blockStart + localEnd,
                 localStart = localStart,
-                localEnd = localEnd
+                localEnd = localEnd,
+                blockSourceStart = textBlocks[block].startCharOffsetInSource
             )
             position = end
         }

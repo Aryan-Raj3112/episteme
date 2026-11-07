@@ -13,6 +13,10 @@ Usage:
     python3 scripts/i18n_check.py --self-test     # run built-in self test
 
 Exit code 1 if any error (or warning in --strict mode).
+
+readerString() keys with no translatable Android entry are an *error* unless they are listed in
+scripts/i18n_reader_string_baseline.txt (the frozen backlog); that gate is what stops a shared
+surface from quietly rendering English inside a translated app.
 """
 
 from __future__ import annotations
@@ -29,6 +33,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ANDROID_RES = ROOT / "app/src/main/res"
 IOS_JSON_DIR = ROOT / "shared/src/iosMain/composeResources/files/localization"
+# Frozen backlog of readerString() keys that cannot be translated anywhere -- absent from
+# values/strings.xml, or present with translatable="false". See the file's own header for the
+# burn-down rule: a key outside this list is an error, not a warning.
+UNKEYED_READER_STRING_BASELINE = ROOT / "scripts/i18n_reader_string_baseline.txt"
 
 # Android legacy folder codes -> BCP-47 tag used by the generated JSON catalogs.
 FOLDER_TO_TAG = {
@@ -336,6 +344,30 @@ def used_reader_keys(source_roots: tuple[Path, ...]) -> tuple[set[str], set[str]
     return string_keys, plural_keys
 
 
+def load_unkeyed_reader_string_baseline() -> set[str]:
+    """The acknowledged untranslatable readerString() keys, one per line ('#' = comment)."""
+    if not UNKEYED_READER_STRING_BASELINE.exists():
+        return set()
+    keys: set[str] = set()
+    for raw in UNKEYED_READER_STRING_BASELINE.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            keys.add(line)
+    return keys
+
+
+def classify_unkeyed_reader_strings(
+    missing: set[str], baseline: set[str]
+) -> tuple[set[str], set[str], set[str]]:
+    """Bucket the readerString() keys no platform can translate.
+
+    Returns (unbaselined, baselined, stale): the keys that broke the gate by being new
+    (unbudgeted), the acknowledged backlog, and baseline entries that are translatable now,
+    i.e. the ratchet has moved and the entry should be deleted.
+    """
+    return missing - baseline, missing & baseline, baseline - missing
+
+
 def check_json_sync(
     rep: Report,
     tag: str,
@@ -343,6 +375,7 @@ def check_json_sync(
     xml_plurals: dict[str, dict[str, str]],
     expected_string_keys: set[str],
     expected_plural_keys: set[str],
+    baseline: set[str] | None = None,
 ) -> None:
     """Generated JSON catalogs must mirror the XML source of truth plus the
     readerString()/readerQuantityString() keys used from shared code."""
@@ -357,12 +390,29 @@ def check_json_sync(
     if tag == "en":
         # Key-set shape is a base-file concern; report it once under en, not
         # once per language. 'missing' here = keys the generator cannot source
-        # (used in code but absent from XML) -- they resolve to inline English
-        # fallbacks on iOS until they are added to the base resource file.
-        if missing:
+        # (used in code but absent from XML, or excluded as translatable="false")
+        # -- they resolve to inline English fallbacks on every platform.
+        unbaselined, baselined, stale = classify_unkeyed_reader_strings(
+            missing,
+            load_unkeyed_reader_string_baseline() if baseline is None else baseline,
+        )
+        if unbaselined:
+            rep.error(
+                f"json: {len(unbaselined)} readerString keys cannot be translated anywhere "
+                f"(no values/strings.xml entry, or translatable=\"false\") and are not in "
+                f"{UNKEYED_READER_STRING_BASELINE.name}: {sorted(unbaselined)[:MAX_EXAMPLES]}"
+            )
+        if baselined:
             rep.warn(
-                f"json: {len(missing)} readerString keys have no XML entry "
-                f"(English fallback everywhere), e.g. {sorted(missing)[:3]}"
+                f"json: {len(baselined)} readerString keys have no XML entry "
+                f"(English fallback everywhere), all baselined, "
+                f"e.g. {sorted(baselined)[:3]}"
+            )
+        if stale:
+            rep.warn(
+                f"json: {len(stale)} baselined readerString keys are translatable now; "
+                f"delete them from {UNKEYED_READER_STRING_BASELINE.name}: "
+                f"{sorted(stale)[:MAX_EXAMPLES]}"
             )
         if extra:
             rep.warn(f"json en.json: {len(extra)} extra keys not in XML, e.g. {sorted(extra)[:3]}")
@@ -549,6 +599,43 @@ def _self_test() -> int:
             f"comment coverage should flag only 'long_no_comment', got {rep.warnings}",
         )
         expect("short" not in rep.warnings[0], "short strings must not be flagged")
+
+    # Untranslatable readerString keys: new ones fail, acknowledged ones only warn, and a
+    # baselined key that became translatable is reported as stale.
+    unbaselined, baselined, stale = classify_unkeyed_reader_strings(
+        {"brand_new", "acknowledged"}, {"acknowledged", "gone_key"}
+    )
+    expect(unbaselined == {"brand_new"}, f"new keyless key must be unbudgeted, got {unbaselined}")
+    expect(baselined == {"acknowledged"}, f"acknowledged key must stay budgeted, got {baselined}")
+    expect(stale == {"gone_key"}, f"translated baseline entry must read as stale, got {stale}")
+    with tempfile.TemporaryDirectory() as tmp:
+        catalog_dir = Path(tmp)
+        (catalog_dir / "en.json").write_text(
+            json.dumps({"strings": {"translated": "x"}, "plurals": {}}), encoding="utf-8"
+        )
+        real_catalog_dir = globals()["IOS_JSON_DIR"]
+        globals()["IOS_JSON_DIR"] = catalog_dir
+        try:
+            rep = Report(lang="en")
+            check_json_sync(
+                rep,
+                "en",
+                {"translated": "x"},
+                {},
+                {"translated", "brand_new", "acknowledged"},
+                set(),
+                baseline={"acknowledged"},
+            )
+        finally:
+            globals()["IOS_JSON_DIR"] = real_catalog_dir
+    expect(
+        len(rep.errors) == 1 and "brand_new" in rep.errors[0],
+        f"only the unbudgeted keyless key may fail, got {rep.errors}",
+    )
+    expect(
+        any("all baselined" in w for w in rep.warnings),
+        f"baselined keyless keys must stay a warning, got {rep.warnings}",
+    )
 
     if failures:
         print("SELF-TEST FAILURES:")

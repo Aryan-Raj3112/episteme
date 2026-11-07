@@ -5,11 +5,11 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 
 const val PDF_ZOOM_TILE_SIZE_PX = 640
-const val PDF_ZOOM_TILE_MAX_RENDERED_SIDE_PX = 16_000
+const val PDF_ZOOM_TILE_MAX_RENDERED_SIDE_PX = 80_000
 const val PDF_ZOOM_TILE_MAX_VISIBLE_COUNT = 12
 const val PDF_ZOOM_TILE_CACHE_MAX_BYTES = 24L * 1024L * 1024L
 
-private val PdfZoomRenderScaleBuckets = floatArrayOf(1.5f, 2f, 3f, 4f, 6f, 8f, 10f)
+private val PdfZoomRenderScaleBuckets = floatArrayOf(1.5f, 2f, 3f, 4f, 6f, 8f, 10f, 14f, 20f, 28f, 40f, 50f)
 
 class PdfTileLruCache<T>(private val maxBytes: Long) {
     private data class Entry<T>(val value: T, val bytes: Long)

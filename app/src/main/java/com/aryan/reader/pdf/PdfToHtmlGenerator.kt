@@ -29,13 +29,14 @@ object PdfToHtmlGenerator {
     ): Boolean = withContext(Dispatchers.IO) {
         val startedAt = System.currentTimeMillis()
         Timber.tag(TAG).d("generateHtmlFile START | uri=$pdfUri | startPage=$startPage")
-        val pdfiumCore = PdfiumCoreProvider.core
         val pfd = context.contentResolver.openFileDescriptor(pdfUri, "r") ?: run {
             Timber.tag(TAG).e("Failed to open ParcelFileDescriptor")
             return@withContext false
         }
 
         try {
+            // Inside the try: a Pdfium load failure has to fail this conversion, not escape it.
+            val pdfiumCore = PdfiumCoreProvider.core
             val document = PdfiumEngineProvider.withPdfium { pdfiumCore.newDocument(pfd) }
             val totalPages = document.getPageCount()
             val repeatingHeadersAndFooters = detectRepeatingHeaderFooter(document, totalPages)

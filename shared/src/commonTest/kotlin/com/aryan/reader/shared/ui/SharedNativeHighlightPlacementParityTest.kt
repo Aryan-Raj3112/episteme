@@ -33,13 +33,17 @@ class SharedNativeHighlightPlacementParityTest {
         paragraph(3, filler)
     )
 
-    private fun paragraph(blockIndex: Int, text: String) = SemanticParagraph(
+    private fun paragraph(
+        blockIndex: Int,
+        text: String,
+        startCharOffsetInSource: Int = 0
+    ) = SemanticParagraph(
         text = text,
         spans = emptyList(),
         style = CssStyle(),
         elementId = null,
         cfi = "/4/${blockIndex * 2}",
-        startCharOffsetInSource = 0,
+        startCharOffsetInSource = startCharOffsetInSource,
         blockIndex = blockIndex
     )
 
@@ -61,15 +65,17 @@ class SharedNativeHighlightPlacementParityTest {
     private fun rangeIn(
         highlight: UserHighlight,
         blockIndex: Int,
-        blockText: String
+        blockText: String,
+        textStartOffset: Int = 0,
+        chapterTextIndex: EpubChapterTextIndex = index()
     ) = sharedNativeHighlightRangeForBlock(
         highlight = highlight,
         blockCfi = "/4/${blockIndex * 2}",
-        textStartOffset = 0,
+        textStartOffset = textStartOffset,
         textLength = blockText.length,
         text = blockText,
         blockIndex = blockIndex,
-        chapterTextIndex = index()
+        chapterTextIndex = chapterTextIndex
     )
 
     @Test
@@ -160,6 +166,77 @@ class SharedNativeHighlightPlacementParityTest {
         assertNotNull(range)
         assertEquals("delta epsilon zeta".length, range.end)
         assertEquals(14, range.start)
+    }
+
+    private val splitText = "alpha beta gamma delta epsilon zeta"
+    private val splitBlockStart = 40
+    private val splitTailStart = splitBlockStart + 17
+
+    private fun splitIndex() = assertNotNull(
+        EpubChapterTextIndex.of(0, listOf(paragraph(0, splitText, splitBlockStart)))
+    )
+
+    @Test
+    fun `a continuation fragment does not paint a range from the paragraph start`() {
+        val index = splitIndex()
+        val head = splitText.substring(0, 16)
+        val tail = splitText.substring(17)
+        val highlight = quoteOnly("beta gamma")
+
+        val headRange = rangeIn(highlight, 0, head, textStartOffset = splitBlockStart, chapterTextIndex = index)
+        val tailRange = rangeIn(highlight, 0, tail, textStartOffset = splitTailStart, chapterTextIndex = index)
+
+        // Painting the same full-paragraph offsets on the continuation fragment is the ghosting bug.
+        assertEquals(6, headRange?.start)
+        assertEquals(16, headRange?.end)
+        assertNull(tailRange)
+    }
+
+    @Test
+    fun `a later fragment paints with its own local offsets`() {
+        val index = splitIndex()
+        val head = splitText.substring(0, 16)
+        val tail = splitText.substring(17)
+        val highlight = quoteOnly("epsilon zeta")
+
+        val headRange = rangeIn(highlight, 0, head, textStartOffset = splitBlockStart, chapterTextIndex = index)
+        val tailRange = rangeIn(highlight, 0, tail, textStartOffset = splitTailStart, chapterTextIndex = index)
+
+        assertNull(headRange)
+        // "delta epsilon zeta": epsilon starts at 6 and zeta ends the fragment at 18.
+        assertEquals(6, tailRange?.start)
+        assertEquals(18, tailRange?.end)
+    }
+
+    @Test
+    fun `a highlight spanning a split paints on both fragments`() {
+        val index = splitIndex()
+        val head = splitText.substring(0, 16)
+        val tail = splitText.substring(17)
+        val highlight = quoteOnly("gamma delta")
+
+        val headRange = rangeIn(highlight, 0, head, textStartOffset = splitBlockStart, chapterTextIndex = index)
+        val tailRange = rangeIn(highlight, 0, tail, textStartOffset = splitTailStart, chapterTextIndex = index)
+
+        assertEquals(11, headRange?.start)
+        assertEquals(16, headRange?.end)
+        assertEquals(0, tailRange?.start)
+        assertEquals(5, tailRange?.end)
+    }
+
+    @Test
+    fun `an index built from page fragments still maps by fragment origin`() {
+        // The shared reader used to index page fragments, which gives one block several identities.
+        // Mapping through each segment's own origin keeps the fragments apart even then.
+        val head = paragraph(0, splitText.substring(0, 16), startCharOffsetInSource = splitBlockStart)
+        val tail = paragraph(0, splitText.substring(17), startCharOffsetInSource = splitTailStart)
+        val index = assertNotNull(EpubChapterTextIndex.of(0, listOf(head, tail)))
+        val highlight = quoteOnly("epsilon zeta")
+
+        assertNull(rangeIn(highlight, 0, head.text, textStartOffset = splitBlockStart, chapterTextIndex = index))
+        val tailRange = rangeIn(highlight, 0, tail.text, textStartOffset = splitTailStart, chapterTextIndex = index)
+        assertEquals(6, tailRange?.start)
+        assertEquals(18, tailRange?.end)
     }
 
     @Test

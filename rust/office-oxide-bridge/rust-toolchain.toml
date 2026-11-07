@@ -1,0 +1,13 @@
+# Pins the toolchain so every platform (dev machine, CI, F-Droid's buildserver)
+# compiles byte-identical code. office_oxide 0.1.13 requires rustc >= 1.88.
+[toolchain]
+channel = "1.99.0"
+
+# Targets this app ships. `rustup` fetches these automatically from this file.
+targets = [
+  "aarch64-linux-android",      # Android, arm64-v8a
+  "armv7-linux-androideabi",    # Android, armeabi-v7a
+  "aarch64-apple-ios",          # iOS device
+  "aarch64-apple-ios-sim",      # iOS simulator
+  "aarch64-apple-darwin",       # desktop, Apple silicon
+]

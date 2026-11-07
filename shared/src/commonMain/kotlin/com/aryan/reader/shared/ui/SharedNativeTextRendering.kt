@@ -48,14 +48,24 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.shared.sharedNativeFontSizeSp
+import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 import com.aryan.reader.paginatedreader.EpubChapterTextIndex
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.nativeFlexColumnHorizontalAlignment
+import com.aryan.reader.paginatedreader.nativeFlexColumnVerticalArrangement
+import com.aryan.reader.paginatedreader.nativeFlexRowHorizontalArrangement
+import com.aryan.reader.paginatedreader.nativeFlexRowVerticalAlignment
 import com.aryan.reader.paginatedreader.MATH_PLACEHOLDER_CHAR
 import com.aryan.reader.paginatedreader.BlockStyle
 import com.aryan.reader.paginatedreader.BorderStyle
 import com.aryan.reader.paginatedreader.CssParser
 import com.aryan.reader.paginatedreader.SemanticHeader
 import com.aryan.reader.paginatedreader.SemanticTextBlock
+import com.aryan.reader.paginatedreader.isVerticalWriting
+import com.aryan.reader.paginatedreader.lineHeightWithRubyReserve
+import com.aryan.reader.paginatedreader.resolveReaderBlockFontFamily
+import com.aryan.reader.paginatedreader.resolveReaderBlockFontWeight
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -175,14 +185,27 @@ internal fun SemanticTextBlock.renderedTextStyle(
 ): TextStyle {
     val fontSize = (style.fontSize.takeIfSpecified()
         ?: style.spanStyle.fontSize.takeIfSpecified())
-        ?.resolveFontSizeSp(settings.fontSize.toFloat())
+        ?.resolveFontSizeSp(settings.sharedNativeFontSizeSp())
         ?: when (this) {
-            is SemanticHeader -> (settings.fontSize * sharedHeadingFontScale(level)).sp
-            else -> settings.fontSize.sp
+            is SemanticHeader -> (settings.sharedNativeFontSizeSp() * sharedHeadingFontScale(level)).sp
+            else -> settings.sharedNativeFontSizeSp().sp
         }
     val lineHeight = style.paragraphStyle.lineHeight.takeIfSpecified()
         ?.resolveLineHeightSp(fontSize.value)
-        ?: (fontSize.value * settings.lineSpacing).sp
+        // Android benchmark parity: headers draw `createHeaderTextStyle`'s
+        // level-scaled base leading, so the fallback scales identically here —
+        // drawn lines must match measured lines (see textStyle()).
+        ?: (settings.sharedPaginationBaseLineHeightSp() *
+            (if (this is SemanticHeader) sharedHeadingFontScale(level) else 1f)).sp
+    // Same vertical-ruby reserve as measurement: furigana consumes real column
+    // pitch in vertical writing, so the drawn leading must reserve it exactly
+    // like the measured leading or pages mismatch.
+    val rubyAwareLineHeight = lineHeightWithRubyReserve(
+        lineHeight,
+        fontSize,
+        rubies.isNotEmpty(),
+        style.isVerticalWriting()
+    )
     return MaterialTheme.typography.bodyLarge.copy(
         color = style.spanStyle.color.sharedNativeThemeColor(
             isDarkTheme = settings.darkMode,
@@ -191,11 +214,22 @@ internal fun SemanticTextBlock.renderedTextStyle(
             foreground = foreground
         ).takeIf { it.isSpecified } ?: foreground,
         fontSize = fontSize,
-        lineHeight = lineHeight,
-        fontFamily = style.spanStyle.fontFamily ?: fallbackFontFamily,
-        fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight)
-            ?: fontWeight
-            ?: style.spanStyle.fontWeight
+        lineHeight = rubyAwareLineHeight,
+        // Android benchmark parity (`resolveReaderBlockFontFamily`): a picked
+        // reader typeface wins over publication families (monospace excepted).
+        fontFamily = resolveReaderBlockFontFamily(
+            style.spanStyle.fontFamily,
+            fallbackFontFamily
+        ) ?: fallbackFontFamily,
+        // Android benchmark parity (`resolveReaderBlockFontWeight`): publication
+        // weight wins, the user weight fills silence, headers ignore the user
+        // weight and fall back to Bold (the call-site Bold param below only
+        // survives when CSS is silent on headers).
+        fontWeight = resolveReaderBlockFontWeight(
+            cssWeight = style.spanStyle.fontWeight,
+            userWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
+            isHeader = this is SemanticHeader
+        ) ?: fontWeight
             ?: if (this is SemanticHeader) FontWeight.Bold else MaterialTheme.typography.bodyLarge.fontWeight,
         fontStyle = style.spanStyle.fontStyle ?: MaterialTheme.typography.bodyLarge.fontStyle,
         textDecoration = style.spanStyle.textDecoration ?: MaterialTheme.typography.bodyLarge.textDecoration,
@@ -208,7 +242,8 @@ internal fun SemanticTextBlock.renderedTextStyle(
 
 internal fun TextStyle.withAndroidPaginationTextMetrics(readerLetterSpacing: Float = 0f): TextStyle {
     return copy(
-        lineBreak = LineBreak.Paragraph,
+        // Android benchmark (PaginatedReader layoutTextStyle): Simple breaking.
+        lineBreak = LineBreak.Simple,
         letterSpacing = readerLetterSpacing.em,
         lineHeightStyle = LineHeightStyle(
             alignment = LineHeightStyle.Alignment.Proportional,
@@ -343,7 +378,10 @@ internal fun SemanticTextBlock.sharedNativeParagraphStyle(fallbackTextAlign: Tex
             fallbackTextAlign = fallbackTextAlign
         ),
         textIndent = style.paragraphStyle.textIndent,
-        lineBreak = LineBreak.Paragraph,
+        // Android benchmark parity (`resolveReaderParagraphStyle`): Simple.
+        // Paragraph breaking wraps CJK/hyphenated text differently from the
+        // measured layout, so pages mismatched what was drawn.
+        lineBreak = LineBreak.Simple,
         hyphens = style.sharedNativeHyphens()
     )
 }
@@ -405,7 +443,14 @@ internal fun TextUnit.resolveLineHeightSp(fontSizeSp: Float): TextUnit {
     }
 }
 
-internal fun Modifier.sharedNativeCssBox(blockStyle: BlockStyle): Modifier = drawBehind {
+/**
+ * CSS background + border box painter both native stacks share. Android's
+ * `drawCssBorders` delegates to this (B1 step 3, border kind) — the two were
+ * token-identical copies (background fill, dashed/dotted effects, four edges,
+ * four corner arcs). Draw helpers cannot be unit-tested in this stack (no
+ * `Path` equality, empty bounds off-device); the single copy is the guard.
+ */
+fun Modifier.sharedNativeCssBox(blockStyle: BlockStyle): Modifier = drawBehind {
     val borderTop = blockStyle.borderTop
     val borderRight = blockStyle.borderRight
     val borderBottom = blockStyle.borderBottom
@@ -536,6 +581,28 @@ internal fun Modifier.sharedNativeCssBox(blockStyle: BlockStyle): Modifier = dra
         )
     }
 }
+
+/**
+ * Whether an `hr` spacer with this (themed) style would draw nothing at all.
+ *
+ * Browsers render even an unstyled `<hr>` as a visible rule, and the WebView
+ * surfaces inherit that for free — but a native box with no border and no
+ * background is a blank gap. The ReadBeyond sonnets style `hr` with margins
+ * and width only (`hr { margin-left: 5%; width: 90% }`), so without a default
+ * the rules around the nav vanish on native while both WebViews show them.
+ * Deliberately native-only: Android's own native spacer stays a blank 8.dp
+ * box (benchmark untouched — see the parity doc), this only closes the gap
+ * toward the WebView behavior users compare against.
+ */
+internal fun BlockStyle.needsDefaultHrRule(): Boolean =
+    borderTop == null && borderBottom == null && !backgroundColor.isSpecified
+
+/**
+ * The default `hr` rule color, matching the WebView theme override
+ * (`epub_reader.js`: `#CCCCCC` light, `#444444` dark).
+ */
+internal fun defaultHrRuleColor(isDarkTheme: Boolean): Color =
+    if (isDarkTheme) Color(0xFF444444) else Color(0xFFCCCCCC)
 
 internal fun BlockStyle.sharedNativeThemeBlockStyle(
     isDarkTheme: Boolean,
@@ -678,41 +745,17 @@ internal fun Color.sharedNativeSafeLuminance(): Float {
     return if (isSpecified) luminance() else 0f
 }
 
-internal fun BlockStyle.sharedNativeFlexHorizontalArrangement(): Arrangement.Horizontal {
-    return when (justifyContent) {
-        "center" -> Arrangement.Center
-        "flex-end" -> Arrangement.End
-        "space-between" -> Arrangement.SpaceBetween
-        "space-around" -> Arrangement.SpaceAround
-        else -> Arrangement.Start
-    }
-}
+internal fun BlockStyle.sharedNativeFlexHorizontalArrangement(): Arrangement.Horizontal =
+    nativeFlexRowHorizontalArrangement(justifyContent)
 
-internal fun BlockStyle.sharedNativeFlexVerticalArrangement(): Arrangement.Vertical {
-    return when (justifyContent) {
-        "center" -> Arrangement.Center
-        "flex-end" -> Arrangement.Bottom
-        "space-between" -> Arrangement.SpaceBetween
-        "space-around" -> Arrangement.SpaceAround
-        else -> Arrangement.Top
-    }
-}
+internal fun BlockStyle.sharedNativeFlexVerticalArrangement(): Arrangement.Vertical =
+    nativeFlexColumnVerticalArrangement(justifyContent)
 
-internal fun BlockStyle.sharedNativeFlexVerticalAlignment(): Alignment.Vertical {
-    return when (alignItems) {
-        "center" -> Alignment.CenterVertically
-        "flex-end" -> Alignment.Bottom
-        else -> Alignment.Top
-    }
-}
+internal fun BlockStyle.sharedNativeFlexVerticalAlignment(): Alignment.Vertical =
+    nativeFlexRowVerticalAlignment(alignItems)
 
-internal fun BlockStyle.sharedNativeFlexHorizontalAlignment(): Alignment.Horizontal {
-    return when (alignItems) {
-        "center" -> Alignment.CenterHorizontally
-        "flex-end" -> Alignment.End
-        else -> Alignment.Start
-    }
-}
+internal fun BlockStyle.sharedNativeFlexHorizontalAlignment(): Alignment.Horizontal =
+    nativeFlexColumnHorizontalAlignment(alignItems)
 
 internal fun Color.sharedNativeThemeColor(
     isDarkTheme: Boolean,

@@ -35,8 +35,6 @@ import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
-import org.jsoup.safety.Safelist
-import org.zwobble.mammoth.DocumentConverter
 import timber.log.Timber
 import java.io.BufferedReader
 import java.io.File
@@ -50,10 +48,25 @@ class SingleFileImporter(private val context: Context) {
     private val jsonSerializer = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     companion object {
-        private const val MAX_DOCX_ARCHIVE_BYTES = 64L * 1024L * 1024L
+        private const val MAX_OFFICE_ARCHIVE_BYTES = 64L * 1024L * 1024L
         private const val MAX_DOCX_XML_BYTES = 48L * 1024L * 1024L
-        private const val MAX_HTML_CHAPTER_CHARS = 1_000_000
+        /**
+         * Chapters split past this size, always between tags — never inside
+         * one (see [findHtmlChunkEnd]). Sized so ordinary documents import as
+         * a single chapter while pathological ones still chunk into bounded
+         * pieces.
+         */
+        private const val MAX_HTML_CHAPTER_CHARS = 8_000_000
         private const val MAX_HTML_BUFFERED_LINE_CHARS = 128_000
+        /**
+         * How far a chapter may grow past [MAX_HTML_CHAPTER_CHARS] to keep a tag
+         * whole. Giant `<img src="data:…">` tags (a 1 MB photo is ~1.4 MB of
+         * base64) must never split across chapters: the first half parses as a
+         * broken tag the sanitizer drops (image lost) and the second half
+         * renders as pages of base64 soup. Past this budget a split is forced
+         * anyway to bound memory on hostile input (e.g. an unclosed `<`).
+         */
+        private const val MAX_CHAPTER_TAG_OVERFLOW_CHARS = 8_000_000
         private const val MAX_HTML_HEAD_SCAN_CHARS = 256_000
         private const val MAX_HTML_INLINE_CSS_CHARS = 256_000
         private const val MAX_SINGLE_FILE_PLAIN_TEXT_CHARS = 256_000
@@ -106,12 +119,7 @@ class SingleFileImporter(private val context: Context) {
         )
     }
 
-    private val htmlSafelist = Safelist.relaxed()
-        .addTags("article", "aside", "details", "div", "figcaption", "figure", "footer", "header", "main", "section", "summary")
-        .addAttributes(":all", "class", "dir", "id", "lang", "title")
-        .addAttributes("a", "name", "target")
-        .addProtocols("a", "href", "http", "https", "mailto", "tel", "#")
-        .addProtocols("img", "src", "http", "https", "data", "file", "content")
+    private val htmlSafelist = buildHtmlImportSafelist()
 
     private val htmlOutputSettings = Document.OutputSettings().prettyPrint(false)
 
@@ -217,7 +225,8 @@ class SingleFileImporter(private val context: Context) {
         type: FileType,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean = true
+        parseContent: Boolean = true,
+        extractionDirOverride: File? = null
     ): EpubBook {
 
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d("import_start type=$type bookId=$bookId name=$originalBookNameHint parseContent=$parseContent")
@@ -227,15 +236,18 @@ class SingleFileImporter(private val context: Context) {
         val isCodeOrData = com.aryan.reader.isCodeOrDataFileName(originalBookNameHint)
 
         if (type == FileType.HTML && (isCsv || isCodeOrData)) {
-            return parseDynamicContentToHtml(inputStream, originalBookNameHint, bookId, parseContent, isCsv)
+            return parseDynamicContentToHtml(
+                inputStream, originalBookNameHint, bookId, parseContent, isCsv, extractionDirOverride
+            )
         }
 
         return when (type) {
-            FileType.MD -> parseMarkdown(inputStream, originalBookNameHint, bookId, parseContent)
-            FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
-            FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId, parseContent)
-            FileType.DOCX -> parseDocx(inputStream, originalBookNameHint, bookId, parseContent)
-            else -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent)
+            FileType.MD -> parseMarkdown(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            FileType.TXT -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            FileType.HTML -> parseHtml(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            FileType.DOCX -> parseDocx(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            FileType.DOC -> parseDoc(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
+            else -> parsePlainText(inputStream, originalBookNameHint, bookId, parseContent, extractionDirOverride)
         }
     }
 
@@ -244,7 +256,8 @@ class SingleFileImporter(private val context: Context) {
         originalBookNameHint: String,
         bookId: String,
         parseContent: Boolean,
-        isCsv: Boolean
+        isCsv: Boolean,
+        extractionDirOverride: File?
     ): EpubBook = withContext(Dispatchers.IO) {
 
         val tempFile = File(context.cacheDir, "temp_conv_${UUID.randomUUID()}.html")
@@ -321,7 +334,8 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -339,7 +353,8 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.ensureActiveBookDir(context, bookId)
         // Version the Markdown cache because headings are now materialized as
         // chapters rather than leaving every document as a single "Page 1".
         val metadataFile = File(extractionDir, MARKDOWN_METADATA_FILE)
@@ -348,7 +363,12 @@ class SingleFileImporter(private val context: Context) {
             Timber.tag("FileOpenPerf").d("[MD] Loaded from cache instantly | bookId=$bookId")
             return@withContext cachedBook
         }
-        ImportedFileCache.resetActiveBookDir(context, bookId)
+        // A private extraction dir is already freshly prepared by the
+        // caller; resetting the shared active dir here would delete the
+        // chapters of the book a reader currently has open.
+        if (extractionDirOverride == null) {
+            ImportedFileCache.resetActiveBookDir(context, bookId)
+        }
 
         val parseStart = System.currentTimeMillis()
         Timber.tag(DIAG_TAG).i("IMPORT: parseMarkdown START | file=$originalBookNameHint | nativeParser=${SharedMarkdownParser.isNative()}")
@@ -595,7 +615,8 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -613,7 +634,8 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.ensureActiveBookDir(context, bookId)
         val txtCacheMetadataFile = txtMetadataFile(extractionDir)
         val legacyMetadataFile = metadataFile(extractionDir)
         Timber.tag(TXT_FORMAT_TRACE_TAG).d(
@@ -632,7 +654,12 @@ class SingleFileImporter(private val context: Context) {
             return@withContext cachedBook
         }
         Timber.tag(TXT_FORMAT_TRACE_TAG).d("event=android_txt_cache_miss bookId=$bookId resetDir=true")
-        ImportedFileCache.resetActiveBookDir(context, bookId)
+        // A private extraction dir is already freshly prepared by the
+        // caller; resetting the shared active dir here would delete the
+        // chapters of the book a reader currently has open.
+        if (extractionDirOverride == null) {
+            ImportedFileCache.resetActiveBookDir(context, bookId)
+        }
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[TXT] parsePlainText START | file=$originalBookNameHint")
@@ -826,7 +853,8 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -844,7 +872,8 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = metadataFile(extractionDir)
         val extractionFilesSummary = extractionDir.htmlDebugFileList()
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
@@ -858,7 +887,12 @@ class SingleFileImporter(private val context: Context) {
             return@withContext cachedBook
         }
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d("html_cache_reset_before_parse bookId=$bookId dir=${extractionDir.absolutePath}")
-        ImportedFileCache.resetActiveBookDir(context, bookId)
+        // A private extraction dir is already freshly prepared by the
+        // caller; resetting the shared active dir here would delete the
+        // chapters of the book a reader currently has open.
+        if (extractionDirOverride == null) {
+            ImportedFileCache.resetActiveBookDir(context, bookId)
+        }
 
         val parseStart = System.currentTimeMillis()
         Timber.tag("FileOpenPerf").d("[HTML] parseHtml START | file=$originalBookNameHint")
@@ -876,6 +910,12 @@ class SingleFileImporter(private val context: Context) {
             var productEzoicScriptLines = 0
             var inStyle = false
             var inBody = false
+            // True while the chapter stream is inside an unclosed `<…>` tag
+            // (giant data-URI images span many lines). Lets appendBodySegment
+            // keep tags whole instead of splitting chapters mid-attribute.
+            var htmlTagOpen = false
+            // True once the chapter being built contains an `<img` tag.
+            var chapterHasImgTag = false
             var pageNum = 1
             val headBuilder = java.lang.StringBuilder()
             val currentChapterBuilder = java.lang.StringBuilder()
@@ -910,6 +950,34 @@ class SingleFileImporter(private val context: Context) {
                     )
                 )
                 currentChapterBuilder.clear()
+                chapterHasImgTag = false
+            }
+
+            /**
+             * Flushes unless the stream is inside an unclosed tag that still fits
+             * the overflow budget — splitting there would break the tag (see
+             * [MAX_CHAPTER_TAG_OVERFLOW_CHARS]).
+             */
+            fun shouldFlushChapter(): Boolean {
+                if (currentChapterBuilder.length < MAX_HTML_CHAPTER_CHARS) {
+                    return false
+                }
+                if (!htmlTagOpen) {
+                    return true
+                }
+                if (currentChapterBuilder.length - MAX_HTML_CHAPTER_CHARS <= MAX_CHAPTER_TAG_OVERFLOW_CHARS) {
+                    return false
+                }
+                Timber.tag(HTML_IMPORT_DEBUG_TAG).w(
+                    "html_chunk_force_split bookId=$bookId chapter=${chapters.size + 1} " +
+                        "chapterChars=${currentChapterBuilder.length} — unclosed tag exceeded overflow budget; " +
+                        "content past the split may render as text"
+                )
+                Timber.tag(DOCX_IMAGE_DEBUG_TAG).w(
+                    "html_chunk_force_split bookId=$bookId chapter=${chapters.size + 1} " +
+                        "chapterChars=${currentChapterBuilder.length} hasImgTag=$chapterHasImgTag"
+                )
+                return true
             }
 
             fun appendBodySegment(segment: String, startIndex: Int = 0, endIndex: Int = segment.length, addNewline: Boolean = true) {
@@ -917,16 +985,42 @@ class SingleFileImporter(private val context: Context) {
                 while (start < endIndex) {
                     val remainingCapacity = (MAX_HTML_CHAPTER_CHARS - currentChapterBuilder.length).coerceAtLeast(1)
                     val requestedEnd = minOf(endIndex, start + remainingCapacity)
-                    val chunkEnd = findHtmlChunkEnd(segment, start, requestedEnd, endIndex)
+                    val chunkEnd = findHtmlChunkEnd(segment, start, requestedEnd, endIndex, htmlTagOpen)
+                    if (chunkEnd > requestedEnd) {
+                        // Extended past the chapter budget to keep a tag whole.
+                        // Sample only — the chunk may hold megabytes of base64.
+                        val sample = segment.substring(start, minOf(start + 64, chunkEnd)).replace("\n", "")
+                        Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
+                            "html_chunk_tag_overflow bookId=$bookId chapter=${chapters.size + 1} " +
+                                "continuesTag=$htmlTagOpen chunkChars=${chunkEnd - start} sample=$sample"
+                        )
+                        if (!htmlTagOpen && sample.contains("<img", ignoreCase = true) ||
+                            htmlTagOpen && chapterHasImgTag
+                        ) {
+                            Timber.tag(DOCX_IMAGE_DEBUG_TAG).d(
+                                "html_chunk_tag_overflow bookId=$bookId chapter=${chapters.size + 1} " +
+                                    "chunkChars=${chunkEnd - start} chapterChars=${currentChapterBuilder.length}"
+                            )
+                        }
+                    }
                     currentChapterBuilder.append(segment, start, chunkEnd)
+                    if (!chapterHasImgTag) {
+                        // The tag may start later in the segment; chunks tile
+                        // the range, so a later chunk still catches it.
+                        val imgAt = segment.indexOf("<img", startIndex = start, ignoreCase = true)
+                        if (imgAt in start until chunkEnd) {
+                            chapterHasImgTag = true
+                        }
+                    }
+                    htmlTagOpen = scanHtmlTagState(segment, start, chunkEnd, htmlTagOpen)
                     start = chunkEnd
-                    if (currentChapterBuilder.length >= MAX_HTML_CHAPTER_CHARS) {
+                    if (shouldFlushChapter()) {
                         flushChapter()
                     }
                 }
                 if (addNewline) {
                     currentChapterBuilder.append('\n')
-                    if (currentChapterBuilder.length >= MAX_HTML_CHAPTER_CHARS) {
+                    if (shouldFlushChapter()) {
                         flushChapter()
                     }
                 }
@@ -1155,6 +1249,7 @@ class SingleFileImporter(private val context: Context) {
                 "productEzoic=$hasProductEzoicBefore"
         )
         blockedNodes.remove()
+        retainTextAlignAttributes(body)
         val leakedScriptTextNodesRemoved = removeLeakedScriptTextNodes(body)
         val cleaned = Jsoup.clean(body.html(), "", htmlSafelist, htmlOutputSettings)
         val hasProductEzoicAfter = cleaned.contains("productEzoicAds", ignoreCase = true)
@@ -1302,7 +1397,40 @@ class SingleFileImporter(private val context: Context) {
         inputStream: InputStream,
         originalBookNameHint: String,
         bookId: String,
-        parseContent: Boolean
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
+    ): EpubBook = importOfficeDocument(
+        inputStream, originalBookNameHint, bookId, parseContent, OfficeImportFormat.DOCX,
+        extractionDirOverride
+    )
+
+    private suspend fun parseDoc(
+        inputStream: InputStream,
+        originalBookNameHint: String,
+        bookId: String,
+        parseContent: Boolean,
+        extractionDirOverride: File? = null
+    ): EpubBook = importOfficeDocument(
+        inputStream, originalBookNameHint, bookId, parseContent, OfficeImportFormat.DOC,
+        extractionDirOverride
+    )
+
+    /**
+     * DOCX is a zip of XML (validated as such); DOC is an opaque CFB binary
+     * (size-checked only — opening it as a zip would just throw).
+     */
+    private enum class OfficeImportFormat(val tag: String, val sourceSuffix: String) {
+        DOCX("DOCX", ".docx"),
+        DOC("DOC", ".doc"),
+    }
+
+    private suspend fun importOfficeDocument(
+        inputStream: InputStream,
+        originalBookNameHint: String,
+        bookId: String,
+        parseContent: Boolean,
+        format: OfficeImportFormat,
+        extractionDirOverride: File? = null
     ): EpubBook = withContext(Dispatchers.IO) {
         if (!parseContent) {
             return@withContext EpubBook(
@@ -1320,40 +1448,46 @@ class SingleFileImporter(private val context: Context) {
             )
         }
 
-        val extractionDir = ImportedFileCache.ensureActiveBookDir(context, bookId)
+        val extractionDir = extractionDirOverride?.let(ImportedFileCache::prepareDirectory)
+            ?: ImportedFileCache.ensureActiveBookDir(context, bookId)
         val metadataFile = metadataFile(extractionDir)
 
-        readCachedSingleFileBook(metadataFile, extractionDir, "DOCX")?.let { cachedBook ->
-            Timber.tag("FileOpenPerf").d("[DOCX] Loaded from cache instantly | bookId=$bookId")
+        readCachedSingleFileBook(metadataFile, extractionDir, format.tag)?.let { cachedBook ->
+            Timber.tag("FileOpenPerf").d("[${format.tag}] Loaded from cache instantly | bookId=$bookId")
             return@withContext cachedBook
         }
-        ImportedFileCache.resetActiveBookDir(context, bookId)
+        // A private extraction dir is already freshly prepared by the
+        // caller; resetting the shared active dir here would delete the
+        // chapters of the book a reader currently has open.
+        if (extractionDirOverride == null) {
+            ImportedFileCache.resetActiveBookDir(context, bookId)
+        }
 
-        val parseStart = System.currentTimeMillis()
-        Timber.tag("FileOpenPerf").d("[DOCX] parseDocx START | file=$originalBookNameHint")
+        Timber.tag("FileOpenPerf").d("[${format.tag}] import START | file=$originalBookNameHint")
 
-        val sourceDocxFile = File(context.cacheDir, "temp_docx_source_${UUID.randomUUID()}.docx")
-        val tempFile = File(context.cacheDir, "temp_docx_${UUID.randomUUID()}.html")
+        val fileTag = format.tag.lowercase()
+        val sourceOfficeFile = File(context.cacheDir, "temp_${fileTag}_source_${UUID.randomUUID()}${format.sourceSuffix}")
+        val tempFile = File(context.cacheDir, "temp_${fileTag}_${UUID.randomUUID()}.html")
         try {
             inputStream.use { stream ->
-                FileOutputStream(sourceDocxFile).use { output ->
+                FileOutputStream(sourceOfficeFile).use { output ->
                     stream.copyTo(output)
                 }
             }
 
-            validateDocxForImport(sourceDocxFile, originalBookNameHint)
-
-            val htmlContent = sourceDocxFile.inputStream().use { stream ->
-                try {
-                    val converter = DocumentConverter()
-                    converter.convertToHtml(stream).value ?: ""
-                } catch (oom: OutOfMemoryError) {
-                    Timber.e(oom, "DOCX conversion ran out of memory for $originalBookNameHint")
-                    throw IllegalStateException("This DOCX file is too large to open safely on this device.")
-                }
+            if (format == OfficeImportFormat.DOCX) {
+                validateDocxForImport(sourceOfficeFile, originalBookNameHint)
+            } else {
+                validateDocSizeForImport(sourceOfficeFile, originalBookNameHint)
             }
 
-            Timber.tag("FileOpenPerf").d("[DOCX] parseDocx: mammoth conversion done | elapsed=${System.currentTimeMillis() - parseStart}ms")
+            // Native office_oxide first, mammoth fallback for DOCX — see DocxHtmlConverter.
+            // DOC has no legacy fallback: mammoth cannot parse CFB binaries.
+            val htmlContent = if (format == OfficeImportFormat.DOCX) {
+                DocxHtmlConverter.convert(sourceOfficeFile, originalBookNameHint)
+            } else {
+                DocxHtmlConverter.convertDoc(sourceOfficeFile, originalBookNameHint)
+            }
 
             FileOutputStream(tempFile).bufferedWriter().use { writer ->
                 val title = originalBookNameHint.substringBeforeLast(".")
@@ -1366,8 +1500,8 @@ class SingleFileImporter(private val context: Context) {
                 return@withContext parseHtml(tempStream, originalBookNameHint, bookId, parseContent)
             }
         } finally {
-            if (sourceDocxFile.exists()) {
-                sourceDocxFile.delete()
+            if (sourceOfficeFile.exists()) {
+                sourceOfficeFile.delete()
             }
             if (tempFile.exists()) {
                 tempFile.delete()
@@ -1375,9 +1509,17 @@ class SingleFileImporter(private val context: Context) {
         }
     }
 
+    /** Size cap only — a DOC is an opaque CFB binary, not a zip of XML. */
+    private fun validateDocSizeForImport(sourceDocFile: File, originalBookNameHint: String) {
+        if (sourceDocFile.length() > MAX_OFFICE_ARCHIVE_BYTES) {
+            Timber.w("DOC file too large for import: file=$originalBookNameHint bytes=${sourceDocFile.length()}")
+            throw IllegalStateException("This DOC file is too large to open safely on this device.")
+        }
+    }
+
     private fun validateDocxForImport(sourceDocxFile: File, originalBookNameHint: String) {
         val archiveBytes = sourceDocxFile.length()
-        if (archiveBytes > MAX_DOCX_ARCHIVE_BYTES) {
+        if (archiveBytes > MAX_OFFICE_ARCHIVE_BYTES) {
             throw IllegalStateException("This DOCX file is too large to open safely on this device.")
         }
 
@@ -1419,6 +1561,20 @@ class SingleFileImporter(private val context: Context) {
                 "scriptTags=$inputScriptTags productEzoic=$inputHasProductEzoic file=${file.absolutePath}"
         )
         val sanitizedBodyContent = sanitizeHtmlFragment(bodyContent, leadingTitleToDrop = title)
+        if (bodyContent.contains("<img")) {
+            // Lengths only — the src payload may be megabytes of base64.
+            val srcLens = Regex("src=\"[^\"]*\"").findAll(bodyContent)
+                .map { it.value.length }
+                .toList()
+            val lastImgOpen = bodyContent.lastIndexOf("<img")
+            Timber.tag(DOCX_IMAGE_DEBUG_TAG).d(
+                "html_write_chapter_images bookId=$bookId page=$pageNum " +
+                    "imgTags=${bodyContent.split("<img", ignoreCase = true).size - 1} " +
+                    "srcLens=${srcLens.take(20)}${if (srcLens.size > 20) " +${srcLens.size - 20} more" else ""} " +
+                    "truncatedImg=${lastImgOpen > bodyContent.lastIndexOf('>')} " +
+                    "bodyChars=${bodyContent.length} outputChars=${sanitizedBodyContent.length}"
+            )
+        }
         val outputScriptTags = Regex("<script\\b", RegexOption.IGNORE_CASE).findAll(sanitizedBodyContent).count()
         val outputHasProductEzoic = sanitizedBodyContent.contains("productEzoicAds", ignoreCase = true)
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
@@ -1495,23 +1651,6 @@ class SingleFileImporter(private val context: Context) {
         }
     }
 
-    private fun findHtmlChunkEnd(
-        source: String,
-        start: Int,
-        requestedEnd: Int,
-        absoluteEnd: Int
-    ): Int {
-        if (requestedEnd >= absoluteEnd) return absoluteEnd
-
-        val tagStart = source.lastIndexOf('<', requestedEnd - 1)
-        val tagEnd = source.lastIndexOf('>', requestedEnd - 1)
-        if (tagStart > start && tagStart > tagEnd && requestedEnd - tagStart <= 4096) {
-            return tagStart
-        }
-
-        return requestedEnd
-    }
-
     private fun writeHtmlBodyContentChunked(writer: java.io.Writer, htmlContent: String) {
         var charsSinceBreak = 0
         for (char in htmlContent) {
@@ -1524,3 +1663,4 @@ class SingleFileImporter(private val context: Context) {
         }
     }
 }
+

@@ -552,7 +552,7 @@
     <string name="content_desc_options">Опції</string>
     <string name="dialog_delete_highlight">Видалити виділення?</string>
     <string name="dialog_delete_highlight_desc">Ви впевнені, що хочете назавжди видалити це виділення?</string>
-    <string name="banner_original_pdf_not_found">Оригінальний PDF не ​​знайдено.</string>
+    <string name="banner_original_pdf_not_found">Оригінальний PDF не знайдено.</string>
     <string name="error_book_content_not_found">Помилка: вміст книги не знайдено. Шлях: %1$s</string>
     <string name="toast_select_dictionary_first">Спершу виберіть програму-словник.</string>
     <string name="toast_select_translate_first">Спочатку виберіть програму для перекладу.</string>
@@ -943,7 +943,7 @@
     <string name="custom_font_fallback">Спеціальний шрифт</string>
     <string name="error_occurred_format">Сталася помилка: %1$s</string>
     <string name="error_loading_document_format">Помилка завантаження документа: %1$s</string>
-    <string name="error_no_text_on_page_after_ocr">OCR не ​​знайшов тексту на цій сторінці.</string>
+    <string name="error_no_text_on_page_after_ocr">OCR не знайшов тексту на цій сторінці.</string>
     <string name="error_page_text_not_extractable">Сторінка здається порожньою або текст не витягується.</string>
     <string name="pdf_error_blank_page_summary">Неможливо підсумувати порожню сторінку.</string>
     <string name="pdf_error_document_not_loaded">Документ не завантажено.</string>
@@ -974,7 +974,7 @@
     <string name="tts_error_starting_playback">Помилка запуску відтворення.</string>
     <string name="tts_error_load_audio">Не вдалося завантажити аудіо.</string>
     <string name="tts_error_playback">Помилка відтворення: %1$s</string>
-    <string name="tts_error_cloud_not_configured">Cloud TTS не ​​налаштовано.</string>
+    <string name="tts_error_cloud_not_configured">Cloud TTS не налаштовано.</string>
     <string name="tts_unknown_book">Невідома книга</string>
     <string name="ai_settings_title">Ключі та моделі AI</string>
     <string name="ai_settings_saved_keys">Збережені ключі</string>

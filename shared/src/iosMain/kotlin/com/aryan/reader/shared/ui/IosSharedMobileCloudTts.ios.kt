@@ -34,6 +34,7 @@ import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.parseSpendGuardError
 import com.aryan.reader.shared.parseSpendGuardSentinel
 import com.aryan.reader.shared.spendGuardSentinel
+import com.aryan.reader.shared.compareByNatural
 import com.aryan.reader.shared.ios.IOS_TTS_WORKER_URL
 import com.aryan.reader.shared.ios.IosReaderAiHttpClient
 import com.aryan.reader.shared.reduce
@@ -139,6 +140,12 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private var rateLimitRetriesLeft = 0
     private var authToken: String? = null
     private var workerUrl = ""
+    // Per-start surface inputs (Android `handleStartTts` parity): the calling surface's own
+    // voice and cloud decision for the running session. Reader sessions leave both unset and
+    // keep settings-based behavior; Listen asserts both. Reset on every stop so a later
+    // session never inherits another surface's voice or mode.
+    private var sessionSpeakerId: String? = null
+    private var sessionCloudAsserted = false
     private var chunks: List<ReaderTtsChunk> = emptyList()
     private var bookTitle = ""
     // Observable because audiobook Listen projects its whole UI state out of these, and reads
@@ -160,6 +167,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     // audio ready instead of a network round-trip of silence.
     private var prefetchJob: Job? = null
     private val prefetchedAudio = mutableMapOf<Int, ByteArray>()
+    // Voice the kept prefetches were synthesized with. Skip keeps completed entries (same
+    // chunks, same session voice), so reuse is gated on it: a voice change between prefetch
+    // and skip must re-synthesize rather than play one chunk in the old voice.
+    private var prefetchedSpeakerId: String? = null
     // Start-session stopwatch for ReaderTtsStart diagnostics: set at start(),
     // consumed at the first player.play(), cleared at stop().
     private var ttsStartMark: TimeMark? = null
@@ -203,15 +214,22 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         this.authToken = authToken
         this.workerUrl = workerUrl.trim()
         if (speakerChanged || modeChanged || accessChanged) {
-            // Never keep a session authenticated with an old account/token or
-            // speaking with a voice that no longer matches the selected mode.
+            // Never keep a session authenticated with an old account/token. Speaker/mode edits
+            // only tear down a session that actually runs on those settings — a Listen session
+            // carrying its own voice and cloud decision (see start()) survives the reader
+            // changing its voice underneath it. Android keeps the surfaces apart the same way
+            // by scoping Listen state to its own prefs rather than the reader's.
             val hadActiveSession = state.isPlaying || state.isLoading || state.isPaused
             iosCloudTtsTraceLog(
                 "cloud.configure",
                 "speakerChanged=$speakerChanged modeChanged=$modeChanged accessChanged=$accessChanged hadActiveSession=$hadActiveSession"
             )
-            if (hadActiveSession) stop()
-            closeWebSocket()
+            if (hadActiveSession && (accessChanged || !sessionCloudAsserted)) {
+                stop()
+                closeWebSocket()
+            } else if (!hadActiveSession) {
+                closeWebSocket()
+            }
         }
         state = state.copy(
             isAvailable = cloudTtsModeEnabled() && (byokAvailable() || fishByokAvailable() || workerAvailable()),
@@ -230,13 +248,15 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         continueSession: Boolean,
         playbackSource: String?,
         totalChapters: Int,
+        speakerId: String?,
+        cloudModeAsserted: Boolean,
     ) {
         val readable = chunks.filter { it.spokenText.isNotBlank() }
         if (readable.isEmpty()) {
             iosTtsStartLog("cloud.start empty", "chunks=${chunks.size}")
             return
         }
-        val gateError = startGateError()
+        val gateError = startGateError(cloudModeAsserted)
         if (gateError != null) {
             iosTtsStartLog("cloud.start gated", "error=$gateError")
             state = state.copy(
@@ -252,6 +272,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         this.chunks = readable
         this.bookTitle = bookTitle
         this.bookId = bookId
+        // Surface separation (Android parity): this session speaks with the caller's voice and
+        // cloud decision, not whatever the reader's settings hold right now.
+        this.sessionSpeakerId = speakerId?.ifBlank { null }
+        this.sessionCloudAsserted = cloudModeAsserted
         this.activePlaybackSource = playbackSource
         this.activeTotalChapters = totalChapters
         this.currentChunkIndex = startChunkIndex.coerceIn(0, readable.lastIndex)
@@ -377,7 +401,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                     entryKey = "${dirs.first}/${dirs.second}",
                 )
             }
-            .sortedBy { it.chapterTitle.lowercase() }
+            .sortedWith(compareByNatural { it.chapterTitle })
     }
 
     override fun deleteCachedChapter(chapter: ReaderTtsCacheChapter) {
@@ -682,6 +706,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         chunks = emptyList()
         currentChunkIndex = -1
         wantsPlayback = false
+        // Surface separation: a finished session's voice and cloud decision die with it, so the
+        // next session — possibly the other surface's — resolves them fresh.
+        sessionSpeakerId = null
+        sessionCloudAsserted = false
         // Clearing the surface tag is what lets another surface claim this engine next, and is
         // what makes the Listen projection report disconnected. Android clears `playbackSource`
         // in the same place.
@@ -805,10 +833,18 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private suspend fun loadOrGenerate(chunk: ReaderTtsChunk, requestedSession: Long): ByteArray? {
         val file = cacheFile(chunk)
         // Prefetched audio wins over both the disk cache and a fresh request:
-        // it was fetched while the previous chunk was still speaking.
-        prefetchedAudio.remove(chunk.index)?.let { prefetched ->
-            iosCloudTtsTraceLog("cloud.prefetchUse", "session=$requestedSession index=${chunk.index} bytes=${prefetched.size}")
-            return prefetched
+        // it was fetched while the previous chunk was still speaking. The voice tag must
+        // match: skip keeps entries across sessions, and a voice change in between must
+        // re-synthesize rather than play one stale-voiced chunk.
+        if (prefetchedSpeakerId == sessionSpeaker()) {
+            prefetchedAudio.remove(chunk.index)?.let { prefetched ->
+                iosCloudTtsTraceLog("cloud.prefetchUse", "session=$requestedSession index=${chunk.index} bytes=${prefetched.size}")
+                return prefetched
+            }
+        } else if (prefetchedAudio.isNotEmpty()) {
+            iosCloudTtsTraceLog("cloud.prefetchVoiceMismatch", "session=$requestedSession index=${chunk.index}")
+            prefetchedAudio.clear()
+            prefetchedSpeakerId = null
         }
         val cached = withContext(Dispatchers.Default) { readFile(file) }
         if (cached != null && cached.size > WAV_HEADER_SIZE) {
@@ -901,7 +937,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         val body = if (byok) {
             buildJsonObject {
                 put("text", chunk.spokenText)
-                put("reference_id", settings.ttsSpeakerId)
+                put("reference_id", sessionSpeaker())
                 put("format", "mp3")
                 put("mp3_bitrate", 128)
                 put("normalize", true)
@@ -922,7 +958,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         } else {
             buildJsonObject {
                 put("text", chunk.spokenText)
-                put("voiceId", settings.ttsSpeakerId)
+                put("voiceId", sessionSpeaker())
                 put("format", "mp3")
                 put("latency", "normal")
             }.toString()
@@ -959,8 +995,8 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             return null
         }
         if (response.statusCode !in 200..299 || response.bodyBytes.size < 1024) {
-            iosCloudTtsTraceLog("cloud.fishBadResponse", "session=$requestedSession status=${response.statusCode} bytes=${response.bodyBytes.size}")
-            if (reportFailures) fail("Fish TTS error ${response.statusCode}")
+            iosCloudTtsTraceLog("cloud.fishBadResponse", "session=$requestedSession status=${response.statusCode} bytes=${response.bodyBytes.size} voice=${sessionSpeaker()} body=${response.body.take(160)}")
+            if (reportFailures) fail("Fish TTS error ${response.statusCode} (${response.bodyBytes.size} bytes)")
             return null
         }
         // Worker-reported USD cost for the session-spend line (BYOK is $0
@@ -1007,7 +1043,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                 put("responseModalities", buildJsonArray { add(JsonPrimitive("AUDIO")) })
                 put("speechConfig", buildJsonObject {
                     put("voiceConfig", buildJsonObject {
-                        put("prebuiltVoiceConfig", buildJsonObject { put("voiceName", settings.ttsSpeakerId) })
+                        put("prebuiltVoiceConfig", buildJsonObject { put("voiceName", sessionSpeaker()) })
                     })
                 })
             })
@@ -1165,10 +1201,19 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         prefetchJob?.cancel()
         prefetchJob = null
         prefetchedAudio.clear()
+        prefetchedSpeakerId = null
     }
 
-    private fun prefetchNextChunk(requestedSession: Long) {
-        if (!useStatelessRestBackend()) return
+    /** Drops only the in-flight fetch. Completed entries stay: skip moves within the same
+     * chunks list and voice, so the skipped-to chunk reuses them instead of paying a second
+     * synthesis for bytes fetched seconds ago. Stale arrivals from the cancelled job are
+     * still dropped by the session guard at the write site. */
+    private fun cancelPrefetchJob() {
+        prefetchJob?.cancel()
+        prefetchJob = null
+    }
+
+    private fun prefetchNextChunk(requestedSession: Long) {        if (!useStatelessRestBackend()) return
         val nextIndex = currentChunkIndex + 1
         val nextChunk = chunks.getOrNull(nextIndex) ?: return
         if (nextIndex in prefetchedAudio) return
@@ -1193,6 +1238,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                 if (requestedSession != sessionId) return@withContext
                 if (audio != null && audio.size > WAV_HEADER_SIZE) {
                     prefetchedAudio[nextIndex] = audio
+                    prefetchedSpeakerId = sessionSpeaker()
                     iosCloudTtsTraceLog("cloud.prefetchReady", "index=$nextIndex bytes=${audio.size}")
                 } else {
                     iosCloudTtsTraceLog("cloud.prefetchSkipped", "index=$nextIndex")
@@ -1360,7 +1406,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         sessionId += 1
         playJob?.cancel()
         playJob = null
-        cancelPrefetch()
+        // Skip-only: the in-flight fetch belongs to the dead session, but completed entries
+        // are still good (same chunks, same voice) — clearing them here is what made every
+        // skip pay a full synthesis for bytes fetched seconds ago.
+        cancelPrefetchJob()
         playbackContinuation?.cancel()
         playbackContinuation = null
         player?.stop()
@@ -1389,7 +1438,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${urlEncode(directKey)}"
         } else {
             val wsBase = workerUrl.removeSuffix("/").replace("https://", "wss://").replace("http://", "ws://")
-            "$wsBase/live?speaker=${urlEncode(settings.ttsSpeakerId)}&token=${urlEncode(authToken.orEmpty())}"
+            "$wsBase/live?speaker=${urlEncode(sessionSpeaker())}&token=${urlEncode(authToken.orEmpty())}"
         }
         if (websocket != null && setupReady.isCompleted) return
         closeWebSocket()
@@ -1422,7 +1471,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                     put("responseModalities", buildJsonArray { add(JsonPrimitive("AUDIO")) })
                     put("speechConfig", buildJsonObject {
                         put("voiceConfig", buildJsonObject {
-                            put("prebuiltVoiceConfig", buildJsonObject { put("voiceName", settings.ttsSpeakerId) })
+                            put("prebuiltVoiceConfig", buildJsonObject { put("voiceName", sessionSpeaker()) })
                         })
                     })
                 })
@@ -1525,11 +1574,15 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     /** Velocity throttle from the Fish path; the loop waits and retries once. */
     private class FishRateLimited(val retryAfterSeconds: Int) : IllegalStateException("RATE_LIMITED:$retryAfterSeconds")
 
-    private fun startGateError(): String? {
+    private fun startGateError(cloudModeAsserted: Boolean): String? {
         // Android TtsPlaybackManager gate parity: any cloud backend enables
         // start — Gemini Live BYOK, Gemini REST BYOK, Fish BYOK, or the
         // credited worker. The old legacy-only check blocked Fish/REST users.
-        if (!cloudTtsModeEnabled()) return "Choose Cloud TTS in AI settings first."
+        // A surface that resolved cloud mode itself (audiobook Listen's pin)
+        // is trusted like Android trusts the passed ttsMode; only the reader
+        // path is gated on its own settings. Backend and spend checks below
+        // stay surface-independent.
+        if (!cloudModeAsserted && !cloudTtsModeEnabled()) return "Choose Cloud TTS in AI settings first."
         val backend = resolveBackend()
         if (backend == CloudTtsBackend.UNAVAILABLE) {
             // Name the actual reason: this gate used to report the same generic
@@ -1578,12 +1631,18 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private fun workerFishAvailable(): Boolean =
         isSignedIn && !authToken.isNullOrBlank() && !byokAvailable() && !fishByokAvailable()
 
+    /** Voice the running session speaks with: the calling surface's pick, else configured. */
+    private fun sessionSpeaker(): String = sessionSpeakerId ?: settings.ttsSpeakerId
+
+    /** Cloud mode for session-scoped decisions: asserted per start, else the reader setting. */
+    private fun sessionCloudMode(): Boolean = sessionCloudAsserted || cloudTtsModeEnabled()
+
     /** Fish REST covers Fish BYOK and the credited worker (both are Fish-backed). */
-    private fun useFishRest(): Boolean = cloudTtsModeEnabled() &&
+    private fun useFishRest(): Boolean = sessionCloudMode() &&
         (resolveBackend() == CloudTtsBackend.FISH_BYOK || resolveBackend() == CloudTtsBackend.WORKER)
 
     /** Gemini REST BYOK: the user's own key against :generateContent (no credits). */
-    private fun useGeminiRest(): Boolean = cloudTtsModeEnabled() && resolveBackend() == CloudTtsBackend.GEMINI_BYOK
+    private fun useGeminiRest(): Boolean = sessionCloudMode() && resolveBackend() == CloudTtsBackend.GEMINI_BYOK
 
     private fun cloudBackendName(): String = when (resolveBackend()) {
         CloudTtsBackend.FISH_BYOK -> "fish-byok"
@@ -1612,10 +1671,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private fun cacheFile(chunk: ReaderTtsChunk): String {
         val bookPath = cacheSegment(bookTitle, "book")
         val chapterPath = cacheSegment(chunk.chapterTitle, "chapter")
-        val digest = sha256((chunk.spokenText + settings.ttsSpeakerId + "CLOUD").encodeToByteArray())
+        val digest = sha256((chunk.spokenText + sessionSpeaker() + "CLOUD").encodeToByteArray())
             .joinToString("") { it.toUByte().toString(16).padStart(2, '0') }
             .take(16)
-        val safeSpeaker = settings.ttsSpeakerId.replace(Regex("[^A-Za-z0-9._-]+"), "_")
+        val safeSpeaker = sessionSpeaker().replace(Regex("[^A-Za-z0-9._-]+"), "_")
         val directory = "$cacheRoot/$bookPath/$chapterPath"
         return "$directory/cached_chunk_${safeSpeaker}_$digest.wav"
     }
@@ -1639,7 +1698,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             wavs.forEach { (name, size) ->
                 chunks++
                 totalBytes += size
-                if (name.contains("_${settings.ttsSpeakerId}_")) {
+                if (name.contains("_${sessionSpeaker()}_")) {
                     voiceChunks++
                     voiceBytes += size
                 }

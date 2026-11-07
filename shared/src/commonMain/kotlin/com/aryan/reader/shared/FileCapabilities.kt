@@ -98,6 +98,7 @@ object SharedFileCapabilities {
         "application/x-tar",
         "application/tar",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         "application/vnd.oasis.opendocument.text",
         "application/x-vnd.oasis.opendocument.text-flat-xml"
@@ -205,6 +206,18 @@ object SharedFileCapabilities {
             desktopSurface = ReaderFeatureSurface.TEXT_READER
         ),
         FileTypeCapability(
+            type = FileType.DOC,
+            displayName = "DOC",
+            // Legacy Word binary + template: the same CFB container, which the
+            // native bridge reads through one parser.
+            extensions = setOf("doc", "dot"),
+            androidSurface = ReaderFeatureSurface.EPUB_READER,
+            // No desktop native bridge yet (SharedOfficeOxide.desktop is a stub),
+            // and no pure-JVM CFB parser exists — so this is intentionally the
+            // first desktopParityGaps entry until Phase 3 lands.
+            desktopSurface = null
+        ),
+        FileTypeCapability(
             type = FileType.ODT,
             displayName = "ODT",
             extensions = setOf("odt"),
@@ -244,6 +257,7 @@ object SharedFileCapabilities {
         FileType.CB7 to "application/zip",
         FileType.CBT to "application/x-tar",
         FileType.DOCX to "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        FileType.DOC to "application/msword",
         FileType.PPTX to "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         FileType.ODT to "application/vnd.oasis.opendocument.text",
         FileType.FODT to "application/x-vnd.oasis.opendocument.text-flat-xml"
@@ -290,6 +304,7 @@ object SharedFileCapabilities {
             "application/vnd.oasis.opendocument.text" -> FileType.ODT
             "application/x-vnd.oasis.opendocument.text-flat-xml" -> FileType.FODT
             "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> FileType.DOCX
+            "application/msword" -> FileType.DOC
             "application/vnd.openxmlformats-officedocument.presentationml.presentation" -> FileType.PPTX
             "application/zip", "application/vnd.comicbook+zip", "application/x-cbz" -> {
                 when {

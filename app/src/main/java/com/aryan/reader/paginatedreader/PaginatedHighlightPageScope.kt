@@ -117,6 +117,12 @@ internal fun resolvePaginatedPageHighlights(
  * by checking it against the chapter's text. A highlight whose stored locator cannot be trusted is
  * relocated by its own text, which is also what repairs it — so placing and repairing are the same
  * question asked twice, and they cannot answer differently.
+ *
+ * Block-local is not the same as page-local. The paginator splits a tall paragraph into fragments that
+ * keep the paragraph's block index and CFI, so the resolver's offsets — which describe the whole
+ * paragraph — have to be shifted into the fragment actually on this page. [HighlightBlockSegment.rangeInFragment]
+ * does that using the fragment's source offset; without it the continuation page paints the beginning
+ * of the paragraph over its own unrelated text.
  */
 private fun resolvePaginatedHighlightOnPage(
     highlight: UserHighlight,
@@ -166,28 +172,27 @@ private fun resolvePaginatedHighlightOnPage(
         )
         return null
     }
-    val ownedByThisPage = anchor.segments.any { segment ->
-        pageBlocks.any { block ->
-            block.blockIndex == segment.blockIndex &&
+    // A page owns the highlight only when one of its fragments actually intersects the resolved
+    // range. Matching blockIndex/cfi alone is not enough: the paginator gives every fragment of a
+    // split paragraph the same identity, so the continuation page would claim a range belonging to
+    // the paragraph's beginning and paint it over unrelated text.
+    val perBlock = pageBlocks.mapNotNull { block ->
+        val length = block.content.text.length
+        val ranges = anchor.segments.mapNotNull { segment ->
+            val matchesBlock = segment.blockIndex == block.blockIndex &&
                 (segment.blockCfi == null || block.cfi == null || segment.blockCfi == block.cfi)
+            if (!matchesBlock) {
+                null
+            } else {
+                segment.rangeInFragment(block.startCharOffsetInSource, length)
+            }
         }
-    }
+        if (ranges.isNotEmpty()) block.blockIndex to ranges else null
+    }.toMap()
     logHighlightTrace(
-        "place_decide id=${highlight.id} ownedByThisPage=$ownedByThisPage " +
+        "place_decide id=${highlight.id} ownedByThisPage=${perBlock.isNotEmpty()} " +
             "anchorBlocks=${anchor.segments.map { it.blockIndex }} pageBlocks=${pageBlocks.map { it.blockIndex }}"
     )
-    val perBlock = pageBlocks.mapNotNull { block ->
-        val segment: HighlightBlockSegment = anchor.segments
-            .firstOrNull { it.blockIndex == block.blockIndex }
-            ?: return@mapNotNull null
-        if (segment.blockCfi != null && block.cfi != null && segment.blockCfi != block.cfi) {
-            return@mapNotNull null
-        }
-        val length = block.content.text.length
-        val from = segment.localStart.coerceIn(0, length)
-        val to = segment.localEnd.coerceIn(from, length)
-        if (to > from) block.blockIndex to listOf(from until to) else null
-    }.toMap()
     if (perBlock.isNotEmpty()) {
         // The numbers the painter will actually receive. Placement being correct is not the same as the
         // painter being handed the right thing, and these are the only values it gets.

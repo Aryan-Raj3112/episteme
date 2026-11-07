@@ -213,6 +213,102 @@ class AudiobookModelsTest {
         assertEquals("0:00", formatSharedPlaybackTime(-1L))
     }
 
+    @Test
+    fun `listen source prefers narration when present and respects explicit choice`() {
+        assertEquals(
+            SharedListenAudioSource.MEDIA_OVERLAY,
+            resolveSharedListenAudioSource(hasNarration = true, savedPreference = null),
+        )
+        assertEquals(
+            SharedListenAudioSource.TTS,
+            resolveSharedListenAudioSource(hasNarration = false, savedPreference = null),
+        )
+        // No silent fallback: an explicit TTS pick stays TTS even with narration.
+        assertEquals(
+            SharedListenAudioSource.TTS,
+            resolveSharedListenAudioSource(hasNarration = true, savedPreference = SharedListenAudioSource.TTS),
+        )
+        assertEquals(
+            SharedListenAudioSource.MEDIA_OVERLAY,
+            resolveSharedListenAudioSource(hasNarration = false, savedPreference = SharedListenAudioSource.MEDIA_OVERLAY),
+        )
+    }
+
+    @Test
+    fun `listen items carry overlay info by book`() {
+        val book = BookItem(
+            id = "b1", path = null, type = FileType.EPUB, displayName = "b1.epub",
+            timestamp = 1L,
+        )
+        val overlay = SharedListenMediaOverlayInfo(hasNarration = true, narrator = "Reader", narratedChapterIndices = setOf(0, 2))
+        val items = buildSharedTtsListenItems(listOf(book), emptyList(), mapOf("b1" to overlay))
+        assertEquals(1, items.size)
+        assertTrue(items.first().hasMediaOverlayNarration)
+        assertEquals("Reader", items.first().mediaOverlay.narrator)
+        assertEquals(setOf(0, 2), items.first().mediaOverlay.narratedChapterIndices)
+        val plain = buildSharedTtsListenItems(listOf(book), emptyList())
+        assertTrue(plain.first().mediaOverlay.narratedChapterIndices.isEmpty())
+    }
+
+    @Test
+    fun `listen narrated chapters map spine overlays onto listen chapters`() {
+        val index = com.aryan.reader.shared.reader.SharedMediaOverlayIndex(
+            smilPathBySpineItem = mapOf(0 to "OEBPS/p0.smil", 2 to "OEBPS/p2.smil"),
+            contentPathBySpineItem = mapOf(0 to "OEBPS/p0.xhtml", 1 to "OEBPS/p1.xhtml", 2 to "OEBPS/p2.xhtml"),
+            smilIdBySpineItem = mapOf(0 to "s0", 2 to "s2"),
+            totalDurationMs = null,
+            narrator = "Narrator",
+            activeClass = null,
+            playbackActiveClass = null,
+            declaredDurationMsBySpineItem = emptyMap(),
+        )
+        val paths = listOf("OEBPS/p0.xhtml", "OEBPS/p1.xhtml", "OEBPS/p2.xhtml")
+        assertEquals(setOf(0, 2), sharedListenNarratedChapterIndices(paths, index))
+        val info = sharedListenMediaOverlayInfo(paths, index)
+        assertTrue(info.hasNarration)
+        assertEquals("Narrator", info.narrator)
+        assertEquals(setOf(0, 2), info.narratedChapterIndices)
+        val empty = sharedListenMediaOverlayInfo(
+            paths,
+            com.aryan.reader.shared.reader.SharedMediaOverlayIndex.EMPTY,
+        )
+        assertTrue(!empty.hasNarration)
+    }
+
+    @Test
+    fun `overlay transcript index maps clip progress onto chunks without word sync claims`() {
+        assertEquals(-1, sharedOverlayTranscriptChunkIndex(0, 10, 0))
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 0, 5))
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 10, 5))
+        assertEquals(4, sharedOverlayTranscriptChunkIndex(9, 10, 5))
+        assertEquals(2, sharedOverlayTranscriptChunkIndex(5, 10, 5))
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(-3, 10, 5))
+        assertEquals(4, sharedOverlayTranscriptChunkIndex(99, 10, 5))
+        // Single-clip chapter still resolves to the only chunk.
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 1, 1))
+    }
+
+    @Test
+    fun `overlay transcript index interpolates within a clip so long pars do not pin the highlight`() {
+        // One clip spanning five chunks: the highlight must travel with the
+        // voice instead of sitting on the clip's first chunk.
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 1, 5, clipFraction = 0f))
+        assertEquals(2, sharedOverlayTranscriptChunkIndex(0, 1, 5, clipFraction = 0.5f))
+        assertEquals(4, sharedOverlayTranscriptChunkIndex(0, 1, 5, clipFraction = 1f))
+        // Clip boundary behavior is unchanged by the fraction default.
+        assertEquals(
+            sharedOverlayTranscriptChunkIndex(2, 10, 5),
+            sharedOverlayTranscriptChunkIndex(2, 10, 5, clipFraction = 0f),
+        )
+        // Mid-clip progress reaches into the next chunk rather than trailing it.
+        assertEquals(1, sharedOverlayTranscriptChunkIndex(2, 10, 5, clipFraction = 0.5f))
+        assertEquals(1, sharedOverlayTranscriptChunkIndex(2, 10, 5, clipFraction = 1f))
+        // Out-of-range fractions clamp rather than escaping the chapter.
+        assertEquals(0, sharedOverlayTranscriptChunkIndex(0, 4, 4, clipFraction = -1f))
+        assertEquals(3, sharedOverlayTranscriptChunkIndex(3, 4, 4, clipFraction = 9f))
+        assertEquals(-1, sharedOverlayTranscriptChunkIndex(0, 4, 0, clipFraction = 0.5f))
+    }
+
     private fun item(id: String, progress: Float, isTts: Boolean = false, updatedAt: Long = 0L) =
         SharedAudiobookLibraryItem(id, progress, isTts, updatedAt)
 }

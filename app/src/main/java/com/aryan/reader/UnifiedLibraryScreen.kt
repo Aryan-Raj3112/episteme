@@ -27,10 +27,12 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -104,6 +106,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -122,8 +125,10 @@ import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
+import com.aryan.reader.audiobook.ListenOverlayHost
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.CloudFolderSyncSelection
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.ui.AppIcon
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
@@ -174,6 +179,14 @@ fun UnifiedLibraryScreen(
     val globalAudiobookController = remember(context) { AudiobookController(context) }
     val importedPlayback by globalAudiobookController.state.collectAsStateWithLifecycle()
     val ttsPlayback by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
+    // Publisher narration outlives the player sheet by design (ListenOverlayHost
+    // is process-wide), so the mini player observes it directly: collapsing the
+    // sheet must leave a way back, exactly like the TTS service state above.
+    val listenOverlayHost = remember(context) { ListenOverlayHost.get(context.applicationContext) }
+    val overlayPlayback by listenOverlayHost.playback.collectAsStateWithLifecycle()
+    val overlayBook by listenOverlayHost.book.collectAsStateWithLifecycle()
+    val overlayChapter by listenOverlayHost.chapterIndex.collectAsStateWithLifecycle()
+    val overlayProgress by listenOverlayHost.progress.collectAsStateWithLifecycle()
     LaunchedEffect(importedAudiobooks.isNotEmpty()) {
         if (importedAudiobooks.isNotEmpty()) globalAudiobookController.connectSession()
     }
@@ -197,6 +210,11 @@ fun UnifiedLibraryScreen(
     LaunchedEffect(query) {
         delay(300)
         debouncedQuery = query
+    }
+    // Content-index search follows the same debounce; the engine publishes
+    // matching book ids into uiState for the union in visibleBooks.
+    LaunchedEffect(debouncedQuery, uiState.libraryState.searchInsideFiles) {
+        viewModel.searchLibraryContent(debouncedQuery)
     }
     var showLibraryControls by rememberSaveable { mutableStateOf(false) }
     var showAdvancedFilters by rememberSaveable { mutableStateOf(false) }
@@ -366,14 +384,22 @@ fun UnifiedLibraryScreen(
             )
         }
     }
-    val visibleBooks = remember(uiState.rawLibraryFiles, uiState.libraryFilters, filter, debouncedQuery, uiState.sortOrder) {
-        sortFiles(
-            filterUnifiedLibraryBooks(
-                applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters),
-                filter,
-                debouncedQuery
-            ),
-            uiState.sortOrder
+    val visibleBooks = remember(
+        uiState.rawLibraryFiles,
+        uiState.libraryFilters,
+        uiState.sortOrder,
+        filter,
+        debouncedQuery,
+        uiState.libraryState.searchInsideFiles,
+        uiState.libraryState.contentSearchResults,
+    ) {
+        filterUnifiedLibraryBooks(
+            applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters),
+            filter,
+            debouncedQuery,
+            uiState.libraryState.searchInsideFiles,
+            uiState.libraryState.contentSearchResults,
+            uiState.sortOrder,
         )
     }
     val section = UnifiedLibrarySection.fromPersisted(uiState.unifiedLibrarySection)
@@ -392,11 +418,37 @@ fun UnifiedLibraryScreen(
         selectedShelfId = parentId
     }
 
-    BackHandler(enabled = selectedItems.isNotEmpty() || selectedShelfId != null) {
-        if (selectedItems.isNotEmpty()) {
-            viewModel.clearContextualAction()
-        } else {
-            navigateShelfUp()
+    val focusManager = LocalFocusManager.current
+    // Keyboard visibility as state: back dismisses the IME first (keeping
+    // the query + results) so there is a way to hide the keyboard without
+    // leaving search. Reads the IME inset directly so no shared-API change
+    // is needed; dialogs still win because they register back later (LIFO).
+    val isKeyboardOpen = WindowInsets.isImeVisible
+    // System back unwinds library layers innermost-first: selection, then an
+    // open keyboard, then an active HOME search (query + results), then shelf
+    // navigation. Search must clear before shelf-up so a filtered shelf view
+    // doesn't pop away with the query still applied underneath.
+    val backAction = nextLibraryBackAction(
+        hasSelection = selectedItems.isNotEmpty(),
+        isKeyboardOpen = isKeyboardOpen,
+        isSearchActive = section == UnifiedLibrarySection.HOME && query.isNotBlank(),
+        inShelf = selectedShelfId != null,
+    )
+    BackHandler(enabled = backAction != LibraryBackAction.NONE) {
+        when (nextLibraryBackAction(
+            hasSelection = selectedItems.isNotEmpty(),
+            isKeyboardOpen = isKeyboardOpen,
+            isSearchActive = section == UnifiedLibrarySection.HOME && query.isNotBlank(),
+            inShelf = selectedShelfId != null,
+        )) {
+            LibraryBackAction.CLEAR_SELECTION -> viewModel.clearContextualAction()
+            LibraryBackAction.HIDE_KEYBOARD -> focusManager.clearFocus()
+            LibraryBackAction.CLEAR_SEARCH -> {
+                query = ""
+                focusManager.clearFocus()
+            }
+            LibraryBackAction.SHELF_UP -> navigateShelfUp()
+            LibraryBackAction.NONE -> Unit
         }
     }
 
@@ -505,7 +557,34 @@ fun UnifiedLibraryScreen(
                     ?.let { id -> uiState.rawLibraryFiles.firstOrNull { it.bookId == id } }
                 val activeImported = importedPlayback.bookId
                     ?.let { id -> importedAudiobooks.firstOrNull { it.bookId == id } }
+                // Narration continues with no TTS service session, so it gets
+                // the first slot: the other branches are necessarily idle then.
+                val activeOverlayBook = overlayBook
+                    ?.takeIf { overlayPlayback.hasBook }
+                    ?.let { listenBook ->
+                        uiState.rawLibraryFiles.firstOrNull { it.bookId == listenBook.bookId }
+                            ?.toTtsAudiobookUiItem(
+                                overlayProgress?.takeIf { it.bookId == listenBook.bookId }
+                                    ?: bookTtsProgress.firstOrNull { it.bookId == listenBook.bookId }
+                            )
+                            ?.copy(
+                                chapter = "Narration · Chapter ${(overlayChapter.takeIf { it >= 0 } ?: 0) + 1}",
+                                narrator = listenBook.mediaOverlay.narrator ?: "Publisher narration",
+                            )
+                    }
                 when {
+                    activeOverlayBook != null -> {
+                        AudiobookMiniPlayer(
+                            item = activeOverlayBook,
+                            isPlaying = overlayPlayback.isPlaying,
+                            progress = activeOverlayBook.progress,
+                            onTogglePlay = { listenOverlayHost.toggle() },
+                            onExpand = {
+                                audiobookPlayerItem = activeOverlayBook
+                            },
+                            onStop = { listenOverlayHost.stop() }
+                        )
+                    }
                     activeTtsBook != null -> {
                         val item = activeTtsBook.toTtsAudiobookUiItem(bookTtsProgress.firstOrNull { it.bookId == activeTtsBook.bookId })
                             .copy(chapter = ttsPlayback.chapterTitle ?: "Listening with TTS")
@@ -543,7 +622,10 @@ fun UnifiedLibraryScreen(
                             progress = liveProgress,
                             onTogglePlay = {
                                 globalAudiobookController.togglePlay(
-                                    viewModel.ttsController::stop
+                                    onBeforePlay = {
+                                        viewModel.ttsController.stop()
+                                        listenOverlayHost.stop()
+                                    }
                                 )
                             },
                             onExpand = {
@@ -608,6 +690,8 @@ fun UnifiedLibraryScreen(
                         onAccountClick = { scope.launch { accountDrawerState.open() } },
                         searchQuery = if (section == UnifiedLibrarySection.HOME) query else null,
                         onSearchQueryChange = { query = it },
+                        searchInsideFiles = uiState.libraryState.searchInsideFiles,
+                        onSearchInsideFilesChange = viewModel::setSearchInsideFiles,
                     )
                 }
             },
@@ -637,10 +721,15 @@ fun UnifiedLibraryScreen(
                         } else viewModel.onRecentFileClicked(item)
                     },
                     onBookLongClick = viewModel::onRecentItemLongPress,
+                    onContentHitClick = { item, hit, hitQuery ->
+                        viewModel.openLibrarySearchHit(item, hit, hitQuery)
+                    },
                     openTabs = uiState.openTabs,
                     tabsEnabled = uiState.isTabsEnabled,
                     onCloseTab = { viewModel.closeTab(it.bookId) },
                     onCloseAllTabs = { showCloseAllTabsDialog = true },
+                    searchInsideFiles = uiState.libraryState.searchInsideFiles,
+                    contentSearchResults = uiState.libraryState.contentSearchResults,
                 )
                 UnifiedLibrarySection.AUDIOBOOKS -> AudiobooksLibrarySection(
                     modifier = Modifier.padding(padding),
@@ -668,17 +757,24 @@ fun UnifiedLibraryScreen(
                             else item
                     },
                     onListenWithTtsClick = { book ->
-                        val shouldStart = shouldAutoStartTtsAudiobook(book.bookId, ttsPlayback)
-
-                        if (shouldStart) {
-                            viewModel.ttsController.connect()
-                        }
-
+                        // Card tap only opens the player. Playback starts from
+                        // a play button (row or sheet), never from opening.
                         audiobookPlayerItem = book
                             .toTtsAudiobookUiItem(
                                 bookTtsProgress.firstOrNull { it.bookId == book.bookId }
                             )
-                            .copy(autoStart = shouldStart)
+                            .copy(autoStart = false)
+                    },
+                    onPlayTtsClick = { book ->
+                        viewModel.ttsController.connect()
+                        audiobookPlayerItem = book
+                            .toTtsAudiobookUiItem(
+                                bookTtsProgress.firstOrNull { it.bookId == book.bookId }
+                            )
+                            .copy(autoStart = true)
+                    },
+                    onPlayAudiobookClick = { item ->
+                        audiobookPlayerItem = item.copy(autoStart = true)
                     },
                     onAddAudiobookClick = {
                         showAudiobookAddSheet = true
@@ -723,8 +819,10 @@ fun UnifiedLibraryScreen(
                             downloadingBookIds = uiState.downloadingBookIds,
                             usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                             widthSizeClass = widthSizeClass,
+                            sortOrder = uiState.sortOrder,
                             onShelfSelected = { selectedShelfId = it.id },
                             onBreadcrumbNavigate = { shelfId -> selectedShelfId = shelfId },
+                            onSortOrderChange = viewModel::setSortOrder,
                             onRenameShelf = { shelfId -> shelfIdPendingRename = shelfId },
                             onDeleteShelf = { shelfId -> shelfIdPendingDelete = shelfId },
                             onAddBooks = { shelfId -> shelfIdAddingBooks = shelfId },
@@ -871,7 +969,13 @@ fun UnifiedLibraryScreen(
                         com.aryan.reader.shared.SharedListeningTarget.IMPORTED_AUDIOBOOK,
                     )
                 ) {
-                    com.aryan.reader.shared.SharedListeningHandoff.STOP_TTS -> viewModel.ttsController.stop()
+                    // An imported audiobook wins over generated listening of
+                    // either kind: TTS synthesis and publisher narration both
+                    // stop, so two real-audio sources never play at once.
+                    com.aryan.reader.shared.SharedListeningHandoff.STOP_TTS -> {
+                        viewModel.ttsController.stop()
+                        listenOverlayHost.stop()
+                    }
                     com.aryan.reader.shared.SharedListeningHandoff.STOP_AUDIOBOOK -> Unit
                 }
             },
@@ -1168,12 +1272,55 @@ internal fun findContinueReadingBook(books: List<RecentFileItem>): RecentFileIte
     return books.firstOrNull { it.bookId == picked.id }
 }
 
-internal fun filterUnifiedLibraryBooks(books: List<RecentFileItem>, filter: UnifiedLibraryFilter, query: String): List<RecentFileItem> {
+/** Innermost-first system-back priority for the unified library. */
+internal enum class LibraryBackAction {
+    CLEAR_SELECTION,
+    HIDE_KEYBOARD,
+    CLEAR_SEARCH,
+    SHELF_UP,
+    NONE,
+}
+
+internal fun nextLibraryBackAction(
+    hasSelection: Boolean,
+    isSearchActive: Boolean,
+    inShelf: Boolean,
+    isKeyboardOpen: Boolean = false,
+): LibraryBackAction = when {
+    hasSelection -> LibraryBackAction.CLEAR_SELECTION
+    isKeyboardOpen -> LibraryBackAction.HIDE_KEYBOARD
+    isSearchActive -> LibraryBackAction.CLEAR_SEARCH
+    inShelf -> LibraryBackAction.SHELF_UP
+    else -> LibraryBackAction.NONE
+}
+
+internal fun filterUnifiedLibraryBooks(
+    books: List<RecentFileItem>,
+    filter: UnifiedLibraryFilter,
+    query: String,
+    searchInsideFiles: Boolean = false,
+    contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
+    sortOrder: SortOrder = SortOrder.RECENT,
+): List<RecentFileItem> {
     if (books.isEmpty()) return emptyList()
     val normalizedQuery = query.trim()
-    val mapper = SharedProjectionBookItemCache(maxEntries = books.size)
     val byId = books.associateBy { it.bookId }
-    return mapper.map(books)
+    val sharedBooks = SharedProjectionBookItemCache(maxEntries = books.size).map(books)
+    val metadataBooks = sharedBooks
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
         .mapNotNull { byId[it.id] }
+    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
+        return sortFiles(metadataBooks, sortOrder)
+    }
+    // Content-only books follow metadata hits but still respect the active
+    // status filter (blank query = filter check without text matching).
+    // Relevance wins inside this group: best content match first, otherwise a
+    // strong hit sits below a book the user merely opened last.
+    val metadataIds = metadataBooks.mapTo(HashSet()) { it.bookId }
+    val contentScores = contentSearchResults.associate { it.bookId to it.score }
+    val contentOnly = sharedBooks
+        .filter { it.id !in metadataIds && it.matchesMobileUnifiedLibraryFilter(filter, "") }
+        .sortedByDescending { contentScores[it.id] ?: Double.NEGATIVE_INFINITY }
+        .mapNotNull { byId[it.id] }
+    return sortFiles(metadataBooks, sortOrder) + contentOnly
 }

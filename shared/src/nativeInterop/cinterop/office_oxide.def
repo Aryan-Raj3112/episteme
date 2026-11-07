@@ -1,0 +1,3 @@
+headers = office_oxide_bridge.h
+headerFilter = office_oxide_bridge.h
+package = com.aryan.reader.shared.office.cinterop

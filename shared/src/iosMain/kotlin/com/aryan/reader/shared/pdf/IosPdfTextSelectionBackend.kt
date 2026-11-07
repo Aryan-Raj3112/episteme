@@ -62,6 +62,8 @@ import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSLock
 import platform.Foundation.NSURL
+import com.aryan.reader.shared.ios.IosFolderScopeToken
+import com.aryan.reader.shared.ios.acquireScopeForBookPath
 import com.aryan.reader.shared.ios.resolveIosReadablePath
 
 /**
@@ -79,7 +81,8 @@ internal class IosPdfTextPage internal constructor(
     private val page: FPDF_PAGE,
     private val textPage: FPDF_TEXTPAGE,
     private val pageWidth: Float,
-    private val pageHeight: Float
+    private val pageHeight: Float,
+    private val scopeToken: IosFolderScopeToken? = null,
 ) : PdfTextPageSession, AutoCloseable {
 
     /**
@@ -361,6 +364,9 @@ internal class IosPdfTextPage internal constructor(
                         textPage?.let(::FPDFText_ClosePage)
                         page?.let(::FPDF_ClosePage)
                         document?.let(::FPDF_CloseDocument)
+                        // Balance the acquire in open(): scope must span the whole
+                        // session because the fd stays open between calls.
+                        runCatching { scopeToken?.close() }
                     }
                 }
             }
@@ -387,20 +393,35 @@ internal class IosPdfTextPage internal constructor(
         }
 
         fun open(path: String?, pageIndex: Int, password: String? = null): IosPdfTextPage? {
-            val resolvedPath = path.resolveIosReadablePath() ?: return null
-            if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return null
+            // Hold scope for the page lifetime (fd stays open until close()).
+            val scope = acquireScopeForBookPath(path)
+            val resolvedPath = path.resolveIosReadablePath()
+            if (resolvedPath == null) {
+                scope?.close()
+                return null
+            }
+            if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) {
+                scope?.close()
+                return null
+            }
             ensureLibraryInitialized()
-            val document = FPDF_LoadDocument(resolvedPath, password) ?: return null
+            val document = FPDF_LoadDocument(resolvedPath, password)
+            if (document == null) {
+                scope?.close()
+                return null
+            }
             return try {
                 val pageCount = FPDF_GetPageCount(document).coerceAtLeast(1)
                 val safePageIndex = pageIndex.coerceIn(0, pageCount - 1)
                 val page = FPDF_LoadPage(document, safePageIndex) ?: run {
                     FPDF_CloseDocument(document)
+                    scope?.close()
                     return null
                 }
                 val textPage = FPDFText_LoadPage(page) ?: run {
                     FPDF_ClosePage(page)
                     FPDF_CloseDocument(document)
+                    scope?.close()
                     return null
                 }
                 val pageWidth = FPDF_GetPageWidthF(page).coerceAtLeast(1f)
@@ -410,10 +431,12 @@ internal class IosPdfTextPage internal constructor(
                     page = page,
                     textPage = textPage,
                     pageWidth = pageWidth,
-                    pageHeight = pageHeight
+                    pageHeight = pageHeight,
+                    scopeToken = scope,
                 )
             } catch (cause: Throwable) {
                 FPDF_CloseDocument(document)
+                scope?.close()
                 null
             }
         }

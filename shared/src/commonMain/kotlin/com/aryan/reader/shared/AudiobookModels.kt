@@ -199,9 +199,12 @@ fun sortSharedAudiobooks(
         compareByDescending<SharedAudiobook> { it.lastListenedAt }.thenByDescending { it.addedAt }
     )
     SharedAudiobookSort.RECENTLY_ADDED -> items.sortedByDescending { it.addedAt }
-    SharedAudiobookSort.TITLE -> items.sortedBy { it.title.lowercase() }
+    SharedAudiobookSort.TITLE -> items.sortedWith(compareByNatural { it.title })
     SharedAudiobookSort.AUTHOR -> items.sortedWith(
-        compareBy<SharedAudiobook> { it.author?.lowercase().orEmpty() }.thenBy { it.title.lowercase() }
+        Comparator { a, b ->
+            val authorCmp = compareNatural(a.author.orEmpty(), b.author.orEmpty())
+            if (authorCmp != 0) authorCmp else compareNatural(a.title, b.title)
+        }
     )
     SharedAudiobookSort.PROGRESS -> items.sortedByDescending { it.progressFraction }
 }
@@ -427,6 +430,7 @@ object SharedTtsListenCapabilities {
         FileType.TXT,
         FileType.HTML,
         FileType.DOCX,
+        FileType.DOC,
     )
 
     fun supports(type: FileType): Boolean = type == FileType.PDF || type in reflowTypes
@@ -435,31 +439,93 @@ object SharedTtsListenCapabilities {
 data class SharedTtsListenItem(
     val book: BookItem,
     val progress: SharedBookTtsListeningProgress?,
+    val mediaOverlay: SharedListenMediaOverlayInfo = SharedListenMediaOverlayInfo(),
 ) {
     val title: String
         get() = book.title?.takeIf { it.isNotBlank() }
             ?: book.displayName.substringBeforeLast('.').ifBlank { book.displayName }
     val author: String
         get() = book.author ?: "Unknown author"
+    val hasMediaOverlayNarration: Boolean get() = mediaOverlay.hasNarration
+}
+
+enum class SharedListenAudioSource { TTS, MEDIA_OVERLAY }
+
+/**
+ * Publisher narration available to Listen for one book.
+ *
+ * Cheap by design: [narratedChapterIndices] are Listen chapter indices with a
+ * playable SMIL document, computed once when the book is prepared. Empty when
+ * the book has no overlays or the archive is unreachable.
+ */
+data class SharedListenMediaOverlayInfo(
+    val hasNarration: Boolean = false,
+    val narrator: String? = null,
+    val narratedChapterIndices: Set<Int> = emptySet(),
+)
+
+/**
+ * Initial Listen source. Prefers publisher narration when present; an explicit
+ * saved choice always wins. No silent fallback: once chosen, the session stays
+ * on that source until the user switches.
+ */
+fun resolveSharedListenAudioSource(
+    hasNarration: Boolean,
+    savedPreference: SharedListenAudioSource?,
+): SharedListenAudioSource = when {
+    savedPreference != null -> savedPreference
+    hasNarration -> SharedListenAudioSource.MEDIA_OVERLAY
+    else -> SharedListenAudioSource.TTS
+}
+
+fun SharedListenAudioSource.isOverlay(): Boolean = this == SharedListenAudioSource.MEDIA_OVERLAY
+
+/**
+ * Listen chapters with playable publisher narration.
+ *
+ * Shared-first so Android and iOS map chapters identically: spine items carry
+ * the overlays, Listen chapters are the reader's re-flow. A chapter counts
+ * when its spine item declares a SMIL document.
+ */
+fun sharedListenNarratedChapterIndices(
+    chapterContentPaths: List<String>,
+    overlayIndex: com.aryan.reader.shared.reader.SharedMediaOverlayIndex,
+): Set<Int> {
+    if (chapterContentPaths.isEmpty() || !overlayIndex.hasOverlays) return emptySet()
+    val spineByChapter = com.aryan.reader.shared.reader.sharedMediaOverlaySpineItemIndexByChapter(
+        chapterContentPaths = chapterContentPaths,
+        overlayIndex = overlayIndex,
+    )
+    return spineByChapter
+        .filter { (_, spineItemIndex) -> overlayIndex.smilPathBySpineItem.containsKey(spineItemIndex) }
+        .keys
+        .toSet()
+}
+
+fun sharedListenMediaOverlayInfo(
+    chapterContentPaths: List<String>,
+    overlayIndex: com.aryan.reader.shared.reader.SharedMediaOverlayIndex,
+): SharedListenMediaOverlayInfo {
+    val narrated = sharedListenNarratedChapterIndices(chapterContentPaths, overlayIndex)
+    if (narrated.isEmpty()) return SharedListenMediaOverlayInfo()
+    return SharedListenMediaOverlayInfo(
+        hasNarration = true,
+        narrator = overlayIndex.narrator,
+        narratedChapterIndices = narrated,
+    )
 }
 
 fun buildSharedTtsListenItems(
     books: List<BookItem>,
     progress: List<SharedBookTtsListeningProgress>,
+    overlayInfoByBookId: Map<String, SharedListenMediaOverlayInfo> = emptyMap(),
 ): List<SharedTtsListenItem> {
     val progressByBook = progress.associateBy { it.bookId }
     return books
         .filter { it.type != FileType.AUDIOBOOK && SharedTtsListenCapabilities.supports(it.type) }
         .sortedByDescending { it.dateAddedTimestamp.coerceAtLeast(it.timestamp) }
-        .map { SharedTtsListenItem(it, progressByBook[it.id]) }
+        .map { SharedTtsListenItem(it, progressByBook[it.id], overlayInfoByBookId[it.id] ?: SharedListenMediaOverlayInfo()) }
 }
-
-/**
- * Mirrors Android's shouldAutoStartTtsAudiobook: a row click auto-starts TTS
- * unless the tapped book is already the active listening session.
- */
-fun sharedShouldAutoStartTtsListen(requestedBookId: String?, state: SharedBookTtsListenState): Boolean =
-    requestedBookId == null || state.bookId != requestedBookId || !state.connected
 
 /**
  * Transcript window centered on the current chunk (2 behind, current, 3 ahead),
@@ -470,6 +536,60 @@ fun sharedTtsTranscriptWindow(currentChunkIndex: Int, chunkCount: Int): IntRange
     if (chunkCount <= 0) return 0..-1
     val center = currentChunkIndex.coerceIn(0, chunkCount - 1)
     return (center - 2).coerceAtLeast(0)..(center + 3).coerceAtMost(chunkCount - 1)
+}
+
+/**
+ * Approximate transcript position for publisher narration.
+ *
+ * Narration is clip-sequenced (one SMIL par per line) while the transcript is
+ * chunk-sequenced (the same sentence-grouped text TTS would speak), so there
+ * is no exact index to project — only monotonic progress through the same
+ * chapter. Mapping clip fraction onto chunk fraction keeps the highlight
+ * moving with the voice without claiming a word-level sync that does not
+ * exist.
+ *
+ * [clipFraction] is the intra-clip progress (0 at the clip boundary, 1 at its
+ * end), so a long clip that spans several chunks moves the highlight through
+ * them instead of pinning it to the clip's first chunk while the voice runs
+ * ahead. Without it the highlight visibly trails the narration whenever TTS
+ * chunks are finer than SMIL clips — the normal shape of a prose chapter,
+ * where one par holds a whole long sentence that TTS hard-splits at word
+ * boundaries.
+ *
+ * [spans] anchors each clip to its exact chunks (see
+ * [sharedOverlayClipChunkSpans], the Listen equivalent of the reader's
+ * per-line highlight) and always wins when it lines up with this chapter:
+ * same length as the clip list, so a stale table from another chapter can
+ * never leak in. Without spans this is the fractional estimate.
+ *
+ * @param clipPlaybackIndex index into the loaded chapter's playable clips.
+ * @param clipCount playable clips in the loaded chapter; <= 0 means unknown.
+ * @param chunkCount transcript chunks in the chapter; <= 0 means no transcript.
+ * @param clipFraction progress through the active clip, 0..1. Clamped.
+ * @return estimated absolute chunk index, or -1 when there is no transcript.
+ */
+fun sharedOverlayTranscriptChunkIndex(
+    clipPlaybackIndex: Int,
+    clipCount: Int,
+    chunkCount: Int,
+    clipFraction: Float = 0f,
+    spans: List<SharedOverlayClipChunkSpan> = emptyList(),
+): Int {
+    if (chunkCount <= 0) return -1
+    if (spans.size == clipCount && clipCount > 0 && clipPlaybackIndex in spans.indices) {
+        return sharedSpanTranscriptChunkIndex(spans[clipPlaybackIndex], clipFraction, chunkCount)
+    }
+    if (clipCount <= 0) return 0
+    val safeClip = clipPlaybackIndex.coerceIn(0, clipCount - 1)
+    val safeFraction = clipFraction.coerceIn(0f, 1f)
+    // Fractional clip position: clip N at fraction f has spoken past
+    // N + f clips' worth of the chapter. Float precision is ample here
+    // (counts are in the low thousands) and the clamp below absorbs any
+    // rounding at the chapter end.
+    val effective = (safeClip + safeFraction).coerceIn(0f, clipCount.toFloat())
+    return ((effective * chunkCount.toFloat()) / clipCount.toFloat())
+        .toInt()
+        .coerceIn(0, chunkCount - 1)
 }
 
 fun SharedTtsListenItem.toSharedAudiobookLibraryItem(): SharedAudiobookLibraryItem =

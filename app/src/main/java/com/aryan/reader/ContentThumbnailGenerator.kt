@@ -15,6 +15,7 @@ import com.aryan.reader.pdf.ArchiveDocumentWrapper
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pptx.PptxCoverGenerator
 import com.aryan.reader.shared.reader.SharedTextDecoding
+import com.aryan.reader.shared.office.SharedOfficeOxide
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
@@ -47,7 +48,8 @@ internal class ContentThumbnailGenerator(context: Context) {
             FileType.HTML,
             FileType.MD,
             FileType.TXT,
-            FileType.DOCX -> generateTextPreview(uri, item.type)
+            FileType.DOCX,
+            FileType.DOC -> generateTextPreview(uri, item.type)
             else -> null
         }
     }
@@ -152,6 +154,7 @@ internal class ContentThumbnailGenerator(context: Context) {
                 FileType.HTML -> extractHtmlText(input)
                 FileType.MD, FileType.TXT -> readPlainText(input)
                 FileType.DOCX -> extractDocxText(input)
+                FileType.DOC -> extractDocTextPreview(input)
                 FileType.ODT -> extractOdtText(input, isFlat = false)
                 FileType.FODT -> extractOdtText(input, isFlat = true)
                 else -> null
@@ -185,6 +188,27 @@ internal class ContentThumbnailGenerator(context: Context) {
             }
         }
         return null
+    }
+
+    /**
+     * DOC is a CFB binary, not a zip: preview text comes from the native
+     * bridge rather than entry scanning. Best-effort — null (no thumbnail)
+     * when the bridge is unavailable or the file rejects parsing. Sized like
+     * the import cap; larger files skip instead of risking memory.
+     */
+    private fun extractDocTextPreview(input: InputStream): String? {
+        return try {
+            if (!SharedOfficeOxide.supports("doc")) return null
+            val bytes = input.readBytes()
+            if (bytes.size > MAX_DOC_PREVIEW_BYTES) return null
+            SharedOfficeOxide.renderPlainText(bytes, "doc")?.takeIf { it.isNotBlank() }
+        } catch (error: Exception) {
+            Timber.w(error, "Failed to extract DOC preview text")
+            null
+        } catch (oom: OutOfMemoryError) {
+            Timber.w("DOC preview text ran out of memory")
+            null
+        }
     }
 
     private fun extractOdtText(input: InputStream, isFlat: Boolean): String? {
@@ -324,6 +348,8 @@ internal class ContentThumbnailGenerator(context: Context) {
     companion object {
         private const val MAX_TEXT_SOURCE_BYTES = 256_000
         private const val MAX_PREVIEW_TEXT_CHARS = 8_000
+        /** Mirror of the DOC import cap: larger files skip preview text. */
+        private const val MAX_DOC_PREVIEW_BYTES = 64 * 1024 * 1024
         private val ODT_TEXT_TAGS = setOf("p", "h", "span", "a")
         private val FB2_TEXT_TAGS = setOf("p", "v", "subtitle", "text-author")
     }

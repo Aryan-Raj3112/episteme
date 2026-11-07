@@ -76,6 +76,70 @@ class ReaderFormatSliderModelsTest {
     }
 
     @Test
+    fun nativePaginationLeadingConvertsTheStoredCssLineSpacing() {
+        // Android benchmark (`paginationLineHeightMultiplierForWebViewSetting`): the
+        // untouched slider position (stored as the 1.45 CSS line height) renders at 1.2x,
+        // and every other position renders as its own value.
+        assertEquals(
+            SharedNativePaginationNormalLineHeightMultiplier,
+            sharedPaginationLineHeightMultiplier(AndroidEpubFormatBenchmark.baseLineSpacing)
+        )
+        listOf(0.7f, 1f, 1.1f, 1.2f, 1.5f, 2f, 3f).forEach { slider ->
+            val expected = if (slider == 1f) {
+                SharedNativePaginationNormalLineHeightMultiplier
+            } else {
+                slider
+            }
+            assertEquals(
+                expected,
+                sharedPaginationLineHeightMultiplier(
+                    AndroidEpubFormatBenchmark.baseLineSpacing * slider
+                ),
+                0.0001f,
+                "slider $slider"
+            )
+        }
+    }
+
+    @Test
+    fun sharedPaginationBaseLeadingIsTheConvertedNativeReaderBase() {
+        // Native base is Android's 16sp bodyLarge at the default slider, not the stored
+        // 18 WebView size: 20 stored -> 16 * (20/18) native, then the 1.2x Compose leading.
+        val native20 = SharedNativePaginationBaseFontSizeSp * (20f / AndroidEpubFormatBenchmark.baseFontSizeSp)
+        assertEquals(
+            native20 * 1.2f,
+            ReaderSettings(fontSize = 20).sharedPaginationBaseLineHeightSp(),
+            0.0001f
+        )
+        val doubled = ReaderSettings(fontSize = 20).copy(lineSpacing = 2.9f)
+        assertEquals(
+            native20 * sharedPaginationLineHeightMultiplier(2.9f),
+            doubled.sharedPaginationBaseLineHeightSp(),
+            0.0001f
+        )
+    }
+
+    @Test
+    fun sharedNativeFontSizeMapsTheStoredWebViewSizeToAndroidBodyLarge() {
+        // Default stored 18 renders as Android's 16sp native bodyLarge at 1.0x.
+        assertEquals(
+            16f,
+            ReaderSettings(fontSize = 18).sharedNativeFontSizeSp(),
+            0.0001f
+        )
+        assertEquals(
+            24f,
+            ReaderSettings(fontSize = 27).sharedNativeFontSizeSp(),
+            0.0001f
+        )
+        assertEquals(
+            8f,
+            ReaderSettings(fontSize = 9).sharedNativeFontSizeSp(),
+            0.0001f
+        )
+    }
+
+    @Test
     fun spreadGapSliderUsesAbsoluteDpSteps() {
         assertEquals(0f, AndroidEpubFormatSliders.spreadGap.minimum)
         assertEquals(48f, AndroidEpubFormatSliders.spreadGap.maximum)

@@ -5,6 +5,7 @@ package com.aryan.reader.shared.ui
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.PdfTocEntry
 import com.aryan.reader.shared.pdf.IosPdfiumRuntime
+import com.aryan.reader.shared.ios.withResolvedIosBookPathSuspend
 import com.aryan.reader.shared.pdfium.c.FPDFBookmark_GetDest
 import com.aryan.reader.shared.pdfium.c.FPDFBookmark_GetAction
 import com.aryan.reader.shared.pdfium.c.FPDFAction_GetDest
@@ -21,15 +22,22 @@ import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
 import platform.Foundation.NSFileManager
-import platform.Foundation.NSURL
 
 internal actual suspend fun loadSharedMobilePdfOutline(
     book: BookItem,
     password: String?,
+): List<PdfTocEntry> =
+    // Scope spans resolve + stat + the whole outline walk. A provider ref is
+    // unreadable once its folder scope is released, and the raw ref is not a
+    // path at all, so this used to lose the chapter list for every folder PDF.
+    withResolvedIosBookPathSuspend(book.path) { path ->
+        loadSharedMobilePdfOutlineAtPath(path, password)
+    } ?: emptyList()
+
+private suspend fun loadSharedMobilePdfOutlineAtPath(
+    path: String,
+    password: String?,
 ): List<PdfTocEntry> {
-    val path = book.path?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
-        if (value.startsWith("file://")) NSURL.URLWithString(value)?.path ?: value.removePrefix("file://") else value
-    } ?: return emptyList()
     if (!NSFileManager.defaultManager.fileExistsAtPath(path)) return emptyList()
     return IosPdfiumRuntime.withPdfium {
         val document = FPDF_LoadDocument(path, password) ?: return@withPdfium emptyList()

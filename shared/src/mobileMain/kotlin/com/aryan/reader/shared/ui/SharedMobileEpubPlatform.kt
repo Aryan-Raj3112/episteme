@@ -268,11 +268,13 @@ interface SharedMobileEpubLocalTts {
     /**
      * Whether voice selection must be blocked in the TTS settings panels.
      *
-     * Defaults to [isSessionActive] — the reader's stricter rule, where any live session freezes
-     * the voice list. Surfaces where reaching a stopped state is impractical override this: on
-     * audiobook Listen the player sheet closes as soon as playback stops, so demanding a full stop
-     * makes the voice unreachable. Those surfaces allow changes whenever nothing is actively
-     * being spoken, so pausing is enough of a safe point.
+     * Defaults to [isSessionActive] — the reader's rule, where any live
+     * session freezes the voice list. A paused session keeps old-voice audio
+     * queued (and file caches are keyed per voice), so switching then
+     * resuming would keep playing the previous voice; only a finished or
+     * idle engine takes a new pick. Surfaces whose resume path re-pushes the
+     * voice (audiobook Listen, where stopping closes the sheet) narrow this
+     * to speaking/loading and say so at the override.
      */
     val isVoiceSelectionLocked: Boolean get() = isSessionActive
     /** Increments only when every chunk finishes naturally; explicit stop does not increment it. */
@@ -326,6 +328,22 @@ interface SharedMobileEpubLocalTts {
     fun toggleFavoriteVoice(identifier: String)
     fun setVoice(identifier: String?)
     fun previewVoice(identifier: String?)
+    /**
+     * Applies one surface's session voice/rate/pitch in memory, without
+     * persisting anything.
+     *
+     * Audiobook Listen keeps its own voice, rate and pitch apart from the
+     * reader's, so pushing them through [setVoice]/[setSpeechParameters]
+     * would leak Listen's picks into the reader's stored settings (and a
+     * null system-default pick would leave a stale engine voice in place
+     * instead of clearing it). The default delegates to the persisting pair
+     * for implementations with no per-surface store; those callers keep
+     * today's behavior unchanged.
+     */
+    fun applySessionVoice(identifier: String?, rate: Float, pitch: Float) {
+        setSpeechParameters(rate, pitch)
+        setVoice(identifier)
+    }
     /**
      * Stops a voice preview without touching playback.
      *
@@ -386,6 +404,13 @@ interface SharedMobileEpubCloudTts {
         // Total chapters in the book, when the caller knows it. Listen needs this for whole-book
         // progress; the reader's page-based sessions leave it 0.
         totalChapters: Int = 0,
+        // Android benchmark (`TtsPlaybackManager.handleStartTts` takes the caller's ttsMode +
+        // speakerId and trusts them): a surface with its own engine decision passes it per call
+        // instead of the engine re-reading the reader's settings. Audiobook Listen passes its
+        // pinned cloud flag and its own cloud voice; the reader leaves both default and keeps
+        // settings-based behavior. A null speaker inherits the configured voice.
+        speakerId: String? = null,
+        cloudModeAsserted: Boolean = false,
     )
 
     /**

@@ -57,7 +57,7 @@ internal fun startReaderSession(
             current.selectedPdfUri?.toString() ?: current.selectedEpubUri?.toString().orEmpty(),
         ),
     ),
-)
+).copy(librarySearchDeepLink = null)
 
 internal fun markReaderSessionReady(current: ReaderScreenState, bookId: String): ReaderScreenState =
     current.withReaderSessionState(ReaderSessionOrchestrator.ready(current.readerSession, bookId))

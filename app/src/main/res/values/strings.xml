@@ -115,6 +115,16 @@
     <string name="unified_library_no_shelves">No shelves yet</string>
     <string name="unified_library_no_folders">No synced folders yet</string>
     <string name="unified_library_search_books">Search your books</string>
+    <string name="unified_library_search_inside_files">Search inside files</string>
+    <string name="library_content_search_more_matches">%1$d more matches</string>
+    <string name="library_content_search_fewer_matches">Show fewer</string>
+    <plurals name="library_content_search_match_count">
+        <item quantity="one">%1$d match</item>
+        <item quantity="other">%1$d matches</item>
+    </plurals>
+    <string name="library_content_search_chapter">Chapter %1$d</string>
+    <string name="library_content_search_page">Page %1$d</string>
+    <string name="library_content_search_no_results">No matches in your books</string>
     <string name="unified_library_grid_view">Grid view</string>
     <string name="unified_library_list_view">List view</string>
     <string name="unified_library_sort_filter">Sort and filter</string>
@@ -989,6 +999,10 @@
     <string name="banner_original_pdf_not_found">Original PDF not found.</string>
     <!-- Error state shown in the reader. %1$s = the file path that could not be found. Example: "Error: Book content not found. Path: /books/Dracula.epub". -->
     <string name="error_book_content_not_found">Error: Book content not found. Path: %1$s</string>
+    <!-- Error state shown in the reader when the device has no usable WebView provider (Android System WebView is missing or disabled), so the scrolling reader mode cannot be used. Android System WebView = product name — do not translate. -->
+    <string name="error_webview_unavailable">Android System WebView is missing or disabled on this device, so scrolling mode is unavailable. You can keep reading in paginated mode.</string>
+    <!-- Button in the reader that switches to the natively rendered paginated mode when Android System WebView is missing or disabled. -->
+    <string name="action_use_paginated_mode">Use paginated mode</string>
     <string name="toast_select_dictionary_first">Please select a dictionary app first.</string>
     <string name="toast_select_translate_first">Please select a translate app first.</string>
     <string name="toast_select_search_first">Please select a search app first.</string>
@@ -1023,6 +1037,8 @@
     <string name="format_local">Local Format</string>
     <!-- "Global Format" = text formatting settings that apply to all books. -->
     <string name="format_global">Global Format</string>
+    <string name="theme_local">Local Theme</string>
+    <string name="theme_global">Global Theme</string>
     <string name="action_reset">Reset</string>
     <string name="label_size">Size</string>
     <string name="label_spacing">Spacing</string>
@@ -1721,6 +1737,8 @@
     <string name="pdf_search_result_position">Result %1$d / %2$d</string>
     <!-- Error shown when the PDF renderer cannot open a document and did not provide a specific error message. -->
     <string name="error_failed_load_pdf">Failed to load PDF.</string>
+    <!-- Shown when Pdfium's native libraries could not be loaded on this install, so no PDF can be rendered until the app is reinstalled. -->
+    <string name="error_pdf_engine_unavailable">PDF support is unavailable on this install. Reinstalling the app restores it.</string>
     <!-- Progress banner while downloading the optional Bubble Zoom AI model. %1$d = percentage complete from 0 to 100. %% is a literal percent sign. Example: "Downloading Bubble Zoom model... 42%". -->
     <string name="msg_downloading_bubble_zoom_model_progress">Downloading Bubble Zoom model… %1$d%%</string>
     <string name="content_desc_exit_slider_navigation">Exit slider navigation</string>

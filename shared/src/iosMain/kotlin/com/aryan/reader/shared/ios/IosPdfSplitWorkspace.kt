@@ -92,7 +92,6 @@ import com.aryan.reader.shared.samePdfDocument
 import com.aryan.reader.shared.resolveLayout
 import com.aryan.reader.shared.ui.readerString
 import kotlinx.cinterop.ExperimentalForeignApi
-import platform.Foundation.NSFileManager
 import platform.Foundation.NSUserDefaults
 
 private const val IosPdfSplitWorkspaceDefaultsKey = "reader_ios_pdf_split_workspace_v1"
@@ -151,8 +150,9 @@ internal fun resolveIosPdfSplitBook(
 internal fun iosPdfSplitBookIsAvailable(book: BookItem): Boolean {
     if (!book.isAvailable) return false
     val path = book.path?.trim().orEmpty()
-    return path.startsWith("opds-pse://") ||
-        (path.isNotBlank() && NSFileManager.defaultManager.fileExistsAtPath(path))
+    // Ref-aware: a linked-folder PDF's `ios-folder-book://` ref is not a path,
+    // and its file is only stat-able while the folder scope is held.
+    return path.startsWith("opds-pse://") || path.isIosReadableBookPath()
 }
 
 internal fun restoreIosPdfSplitWorkspace(

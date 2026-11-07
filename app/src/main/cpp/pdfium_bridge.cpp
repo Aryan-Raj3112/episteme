@@ -1281,6 +1281,58 @@ static bool insert_text_line_object(
     return inserted;
 }
 
+// Rotated display size (points) and quarter-turn code per page.
+//
+// The annotation export renders/carries ink coordinates in normalized display space and
+// the export bridge maps them into page space. Kotlin needs the very same page size and
+// rotation to build the matching /AP appearance stream, so it reads them from the same
+// document here instead of trusting PdfRenderer's page dimensions.
+// Returns [width, height, rotationDegrees] per page, or null when unavailable.
+extern "C" JNIEXPORT jintArray JNICALL
+Java_com_aryan_reader_pdf_NativePdfiumBridge_readPageGeometry(
+        JNIEnv *env,
+        jclass clazz,
+        jstring sourcePath) {
+    std::lock_guard<std::recursive_mutex> lock(g_pdfium_mutex);
+
+    if (!init_pdfium() || !load_document_func || !close_document_func ||
+        !get_page_count_func || !load_page_func || !close_page_func ||
+        (!get_page_width_func && !get_page_width_double_func) ||
+        (!get_page_height_func && !get_page_height_double_func)) {
+        LOGE("PdfiumExport: Page geometry functions are unavailable.");
+        return nullptr;
+    }
+
+    std::string source = jstring_to_utf8(env, sourcePath);
+    if (source.empty()) return nullptr;
+
+    void* document = load_document_func(source.c_str(), nullptr);
+    if (!document) {
+        LOGE("PdfiumExport: Failed to load source PDF for page geometry.");
+        return nullptr;
+    }
+
+    const int pageCount = std::max(0, get_page_count_func(document));
+    std::vector<jint> geometry;
+    geometry.reserve(static_cast<size_t>(pageCount) * 3);
+    for (int pageIndex = 0; pageIndex < pageCount; pageIndex++) {
+        void* page = load_page_func(document, pageIndex);
+        if (!page) continue;
+        geometry.push_back(static_cast<jint>(std::lround(get_page_width_bridge(page))));
+        geometry.push_back(static_cast<jint>(std::lround(get_page_height_bridge(page))));
+        geometry.push_back(static_cast<jint>(page_rotation_degrees(page)));
+        close_page_func(page);
+    }
+    close_document_func(document);
+
+    if (geometry.empty()) return nullptr;
+    jintArray result = env->NewIntArray(static_cast<jsize>(geometry.size()));
+    if (!result) return nullptr;
+    env->SetIntArrayRegion(
+            result, 0, static_cast<jsize>(geometry.size()), geometry.data());
+    return result;
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         JNIEnv *env,
@@ -1509,11 +1561,11 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         FS_RECTF_BRIDGE rect = make_pdf_rect(minX, maxY, maxX, minY, strokeWidth * 1.5f);
         set_annot_rect_func(annot, &rect);
 
+        // Kotlin resolved the dict colour (sharedPdfInkAnnotationDictColorArgb): the alpha
+        // always lands below 1 so PDFium attaches the appearance /Resources Apple
+        // renderers need; the /AP stream carries the true export colour.
         unsigned int r, g, b, a;
         argb_to_rgba(inkColors[i], &r, &g, &b, &a);
-        if ((inkTypes[i] == 1 || inkTypes[i] == 2) && a == 255) {
-            a = 102;
-        }
         set_annot_color_func(annot, kAnnotColor, r, g, b, a);
         set_annot_border_func(annot, 0.0f, 0.0f, strokeWidth);
         if (set_annot_flags_func) set_annot_flags_func(annot, kAnnotFlagPrint);
@@ -1646,9 +1698,10 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
         FS_RECTF_BRIDGE rect = make_pdf_rect(unionLeft, unionTop, unionRight, unionBottom, 1.0f);
         set_annot_rect_func(annot, &rect);
 
+        // Kotlin already burned the markup colour down to the on-screen render alpha
+        // (sharedPdfHighlightExportColorArgb).
         unsigned int r, g, b, a;
         argb_to_rgba(highlightColors[i], &r, &g, &b, &a);
-        if (a == 255) a = highlightSubtype == kPdfAnnotHighlight ? 102 : 235;
         set_annot_color_func(annot, kAnnotColor, r, g, b, a);
         if (set_annot_flags_func) set_annot_flags_func(annot, kAnnotFlagPrint);
 

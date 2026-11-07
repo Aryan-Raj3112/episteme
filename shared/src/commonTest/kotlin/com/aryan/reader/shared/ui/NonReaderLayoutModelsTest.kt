@@ -9,6 +9,9 @@ import com.aryan.reader.shared.ReaderPlatform
 import com.aryan.reader.shared.SharedFeaturePolicy
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.SharedReaderScreenState
+import com.aryan.reader.shared.reader.ReaderLocator
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
 import com.aryan.reader.shared.Shelf
 import com.aryan.reader.shared.ShelfType
 import com.aryan.reader.shared.SortOrder
@@ -87,6 +90,58 @@ class NonReaderLayoutModelsTest {
         assertEquals(listOf(finished), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.FINISHED, ""))
         assertEquals(listOf(unread), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.UNREAD, ""))
         assertEquals(listOf(reading), mobileUnifiedLibraryBooks(books, MobileUnifiedLibraryFilter.ALL, "ada"))
+    }
+
+    @Test
+    fun `unified library unions content-only books only when toggle is on`() {
+        val meta = book(id = "meta", displayName = "Alpha.epub")
+        val contentOnly = book(id = "content", displayName = "Beta.epub")
+        val books = listOf(meta, contentOnly)
+
+        val off = mobileUnifiedLibraryBooks(
+            books = books,
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "alpha",
+            contentSearchResults = listOf(contentResult("content", score = 1.0)),
+        )
+        assertEquals(listOf("meta"), off.map { it.id })
+
+        val on = mobileUnifiedLibraryBooks(
+            books = books,
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "alpha",
+            searchInsideFiles = true,
+            contentSearchResults = listOf(contentResult("content", score = 1.0)),
+        )
+        assertEquals(listOf("meta", "content"), on.map { it.id })
+
+        // Content-only books still respect the active status filter.
+        val finishedOnly = book(id = "done", displayName = "Zulu.epub", progress = 100f)
+        val filtered = mobileUnifiedLibraryBooks(
+            books = listOf(finishedOnly),
+            filter = MobileUnifiedLibraryFilter.UNREAD,
+            query = "harvest",
+            searchInsideFiles = true,
+            contentSearchResults = listOf(contentResult("done", score = 1.0)),
+        )
+        assertTrue(filtered.isEmpty())
+    }
+
+    @Test
+    fun `content-only books follow relevance instead of recency`() {
+        val best = book(id = "best", displayName = "Best.epub")
+        val recent = book(id = "recent", displayName = "Recent.epub", positionModified = 99_000L)
+        val ordered = mobileUnifiedLibraryBooks(
+            books = listOf(recent, best),
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "love",
+            searchInsideFiles = true,
+            contentSearchResults = listOf(
+                contentResult("best", score = 9.0),
+                contentResult("recent", score = 1.0),
+            ),
+        )
+        assertEquals(listOf("best", "recent"), ordered.map { it.id })
     }
 
     @Test
@@ -924,3 +979,22 @@ class NonReaderLayoutModelsTest {
         sourceFolder = sourceFolder
     )
 }
+
+private fun contentResult(bookId: String, score: Double, hits: Int = 1) =
+    SharedGlobalSearchBookResult(
+        bookId = bookId,
+        score = score,
+        matchingChunkCount = hits,
+        hits = (0 until hits).map { index ->
+            SharedGlobalSearchHit(
+                bookId = bookId,
+                chunkIndex = index,
+                locator = ReaderLocator(chapterIndex = index),
+                snippet = "match $index",
+                matchRanges = emptyList(),
+                score = score,
+                chapterIndex = index,
+                pageIndex = null,
+            )
+        },
+    )

@@ -89,12 +89,21 @@ import com.aryan.reader.epub.EpubParser
 import com.aryan.reader.epub.ImportedFileCache
 import com.aryan.reader.epub.MobiParser
 import com.aryan.reader.epub.SingleFileImporter
+import com.aryan.reader.search.GlobalSearchIndexer
+import com.aryan.reader.search.GlobalSearchLog
+import com.aryan.reader.search.brief
+import com.aryan.reader.search.GlobalSearchSession
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+import com.aryan.reader.shared.search.SharedGlobalSearchPolicy
+import com.aryan.reader.shared.search.SharedLibrarySearchDeepLink
+import java.util.concurrent.atomic.AtomicInteger
 import com.aryan.reader.epub.hasReadableExtractedContent
 import com.aryan.reader.ml.ISpeechBubbleDetector
 import com.aryan.reader.ml.SpeechBubble
 import com.aryan.reader.ml.SpeechBubbleDetector
 import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.paginatedreader.data.BookCacheDatabase
+import com.aryan.reader.shared.search.SharedGlobalSearchHit
 import com.aryan.reader.paginatedreader.data.BookProcessingWorker
 import com.aryan.reader.pdf.PdfCoverGenerator
 import com.aryan.reader.pdf.PDF_BLANK_PAGE_PERSISTENCE_TAG
@@ -123,6 +132,8 @@ import com.aryan.reader.shared.AnnotationExportFormatter
 import com.aryan.reader.shared.AndroidShareArtifactManager
 import com.aryan.reader.shared.CloudBookTombstone
 import com.aryan.reader.shared.CloudFolderDeviceBinding
+import com.aryan.reader.shared.compareNatural
+import com.aryan.reader.shared.keepNonEmptyJson
 import com.aryan.reader.shared.CloudFolderConflictResolution
 import com.aryan.reader.shared.CloudFolderConflictUiItem
 import com.aryan.reader.shared.CloudFolderIncomingChoice
@@ -258,6 +269,20 @@ private const val CLOUD_METADATA_UPLOAD_DEBOUNCE_MILLIS = 1_500L
  * uploads whenever the local row is newer than the remote one.
  */
 internal const val CLOUD_READING_POSITION_FLUSH_INTERVAL_MILLIS = 2L * 60L * 1_000L
+
+/**
+ * Whether one book's local record should be flushed after its position changed.
+ *
+ * A folder book keeps its record in the `EpistemeSyncData` sidecar beside the
+ * file, which is the only copy a reader without an account has. That makes the
+ * write local bookkeeping, so it must never wait on the cloud sync switch: the
+ * OSS builds cannot even turn that switch on, and gating it there silently
+ * stopped writing anything beside the books. Library books have no local copy
+ * beyond Room, so they still follow the switch.
+ */
+internal fun shouldFlushBookMetadataToCloud(isFolderBook: Boolean, isSyncEnabled: Boolean): Boolean =
+    isFolderBook || isSyncEnabled
+
 private const val LOCAL_FOLDER_INVENTORY_REFRESH_MILLIS = 5L * 60L * 1_000L
 private const val LOCAL_FOLDER_INVENTORY_RETRY_MILLIS = 30L * 1_000L
 private const val LOCAL_FOLDER_INVENTORY_STALE_MILLIS = 60L * 1_000L
@@ -317,6 +342,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     private var feedbackListener: Any? = null
     private val importMutex = Mutex()
     private val epubRecoveryMutex = Mutex()
+    /** In-memory content index for library-wide inside-files search. */
+    private val globalSearchSession = GlobalSearchSession(appContext.filesDir)
+    private val globalSearchQueryGeneration = AtomicInteger(0)
+
+    /** (bookId, hash) set the index was last reconciled against; null = dirty. */
+    @Volatile
+    private var globalSearchLibrarySignature: String? = null
     private val _navigationEvent = Channel<NavigationEvent>(Channel.BUFFERED)
     @Suppress("unused")
     val navigationEvent = _navigationEvent.receiveAsFlow()
@@ -706,6 +738,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     0,
                 ).coerceIn(0, if (BuildConfig.IS_OFFLINE) 2 else 3),
                 recentLimit = prefs.getInt(KEY_RECENT_FILES_LIMIT, 0),
+                searchInsideFiles = prefs.getBoolean(KEY_SEARCH_INSIDE_FILES, false),
             ),
             shelfState = AppShelfState(
                 // Library Beta navigates shelves inside its own section, so a shelf id
@@ -980,9 +1013,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     initialPageInBook = item.lastPage,
                     initialPageInBookIsExplicit = false,
                     isOpeningFromTtsNotification = false,
-                    initialBookmarksJson = item.bookmarksJson,
+                    // Summary-projected items never carry bookmarks/highlights;
+                    // the backfill below fills them from the full row.
+                    initialBookmarksJson = null,
+                    initialHighlightsJson = null,
                 )
             }
+            backfillReaderSidecarSnapshot(bookId, expectedUriString = it.toString())
 
             viewModelScope.launch {
                 addFileToRecent(
@@ -999,6 +1036,49 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 it.copy(
                     tabState = tabState.tabState,
                 )
+            }
+        }
+    }
+
+    /**
+     * Full row for [bookId], including the heavy bookmarks/highlights JSON
+     * columns that the summary projection omits. Used by readers and split
+     * panes that were opened from a summary-projected item and need the real
+     * snapshot. Returns null when the book is unknown.
+     */
+    suspend fun getRecentFileSnapshot(bookId: String): RecentFileItem? =
+        runCatching { bookStore.getFileByBookId(bookId) }.getOrNull()
+
+    /**
+     * Patches reader state with the full row's bookmarks/highlights after an
+     * open that only had a summary-projected item (tab switch, split-pane
+     * activation). The summary deliberately omits the heavy JSON columns, so
+     * those opens set `initialBookmarksJson`/`initialHighlightsJson` to null;
+     * this fetches the full row and patches state, and the reader applies
+     * the late snapshot guarded against user edits (#556). No-op when the
+     * requested book is no longer the selected one (another open raced us).
+     *
+     * The fetched values replace the state unconditionally: this state was just
+     * reset to null for the requested book, so a null column ("this book has no
+     * bookmarks/highlights") must clear any value left over from a previously
+     * selected book rather than be masked by it.
+     */
+    private fun backfillReaderSidecarSnapshot(bookId: String, expectedUriString: String? = null) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val full = runCatching { bookStore.getFileByBookId(bookId) }.getOrNull() ?: return@launch
+            _internalState.update { state ->
+                val stillActive = state.selectedBookId == bookId &&
+                    (expectedUriString == null ||
+                        state.selectedPdfUri?.toString() == expectedUriString ||
+                        state.selectedEpubUri?.toString() == expectedUriString)
+                if (!stillActive) {
+                    state
+                } else {
+                    state.copy(
+                        initialBookmarksJson = full.bookmarksJson,
+                        initialHighlightsJson = full.highlightsJson,
+                    )
+                }
             }
         }
     }
@@ -1339,11 +1419,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 selectedEpubBook = null,
                 initialPageInBook = item.lastPage,
                 initialPageInBookIsExplicit = false,
-                initialBookmarksJson = item.bookmarksJson,
+                // Summary-projected items never carry bookmarks/highlights;
+                // the backfill below fills them from the full row.
+                initialBookmarksJson = null,
                 initialHighlightsJson = null,
                 isOpeningFromTtsNotification = false,
             )
         }
+        backfillReaderSidecarSnapshot(item.bookId, expectedUriString = uri.toString())
     }
 
     private fun persistPdfSplitWorkspace(workspace: PdfSplitWorkspaceState) {
@@ -1673,11 +1756,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             annotations = currentAnnotations
         )
 
+        // A page operation must remap the persisted bookmarks, not an empty
+        // in-memory snapshot: if the reader handed us nothing (the async
+        // snapshot never landed), fall back to the DB row so page ops cannot
+        // silently drop every bookmark. Deliberate trade-off: if the DB row still
+        // holds a delete-all that has not committed yet, the remap can resurrect
+        // entries; surviving an accidental wipe is the priority here.
+        val persistedBookmarksJson = runCatching {
+            bookStore.getFileByBookId(bookId)?.bookmarksJson
+        }.getOrNull()
+        val remapBookmarksInput =
+            keepNonEmptyJson(currentBookmarksJson, persistedBookmarksJson) ?: currentBookmarksJson
+
         val newBookmarksJson = try {
             remapPdfBookmarksJsonForLayoutChange(
                 currentLayout = currentLayout,
                 updatedLayout = newLayout,
-                currentBookmarksJson = currentBookmarksJson
+                currentBookmarksJson = remapBookmarksInput
             )
         } catch (e: Exception) {
             Timber.e(e, "Error shifting bookmarks")
@@ -1725,11 +1820,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             annotations = currentAnnotations
         )
 
+        // A page operation must remap the persisted bookmarks, not an empty
+        // in-memory snapshot: if the reader handed us nothing (the async
+        // snapshot never landed), fall back to the DB row so page ops cannot
+        // silently drop every bookmark. Deliberate trade-off: if the DB row still
+        // holds a delete-all that has not committed yet, the remap can resurrect
+        // entries; surviving an accidental wipe is the priority here.
+        val persistedBookmarksJson = runCatching {
+            bookStore.getFileByBookId(bookId)?.bookmarksJson
+        }.getOrNull()
+        val remapBookmarksInput =
+            keepNonEmptyJson(currentBookmarksJson, persistedBookmarksJson) ?: currentBookmarksJson
+
         val newBookmarksJson = try {
             remapPdfBookmarksJsonForLayoutChange(
                 currentLayout = currentLayout,
                 updatedLayout = newLayout,
-                currentBookmarksJson = currentBookmarksJson
+                currentBookmarksJson = remapBookmarksInput
             )
         } catch (e: Exception) {
             Timber.e(e, "Error shifting bookmarks")
@@ -1783,6 +1890,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch(Dispatchers.IO) {
             FolderAnnotationExportWorker.scheduleAllPending(appContext)
+        }
+
+        // Content index reconcile: books added while "search inside files"
+        // was off, or before the feature existed, have no payload and would
+        // stay invisible until something re-indexes them.
+        viewModelScope.launch(Dispatchers.IO) {
+            libraryFlow
+                .map { it.first }
+                .distinctUntilChanged()
+                .collectLatest {
+                    if (_internalState.value.libraryState.searchInsideFiles) {
+                        reconcileGlobalSearchIndex()
+                    }
+                }
         }
 
         // BookCacheDatabase opens on first access; defer it to the collector
@@ -2376,7 +2497,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     isFlat = type == FileType.FODT
                 )
 
-                FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX -> singleFileImporter.importSingleFile(
+                FileType.MD, FileType.TXT, FileType.HTML, FileType.DOCX, FileType.DOC -> singleFileImporter.importSingleFile(
                     inputStream = inputStream,
                     type = type,
                     originalBookNameHint = displayName,
@@ -3037,6 +3158,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             FileType.HTML,
             FileType.FB2,
             FileType.DOCX,
+            FileType.DOC,
             FileType.ODT,
             FileType.FODT,
             FileType.PPTX -> AnnotationExportFormatter.fromEpubHighlights(
@@ -3312,8 +3434,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
      * manifest, so they go through [folderMirrorStore] instead.
      */
     private suspend fun flushBookMetadataToCloud(bookId: String, reason: String) {
-        if (!uiState.value.isSyncEnabled) return
-        val book = bookStore.getFileByBookId(bookId) ?: run {
+        val book = bookStore.getFileByBookId(bookId)
+        val isFolderBook = book?.sourceFolderUri != null
+        if (!shouldFlushBookMetadataToCloud(isFolderBook, uiState.value.isSyncEnabled)) return
+        if (book == null) {
             logCloudSyncTrace { "android.flush.skip reason=missing_local book=$bookId trigger=$reason" }
             cloudSyncEvent(
                 plane = CloudSyncPlaneLibrary,
@@ -3326,7 +3450,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             )
             return
         }
-        val isFolderBook = book.sourceFolderUri != null
         cloudSyncEvent(
             plane = if (isFolderBook) CloudSyncPlaneFolder else CloudSyncPlaneLibrary,
             dir = CloudSyncDirPush,
@@ -3992,7 +4115,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 initialLocator = null,
                 initialPageInBook = null,
                 initialPageInBookIsExplicit = false,
-                isOpeningFromTtsNotification = false
+                isOpeningFromTtsNotification = false,
+                librarySearchDeepLink = null
             )
         }
         if (!isTemporaryExternalSession) {
@@ -4072,7 +4196,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         logCloudSyncTrace { "android.reader.close_upload_skip reason=already_uploading ${it.cloudSyncTraceSummary()}" }
                         return@launch
                     }
-                    if (uiState.value.isSyncEnabled) {
+                    // Folder books flush even with cloud sync off: their
+                    // sidecar is local, and that is the only copy a reader
+                    // without an account has.
+                    if (uiState.value.isSyncEnabled || it.sourceFolderUri != null) {
                         logCloudSyncTrace { "android.reader.close_upload_start ${it.cloudSyncTraceSummary()}" }
                         Timber.d("Book closed, triggering metadata sync for ${it.bookId}")
                         // One entry point for both book kinds: Firestore for
@@ -4291,7 +4418,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     // choice write (binding saved, preference write failed)
                     // so the global prompt remains retryable.
                     .filter { it.rootId in pendingRootIds }
-                    .sortedWith(compareBy({ it.name.lowercase() }, { it.rootId }))
+                    .sortedWith(
+                        Comparator { a, b ->
+                            val nameCmp = compareNatural(a.name, b.name)
+                            if (nameCmp != 0) nameCmp else a.rootId.compareTo(b.rootId)
+                        }
+                    )
                     .firstOrNull()
                 val stats = roots.associate { it.rootId to it.stats }
                 // A sign-in transition can race this refresh. Never publish
@@ -4363,7 +4495,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 _cloudFolderRootStats.value = stats
                 _cloudFolderLocalInventories.value = localInventories
                 _cloudFolderRoots.value = roots.sortedWith(
-                    compareBy<CloudFolderRoot> { it.name.lowercase() }.thenBy { it.rootId },
+                    Comparator { a, b ->
+                        val nameCmp = compareNatural(a.name, b.name)
+                        if (nameCmp != 0) nameCmp else a.rootId.compareTo(b.rootId)
+                    },
                 )
                 _cloudFolderBindings.value = bindings
                 _cloudFolderSyncProgress.value = syncProgress
@@ -7006,6 +7141,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         bookStore.addRecentFile(newItem)
         Timber.i("Added/Updated $displayName ($type) to recent files via repository.")
 
+        if (_internalState.value.libraryState.searchInsideFiles) {
+            val entry = GlobalSearchSession.Entry(
+                bookId,
+                "$fileSize:$fileContentModifiedTimestamp",
+            )
+            // Without this every open re-enqueues the same hash: the worker
+            // runs only to discover the payload is already current.
+            viewModelScope.launch(Dispatchers.IO) {
+                if (globalSearchSession.isFresh(entry)) {
+                    GlobalSearchLog.d { "import index skipped bookId=$bookId fresh" }
+                    return@launch
+                }
+                GlobalSearchIndexer.enqueue(
+                    appContext,
+                    bookId,
+                    uri.toString(),
+                    type,
+                    displayName,
+                    entry.contentHash,
+                )
+            }
+        }
+
         if (isNewBook) {
             uploadNewBookAndMetadata(newItem)
         }
@@ -7447,33 +7605,31 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun saveHighlights(bookId: String, highlightsJson: String) {
         viewModelScope.launch {
-            val currentBookUri = _internalState.value.selectedPdfUri ?: _internalState.value.selectedEpubUri
-            if (currentBookUri != null) {
-                bookStore.getFileByUri(currentBookUri.toString())?.let { item ->
-                    if (annotationJsonEquivalentForNoop(item.highlightsJson, highlightsJson)) {
-                        logCloudSyncTrace {
-                            "android.reader.highlights_save_noop book=${item.bookId} highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
-                        }
-                        return@launch
-                    }
-                    logCloudSyncTrace {
-                        "android.reader.highlights_save book=${item.bookId} highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
-                    }
-                    bookStore.updateHighlights(item.bookId, highlightsJson)
+            // Never attribute a highlight save to whichever book happens to be
+            // selected when the write runs: the caller knows the book the
+            // highlights belong to. The URI fallback only serves callers that
+            // could not supply a book id at all.
+            val stableBookId = bookId.trim()
+            val targetBookId = stableBookId.takeIf { it.isNotBlank() }
+                ?: _internalState.value.let { state ->
+                    (state.selectedPdfUri ?: state.selectedEpubUri)?.toString()
+                        ?.let { uri -> bookStore.getFileByUri(uri)?.bookId }
                 }
-            } else if (bookId.isNotBlank()) {
-                val existing = bookStore.getFileByBookId(bookId)
-                if (annotationJsonEquivalentForNoop(existing?.highlightsJson, highlightsJson)) {
-                    logCloudSyncTrace {
-                        "android.reader.highlights_save_noop book=$bookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
-                    }
-                    return@launch
-                }
-                logCloudSyncTrace {
-                    "android.reader.highlights_save book=$bookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
-                }
-                bookStore.updateHighlights(bookId, highlightsJson)
+            if (targetBookId == null) {
+                Timber.w("saveHighlights: no book identity for write; dropping")
+                return@launch
             }
+            val existing = bookStore.getFileByBookId(targetBookId)
+            if (annotationJsonEquivalentForNoop(existing?.highlightsJson, highlightsJson)) {
+                logCloudSyncTrace {
+                    "android.reader.highlights_save_noop book=$targetBookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
+                }
+                return@launch
+            }
+            logCloudSyncTrace {
+                "android.reader.highlights_save book=$targetBookId highlights=${highlightsJson.cloudSyncAnnotationSummary()}"
+            }
+            bookStore.updateHighlights(targetBookId, highlightsJson)
         }
     }
 
@@ -7485,12 +7641,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.tag("FileSwitch")
                 .d("Starting seamless switch to ${item.bookId}, position: $syncPosition")
 
+            // Callers hand us summary-projected items, which never carry
+            // bookmarks/highlights; pull the full row so the seamlessly
+            // opened reader starts with its saved state.
+            val effectiveItem = runCatching {
+                bookStore.getFileByBookId(item.bookId)
+            }.getOrNull() ?: item
+
             val stateUpdateDeferred = CompletableDeferred<Boolean>()
             pendingSwitchDeferred = stateUpdateDeferred
 
             _internalState.update { it.copy(isLoading = true, errorMessage = null) }
 
-            val uri = item.getUri() ?: run {
+            val uri = effectiveItem.getUri() ?: run {
                 _internalState.update {
                     it.copy(
                         isLoading = false, errorMessage = appContext.getString(R.string.error_file_location_not_found)
@@ -7501,8 +7664,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 return@launch
             }
 
-            val type = item.type
-            val bookId = item.bookId
+            val type = effectiveItem.type
+            val bookId = effectiveItem.bookId
 
             if (type in PDF_VIEWER_FILE_TYPES) {
                 persistReaderSession(bookId, type)
@@ -7517,7 +7680,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         initialPageInBook = syncPosition,
                         initialPageInBookIsExplicit = true,
                         isOpeningFromTtsNotification = false,
-                        initialBookmarksJson = item.bookmarksJson,
+                        initialBookmarksJson = effectiveItem.bookmarksJson,
                     )
                 }
 
@@ -7527,7 +7690,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     uri,
                     type,
                     bookId,
-                    customDisplayName = item.displayName,
+                    customDisplayName = effectiveItem.displayName,
                     isRecent = true,
                     sourceFolderUri = null
                 )
@@ -7539,7 +7702,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             } else if (type in EPUB_READER_FILE_TYPES) {
                 persistReaderSession(bookId, type)
                 try {
-                    val epubBook = restoreEpubReaderBook(type, bookId, item.displayName, uri)
+                    val epubBook = restoreEpubReaderBook(type, bookId, effectiveItem.displayName, uri)
                     _internalState.update { state ->
                         markReaderSessionReady(
                             startReaderSession(state, bookId, type),
@@ -7552,8 +7715,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                                 chapterIndex = syncPosition, blockIndex = 0, charOffset = 0
                             ),
                             initialCfi = null,
-                            initialBookmarksJson = item.bookmarksJson,
-                            initialHighlightsJson = item.highlightsJson,
+                            initialBookmarksJson = effectiveItem.bookmarksJson,
+                            initialHighlightsJson = effectiveItem.highlightsJson,
                         )
                     }
 
@@ -7564,7 +7727,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         type,
                         bookId,
                         epubBook,
-                        item.displayName,
+                        effectiveItem.displayName,
                         isRecent = true,
                         sourceFolderUri = null
                     )
@@ -7690,6 +7853,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         pdfTextRepository.clearBookText(bookId)
         clearImportedFileCache(bookId)
         bookCacheDao.deleteEntireBookCache(bookId)
+        GlobalSearchIndexer.cancel(appContext, bookId)
+        globalSearchSession.remove(bookId)
     }
 
     private suspend fun clearImportedFileCache(bookId: String) {
@@ -7732,7 +7897,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         initialLocatorOverride: Locator? = null,
         initialCfiOverride: String? = null,
         preserveTtsOnOpen: Boolean = false,
-        persistToLibrary: Boolean = true
+        persistToLibrary: Boolean = true,
+        librarySearchDeepLink: SharedLibrarySearchDeepLink? = null
     ) {
         val openBookStartTime = System.currentTimeMillis()
         ReaderPerfLog.d("FileOpen start bookId=$bookId type=$type")
@@ -7808,7 +7974,8 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     initialCfi = initialCfiOverride,
                     initialPageInBook = initialPageOverride,
                     initialPageInBookIsExplicit = isInitialPageExplicit,
-                    isOpeningFromTtsNotification = preserveTtsOnOpen
+                    isOpeningFromTtsNotification = preserveTtsOnOpen,
+                    librarySearchDeepLink = librarySearchDeepLink
                 )
             }
 
@@ -8340,10 +8507,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun saveBookmarks(bookId: String, bookmarksJson: String, documentUri: Uri? = null) {
+        saveBookmarksInternal(bookId, bookmarksJson, documentUri, wipeProtection = true)
+    }
+
+    /**
+     * Explicit user-edit path (toggle, rename, delete, page-remap). Bypasses the
+     * stale-snapshot wipe protection: the user just authored this value, so even
+     * an empty payload (delete-all) must persist. Autosave callbacks keep using
+     * [saveBookmarks], which is wipe-protected.
+     */
+    fun saveBookmarksUserEdit(bookId: String, bookmarksJson: String, documentUri: Uri? = null) {
+        saveBookmarksInternal(bookId, bookmarksJson, documentUri, wipeProtection = false)
+    }
+
+    private fun saveBookmarksInternal(
+        bookId: String,
+        bookmarksJson: String,
+        documentUri: Uri?,
+        wipeProtection: Boolean,
+    ) {
         Timber.d("saveBookmarks called. bookId=$bookId, bookmarksJson=$bookmarksJson")
         val stableBookId = bookId.trim()
         if (stableBookId.isNotEmpty()) {
-            enqueueBookmarkSave(stableBookId, bookmarksJson, documentUri)
+            enqueueBookmarkSave(stableBookId, bookmarksJson, documentUri, wipeProtection)
             return
         }
 
@@ -8360,14 +8546,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val item = bookStore.getFileByUri(stableDocumentUri)
             if (item != null) {
-                enqueueBookmarkSave(item.bookId, bookmarksJson, documentUri)
+                enqueueBookmarkSave(item.bookId, bookmarksJson, documentUri, wipeProtection)
             } else {
                 Timber.w("PdfBookmarkDebug: no book found for explicit URI=$stableDocumentUri")
             }
         }
     }
 
-    private fun enqueueBookmarkSave(bookId: String, bookmarksJson: String, documentUri: Uri?) {
+    private fun enqueueBookmarkSave(
+        bookId: String,
+        bookmarksJson: String,
+        documentUri: Uri?,
+        wipeProtection: Boolean = true,
+    ) {
         val revision = synchronized(bookmarkSaveRevisions) {
             val nextRevision = (bookmarkSaveRevisions[bookId] ?: 0L) + 1L
             bookmarkSaveRevisions[bookId] = nextRevision
@@ -8394,6 +8585,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             "latest=$latestRevision"
                     )
                     return@withLock
+                }
+                // Last line of defense against tab-switch wipes: a stale empty
+                // snapshot must never overwrite persisted bookmarks. Matches the
+                // highlights noop guard (shared BookmarkPersistencePolicy).
+                // Fail open: only skip on positive knowledge, so a transient read
+                // failure can never swallow a real user edit. Explicit user edits
+                // bypass this via saveBookmarksUserEdit (delete-all must persist).
+                if (wipeProtection) {
+                    val existingResult = runCatching { bookStore.getFileByBookId(bookId)?.bookmarksJson }
+                    if (existingResult.isSuccess &&
+                        com.aryan.reader.shared.shouldSkipBookmarkSave(existingResult.getOrNull(), bookmarksJson)
+                    ) {
+                        Timber.d("Skipping bookmark save bookId=$bookId")
+                        return@withLock
+                    }
                 }
                 bookStore.updateBookmarks(bookId, bookmarksJson)
             }
@@ -8619,6 +8825,102 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 downloadBook(item, openWhenComplete = true)
             }
         }
+    }
+
+    /**
+     * Library inside-files hit tap: opens the book at the hit's location
+     * with the library query pre-loaded in the reader's own search UI, and
+     * seeds jump history with the saved position so Back returns to it.
+     * Header/cover taps keep [onRecentFileClicked] (resume position).
+     */
+    fun openLibrarySearchHit(item: RecentFileItem, hit: SharedGlobalSearchHit, query: String) {
+        if (_internalState.value.contextualActionItems.isNotEmpty()) {
+            _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.BookSelectionToggled(item.bookId)) }
+            return
+        }
+        viewModelScope.launch {
+            if (item.sourceFolderUri != null && item.uriString != null) {
+                val location = withContext(Dispatchers.IO) {
+                    resolveFolderBookLocation(item)
+                }
+                if (location.uri == null) {
+                    _internalState.update {
+                        it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found))
+                    }
+                    return@launch
+                }
+                if (item.isAvailable) {
+                    openLibrarySearchHitAtUri(location.uri, item, hit, query)
+                } else {
+                    downloadBook(item, openWhenComplete = true)
+                }
+                return@launch
+            }
+            if (item.isAvailable) {
+                item.getUri()?.let { uri ->
+                    openLibrarySearchHitAtUri(uri, item, hit, query)
+                } ?: run {
+                    _internalState.update { it.copy(errorMessage = appContext.getString(R.string.error_file_location_not_found)) }
+                    return@launch
+                }
+            } else {
+                downloadBook(item, openWhenComplete = true)
+            }
+        }
+    }
+
+    private suspend fun openLibrarySearchHitAtUri(
+        uri: Uri,
+        item: RecentFileItem,
+        hit: SharedGlobalSearchHit,
+        query: String,
+    ) {
+        val recent = withContext(Dispatchers.IO) { bookStore.getFileByBookId(item.bookId) }
+        if (item.type in PDF_VIEWER_FILE_TYPES) {
+            // PPTX indexes slides on the chapter axis; PDF pages follow slide order.
+            val targetPage = libraryHitPdfTargetPage(hit, recent?.lastPage)
+            openBook(
+                uri,
+                item.bookId,
+                item.type,
+                item.displayName,
+                initialPageOverride = targetPage,
+                isInitialPageExplicit = targetPage != null,
+                librarySearchDeepLink = SharedLibrarySearchDeepLink(
+                    bookId = item.bookId,
+                    query = query,
+                    hit = hit,
+                    pdfOriginPage = recent?.lastPage,
+                ),
+            )
+        } else if (item.type in EPUB_READER_FILE_TYPES) {
+            val chapter = libraryHitEpubTargetChapter(hit, recent?.lastChapterIndex)
+            openBook(
+                uri,
+                item.bookId,
+                item.type,
+                item.displayName,
+                initialLocatorOverride = Locator(
+                    chapterIndex = chapter,
+                    blockIndex = (hit.locator.blockIndex ?: 0).coerceAtLeast(0),
+                    charOffset = (hit.locator.charOffset ?: 0).coerceAtLeast(0),
+                ),
+                initialCfiOverride = hit.locator.cfi,
+                librarySearchDeepLink = SharedLibrarySearchDeepLink(
+                    bookId = item.bookId,
+                    query = query,
+                    hit = hit,
+                    epubOrigin = libraryHitEpubOrigin(recent),
+                ),
+            )
+        } else {
+            onRecentFileClicked(item)
+        }
+    }
+
+    /** One-shot consume after the reader seeds history + starts its search. */
+    fun consumeLibrarySearchDeepLink() {
+        _internalState.update { it.copy(librarySearchDeepLink = null) }
     }
 
     /**
@@ -8892,6 +9194,122 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         persistLibraryLandingState()
     }
 
+    private fun globalSearchEntries(books: List<RecentFileItem>): List<GlobalSearchSession.Entry> =
+        books.map { GlobalSearchSession.Entry(it.bookId, "${it.fileSize}:${it.fileContentModifiedTimestamp}") }
+
+    /**
+     * Library "search inside files" toggle. Enabling persists the choice and
+     * bulk-indexes the library in the background (per-book work, REPLACE);
+     * disabling clears content matches immediately and stops new work.
+     */
+    fun setSearchInsideFiles(enabled: Boolean) {
+        val previous = _internalState.value.libraryState.searchInsideFiles
+        if (previous == enabled) {
+            GlobalSearchLog.d { "setSearchInsideFiles ignored: already $enabled" }
+            return
+        }
+        _internalState.update {
+            it.copy(
+                libraryState = it.libraryState.copy(
+                    searchInsideFiles = enabled,
+                    contentSearchResults = emptyList(),
+                ),
+            )
+        }
+        prefs.edit { putBoolean(KEY_SEARCH_INSIDE_FILES, enabled) }
+        GlobalSearchLog.d { "toggle on=$enabled (was $previous) bulkIndex=$enabled" }
+        // Force the reconcile collector to re-scan: books imported while the
+        // toggle was off have no payload, and without this they stay invisible
+        // until the next library change.
+        globalSearchLibrarySignature = null
+        if (!enabled) return
+        reconcileGlobalSearchIndex()
+    }
+
+    /**
+     * Indexes every searchable book that has no fresh payload. Runs on
+     * toggle-on and whenever the library changes, so books that existed
+     * before "search inside files" was enabled (or imported while it was off)
+     * are backfilled instead of silently returning no matches.
+     *
+     * Guarded by [globalSearchLibrarySignature]: a no-op while the set of
+     * (bookId, hash) pairs is unchanged, which keeps progress writes in Room
+     * from re-enqueueing work on every emission.
+     */
+    private fun reconcileGlobalSearchIndex(force: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            if (!_internalState.value.libraryState.searchInsideFiles) return@launch
+            // Read the store, not uiState: uiState.value only carries the
+            // library while a UI node is subscribed, and the startup collector
+            // runs before that is guaranteed.
+            val items = bookStore.getRecentFilesFlow().first().filter {
+                SharedGlobalSearchPolicy.isContentSearchable(it.type)
+            }
+            val signature = items
+                .map { "${it.bookId}:${it.fileSize}:${it.fileContentModifiedTimestamp}" }
+                .sorted()
+                .joinToString("\n")
+            if (!force && signature == globalSearchLibrarySignature) return@launch
+            globalSearchLibrarySignature = signature
+            val booksById = items.associateBy { it.bookId }
+            val entries = globalSearchEntries(items)
+            val missing = globalSearchSession.syncLibrary(entries)
+            GlobalSearchLog.d { "reconcile books=${entries.size} missing=${missing.size}" }
+            for (entry in missing) {
+                booksById[entry.bookId]?.let { item ->
+                    GlobalSearchIndexer.enqueue(
+                        appContext,
+                        item.bookId,
+                        item.uriString,
+                        item.type,
+                        item.displayName,
+                        entry.contentHash,
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * Runs the in-memory content index for [query] (already debounced by the
+     * caller) and publishes the matching books with their snippet hits. Stale
+     * runs are dropped by [globalSearchQueryGeneration].
+     */
+    fun searchLibraryContent(query: String) {
+        val generation = globalSearchQueryGeneration.incrementAndGet()
+        GlobalSearchLog.d { "searchLibraryContent gen=$generation raw='$query'" }
+        viewModelScope.launch(Dispatchers.IO) {
+            val trimmed = query.trim()
+            val enabled = _internalState.value.libraryState.searchInsideFiles
+            val results: List<SharedGlobalSearchBookResult> = if (!enabled || trimmed.isBlank()) {
+                GlobalSearchLog.d {
+                    "searchLibraryContent gen=$generation skipped enabled=$enabled blank=${trimmed.isBlank()}"
+                }
+                emptyList()
+            } else {
+                // uiState, not _internalState: the DB projection is what fills
+                // rawLibraryFiles, and _internalState never carries the library.
+                globalSearchSession.query(
+                    globalSearchEntries(uiState.value.rawLibraryFiles),
+                    trimmed,
+                )
+            }
+            if (globalSearchQueryGeneration.get() != generation) {
+                GlobalSearchLog.d {
+                    "searchLibraryContent gen=$generation stale (current=${globalSearchQueryGeneration.get()}) dropping"
+                }
+                return@launch
+            }
+            _internalState.update {
+                it.copy(libraryState = it.libraryState.copy(contentSearchResults = results))
+            }
+            GlobalSearchLog.d {
+                "searchLibraryContent gen=$generation published books=${results.size} " +
+                    "hits=${results.sumOf { it.hits.size }}"
+            }
+        }
+    }
+
     /**
      * Opens a shelf. Library Beta owns its own shelf navigation state, so this no longer
      * forces the retired Library page index.
@@ -9117,6 +9535,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             putInt(KEY_LIBRARY_SCREEN_START_PAGE, state.libraryScreenStartPage)
             putInt(KEY_UNIFIED_LIBRARY_SECTION, state.unifiedLibrarySection)
             putBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, state.unifiedLibraryListView)
+            putBoolean(KEY_SEARCH_INSIDE_FILES, state.libraryState.searchInsideFiles)
             putString(KEY_LAST_VIEWING_SHELF_ID, resolvedUiState.viewingShelfId)
             putBoolean(KEY_LAST_ADDING_BOOKS_TO_SHELF, resolvedUiState.isAddingBooksToShelf)
         }

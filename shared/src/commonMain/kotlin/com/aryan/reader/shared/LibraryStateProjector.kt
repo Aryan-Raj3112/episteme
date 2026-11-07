@@ -1,5 +1,7 @@
 package com.aryan.reader.shared
 
+import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
+
 data class ShelfRecord(
     val id: String,
     val name: String,
@@ -21,6 +23,8 @@ data class BookShelfRef(
 data class LibraryFeatureState(
     val sortOrder: SortOrder = SortOrder.RECENT,
     val searchQuery: String = "",
+    /** Library "search inside files" toggle. False preserves metadata-only search. */
+    val searchInsideFiles: Boolean = false,
     val filters: LibraryFilters = LibraryFilters(),
     val syncedFolders: List<SyncedFolder> = emptyList(),
     val pinnedHomeBookIds: Set<String> = emptySet(),
@@ -55,7 +59,13 @@ data class SharedLibraryProjectionInput(
     val booksFromStore: List<BookItem>,
     val shelfRecords: List<ShelfRecord>,
     val shelfRefs: List<BookShelfRef>,
-    val tags: List<Tag>
+    val tags: List<Tag>,
+    /**
+     * Inside-file content matches for the current query, best-first. Honored
+     * only when [LibraryFeatureState.searchInsideFiles] is true; otherwise
+     * ignored so metadata-only behavior is byte-identical.
+     */
+    val contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
 )
 
 class SharedLibraryStateProjector(
@@ -65,7 +75,22 @@ class SharedLibraryStateProjector(
         val current = input.state
         val allLibraryBooks = input.booksFromStore.distinctBy { it.sharedLibraryIdentity() }
         val syncedFolders = current.syncedFolders.withSourceFolderFallbacks(allLibraryBooks)
-        val queried = filterBySearch(allLibraryBooks, current.searchQuery)
+        val metadataQueried = filterBySearch(allLibraryBooks, current.searchQuery)
+        // Toggle-on expansion: content-only books join metadata hits. Flag off
+        // keeps the metadata path byte-identical (no union, no reorder).
+        val contentBookIds = input.contentSearchResults.mapTo(mutableSetOf()) { it.bookId }
+        val queried = if (
+            current.searchInsideFiles &&
+            current.searchQuery.isNotBlank() &&
+            contentBookIds.isNotEmpty()
+        ) {
+            val metadataIds = metadataQueried.mapTo(mutableSetOf()) { it.id }
+            metadataQueried + allLibraryBooks.filter {
+                it.id in contentBookIds && it.id !in metadataIds
+            }
+        } else {
+            metadataQueried
+        }
         val filtered = applyLibraryFilters(queried, current.filters)
         val sortedLibraryBooks = sortBooks(filtered, current.sortOrder)
             .withPinnedFirst(current.pinnedLibraryBookIds)
@@ -207,7 +232,12 @@ class SharedLibraryStateProjector(
         val unshelvedBooks = allLibraryBooks.filter { it.id !in shelvedBookIds }
         shelves.add(Shelf("unshelved", "Unshelved", ShelfType.MANUAL, sortBooks(unshelvedBooks, sortOrder)))
 
-        shelves.sortWith(compareBy({ it.type.ordinal }, { it.sortKey }))
+        shelves.sortWith(
+            Comparator { a, b ->
+                val typeCmp = a.type.ordinal.compareTo(b.type.ordinal)
+                if (typeCmp != 0) typeCmp else compareNatural(a.sortKey, b.sortKey)
+            }
+        )
         return ShelfProjection(shelves = shelves, unshelvedBooks = unshelvedBooks)
     }
 
@@ -267,12 +297,16 @@ class SharedLibraryStateProjector(
                     type = ShelfType.FOLDER,
                     books = sortBooks(books, sortOrder),
                     directBooks = sortBooks(rootAccumulator.directBooks, sortOrder),
-                    childShelfIds = rootAccumulator.childShelfIds.sortedBy { it.substringAfterLast("::").lowercase() },
+                    childShelfIds = rootAccumulator.childShelfIds.sortedWith(
+                        Comparator { a, b ->
+                            compareNatural(a.substringAfterLast("::"), b.substringAfterLast("::"))
+                        }
+                    ),
                     depth = 0,
                     sortKey = "folder:${rootName.lowercase()}:"
                 )
 
-                val childShelves = nestedShelves.values.sortedBy { it.sortPath }.map { shelf ->
+                val childShelves = nestedShelves.values.sortedWith(compareByNatural { it.sortPath }).map { shelf ->
                     Shelf(
                         id = shelf.id,
                         name = shelf.name,
@@ -280,7 +314,11 @@ class SharedLibraryStateProjector(
                         books = sortBooks(shelf.books, sortOrder),
                         directBooks = sortBooks(shelf.directBooks, sortOrder),
                         parentShelfId = shelf.parentShelfId,
-                        childShelfIds = shelf.childShelfIds.sortedBy { it.substringAfterLast("::").lowercase() },
+                        childShelfIds = shelf.childShelfIds.sortedWith(
+                            Comparator { a, b ->
+                                compareNatural(a.substringAfterLast("::"), b.substringAfterLast("::"))
+                            }
+                        ),
                         depth = shelf.depth,
                         sortKey = "folder:${rootName.lowercase()}:${shelf.sortPath}"
                     )
@@ -399,10 +437,15 @@ fun sortBooks(books: List<BookItem>, sortOrder: SortOrder): List<BookItem> {
         SortOrder.RECENT -> books.sortedByDescending { it.timestamp }
         SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.libraryFileDateTimestamp() }
         SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.libraryFileDateTimestamp() }
-        SortOrder.TITLE_ASC -> books.sortedBy {
-            it.titleSortKey?.lowercase() ?: it.title?.lowercase() ?: it.displayName.lowercase()
-        }
-        SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
+        SortOrder.TITLE_ASC -> books.sortedWith(
+            Comparator { a, b ->
+                compareNatural(
+                    a.titleSortKey ?: a.title ?: a.displayName,
+                    b.titleSortKey ?: b.title ?: b.displayName,
+                )
+            }
+        )
+        SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast(::compareNatural)) { it.author })
         SortOrder.PERCENT_ASC -> books.sortedBy { it.progressPercentage ?: 0f }
         SortOrder.PERCENT_DESC -> books.sortedByDescending { it.progressPercentage ?: 0f }
         SortOrder.SIZE_ASC -> books.sortedBy { it.fileSize }

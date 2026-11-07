@@ -3,6 +3,7 @@ package com.aryan.reader.shared.reader
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.aryan.reader.shared.currentTimestamp
 
 /**
  * The reader-side half of media overlay narration: one engine, one projector, and the decisions that
@@ -39,6 +40,14 @@ class SharedMediaOverlaySession(
      * spine item appears once however many chapters reference it.
      */
     private val spineItemsInReadingOrder: List<Int>,
+    /**
+     * Where narration positions are kept between opens, or null when this surface does not keep them.
+     *
+     * Not optional by accident: the store is the difference between "reopening resumes at the last
+     * sentence" and "reopening starts at the top of the section", so a surface without one narrates
+     * exactly as it did before this existed.
+     */
+    private val narrationProgressStore: SharedMediaOverlayNarrationProgressStore? = null,
 ) {
     /** The chapter narration is currently in, or null. Follow compares this with the visible one. */
     var chapterIndex: Int? by mutableStateOf(null)
@@ -46,6 +55,26 @@ class SharedMediaOverlaySession(
 
     /** How many clips the loaded chapter has, for the bar's position label. */
     var clipCount: Int by mutableStateOf(0)
+        private set
+
+    /**
+     * The loaded chapter's playable clips in playback order.
+     *
+     * Read by Listen's transcript anchoring: each entry names the text element
+     * it narrates, so the transcript highlight follows the exact line instead
+     * of a fractional estimate. Updated wherever [clipCount] is, and empty
+     * whenever nothing is loaded — never a stale chapter's clips.
+     */
+    var currentPlanEntries: List<SharedMediaOverlayClip> by mutableStateOf(emptyList())
+        private set
+
+    /**
+     * The spine item those clips narrate, or null when nothing is loaded.
+     *
+     * Lets Listen verify a clip table belongs to the chapter it is showing:
+     * entries alone do not say which chapter they came from.
+     */
+    var currentSpineItemIndex: Int? by mutableStateOf(null)
         private set
 
     /**
@@ -64,12 +93,34 @@ class SharedMediaOverlaySession(
     var bandSessionId: Long by mutableStateOf(nextSharedPlaybackBandSessionId())
         private set
 
+    /**
+     * The spine item [chapterIndex] was projected from, so a chapter is never recorded against another
+     * spine item's clip.
+     *
+     * Needed because a content document split at TOC fragments gives several chapters one spine item:
+     * the spine item alone cannot say whether a held-over chapter still describes the loaded chapter.
+     */
+    private var projectedSpineItemIndex: Int? = null
+
+    /**
+     * The chapter a spine item narrates as, for a position recorded before its first projection.
+     *
+     * Lowest chapter wins where several chapters share the document, which is the same answer Listen's
+     * chapter table gives — so a position recorded at a chapter's first clip and one recorded a clip
+     * later describe the book the same way.
+     */
+    private val firstChapterBySpineItem: Map<Int, Int> = buildMap {
+        spineItemIndexByChapter.entries
+            .sortedBy { it.key }
+            .forEach { (chapter, spine) -> if (spine !in this) put(spine, chapter) }
+    }
+
     init {
         // Running off the end of a chapter continues into the next narrated one. Installed here
         // rather than by the screen because the decision needs the book's reading order and the
         // overlay index, both of which the session already holds — and because it is the session,
         // not the screen, that owns the engine's lifetime.
-        engine.onChapterFinished = { finished -> continueAfter(finished) }
+        installPlaybackHooks()
     }
 
     /**
@@ -81,6 +132,7 @@ class SharedMediaOverlaySession(
     suspend fun project(spineItemIndex: Int, clipIndex: Int): SharedMediaOverlayProjection? {
         val projection = projector.project(spineItemIndex, clipIndex)
         chapterIndex = projection?.chapterIndex
+        projectedSpineItemIndex = spineItemIndex.takeIf { projection?.chapterIndex != null }
         return projection
     }
 
@@ -90,8 +142,18 @@ class SharedMediaOverlaySession(
      * Returns false when the chapter has nothing to narrate — which is a normal outcome, not an
      * error: a book can narrate some chapters and not others, and `epub:type` can mark a chapter
      * as skippable. The reader gets a message rather than a button that does nothing.
+     *
+     * @param resumeSavedNarration whether this book's stored narration position wins over
+     *   [readerOffset]. True for a play press after opening the book, because the stored position is
+     *   the last thing actually heard and the reading position may be a page — or a whole background
+     *   session — behind it. False when the reader moved deliberately, where their position is the
+     *   intent. See [sharedMediaOverlayStartClipIndex].
      */
-    suspend fun start(chapterIndex: Int?, readerOffset: Int?): Boolean {
+    suspend fun start(
+        chapterIndex: Int?,
+        readerOffset: Int?,
+        resumeSavedNarration: Boolean = true,
+    ): Boolean {
         val spineItemIndex = chapterIndex?.let(spineItemIndexByChapter::get) ?: return false
         val document = projector.document(spineItemIndex) ?: return false
         val plan = sharedMediaOverlayPlaybackPlan(document)
@@ -99,10 +161,68 @@ class SharedMediaOverlaySession(
         val readerClipIndex = readerOffset
             ?.takeIf { it >= 0 }
             ?.let { projector.clipIndexForReaderPosition(spineItemIndex, it) }
+        val savedProgress = if (resumeSavedNarration) narrationProgressStore?.load(bookId) else null
+        val startClipIndex = sharedMediaOverlayStartClipIndex(
+            saved = savedProgress,
+            spineItemIndex = spineItemIndex,
+            chapterIndex = chapterIndex,
+            readerClipIndex = readerClipIndex,
+            resumeSavedNarration = resumeSavedNarration,
+        )
         clipCount = plan.entries.size
+        currentPlanEntries = plan.entries
+        currentSpineItemIndex = spineItemIndex
         bandSessionId = nextSharedPlaybackBandSessionId()
-        engine.play(requestFor(spineItemIndex, plan, sharedMediaOverlayStartPlaybackIndex(plan, readerClipIndex)))
+        // Reinstalled on every start, not just in init: sessions share engines
+        // across surfaces now (reader and Listen narration), so the last
+        // starter must own continuation. Whoever stopped last never fires —
+        // only a genuine finish calls the hook — so reinstalling cannot
+        // resurrect a session its owner ended.
+        installPlaybackHooks()
+        engine.play(requestFor(spineItemIndex, plan, sharedMediaOverlayStartPlaybackIndex(plan, startClipIndex)))
         return true
+    }
+
+    /**
+     * Records where narration is, against the position that just started.
+     *
+     * Called from the engine's clip hook rather than from a screen's state collector so it keeps
+     * firing while the reader is backgrounded — the case where the text position stops moving and the
+     * narration does not. A session with no store records nothing.
+     */
+    private fun recordNarrationProgress(spineItemIndex: Int, playbackIndex: Int) {
+        val store = narrationProgressStore ?: return
+        // An engine that loads asynchronously can announce the previous request's first clip after this
+        // session has already moved on; only the loaded chapter's own clips describe this position.
+        if (spineItemIndex != currentSpineItemIndex) return
+        val clip = currentPlanEntries.getOrNull(playbackIndex) ?: return
+        store.record(
+            SharedMediaOverlayNarrationProgress(
+                bookId = bookId,
+                spineItemIndex = spineItemIndex,
+                // Only a chapter resolved for *this* spine item describes this clip. A projection
+                // left over from the previous chapter would label the clip with the wrong one, and a
+                // position recorded before this chapter's first projection still needs a chapter, so
+                // the mapping answers when the projection has not.
+                chapterIndex = chapterIndex.takeIf { projectedSpineItemIndex == spineItemIndex }
+                    ?: firstChapterBySpineItem[spineItemIndex],
+                clipIndex = clip.clipIndex,
+                updatedAt = currentTimestamp(),
+            )
+        )
+    }
+
+    /**
+     * Installs the session's engine hooks.
+     *
+     * Both hooks are reinstalled on every start because sessions share engines across surfaces (reader
+     * and Listen narration), so the last starter owns continuation and recording.
+     */
+    private fun installPlaybackHooks() {
+        engine.onChapterFinished = { finished -> continueAfter(finished) }
+        engine.onClipEntered = { spineItemIndex, playbackIndex ->
+            recordNarrationProgress(spineItemIndex, playbackIndex)
+        }
     }
 
     /**
@@ -131,6 +251,8 @@ class SharedMediaOverlaySession(
             val plan = sharedMediaOverlayPlaybackPlan(document)
             if (plan.isEmpty) continue
             clipCount = plan.entries.size
+            currentPlanEntries = plan.entries
+            currentSpineItemIndex = candidate
             // A continuation is the same run, not a new one: the reader pressed play once and is
             // listening to a book, so the band keeps the id it started with. Only a fresh `start`
             // gets a new one.
@@ -167,7 +289,10 @@ class SharedMediaOverlaySession(
 
     fun stop() {
         chapterIndex = null
+        projectedSpineItemIndex = null
         clipCount = 0
+        currentPlanEntries = emptyList()
+        currentSpineItemIndex = null
         engine.stop()
     }
 }
@@ -190,68 +315,3 @@ internal fun nextSharedPlaybackBandSessionId(): Long {
     sharedPlaybackBandSessionCounter += 1L
     return sharedPlaybackBandSessionCounter
 }
-
-/**
- * Which spine item narrates which reader chapter.
- *
- * The reader's chapter list is its own re-flow — split at TOC fragments, so the reference book has
- * 159 chapters for 156 spine items — while overlays are linked to *spine items*. Matching by content
- * path is the only identity the two share, and the index's
- * [SharedMediaOverlayIndex.contentPathBySpineItem] is what makes it exact rather than a guess at
- * the overlay's own `epub:textref`.
- *
- * A chapter whose path matches no spine item is absent, which is the correct answer: it has no
- * source document and therefore no narration.
- *
- * Takes content paths rather than chapters because the two platforms' chapter types share no shape,
- * and this is the one fact about a chapter that both have.
- */
-fun sharedMediaOverlaySpineItemIndexByChapter(
-    chapterContentPaths: List<String>,
-    overlayIndex: SharedMediaOverlayIndex
-): Map<Int, Int> {
-    if (chapterContentPaths.isEmpty() || overlayIndex.contentPathBySpineItem.isEmpty()) return emptyMap()
-    val spineByPath = HashMap<String, Int>(overlayIndex.contentPathBySpineItem.size)
-    overlayIndex.contentPathBySpineItem.forEach { (spineItemIndex, path) ->
-        val key = normalizeSharedMediaOverlayPath(path)
-        // First writer wins, so a book whose spine names the same document twice still resolves to
-        // the *earlier* item: that is the one a reader's re-flow started from.
-        if (key.isNotEmpty() && !spineByPath.containsKey(key)) spineByPath[key] = spineItemIndex
-    }
-    if (spineByPath.isEmpty()) return emptyMap()
-    val byChapter = HashMap<Int, Int>(chapterContentPaths.size)
-    chapterContentPaths.forEachIndexed { chapterIndex, path ->
-        spineByPath[normalizeSharedMediaOverlayPath(path)]?.let { byChapter[chapterIndex] = it }
-    }
-    return byChapter
-}
-
-/**
- * The book's spine items in reading order, deduplicated.
- *
- * Reads the chapter list rather than the spine so a document split into several reader chapters
- * contributes one entry, and a chapter with no spine item — a cover page the reader synthesises —
- * contributes none. This is what [sharedMediaOverlaySpineItemsAfter] walks to find the next narrated
- * chapter, so getting the order wrong is heard as narration that skips or repeats a chapter.
- */
-fun sharedMediaOverlaySpineItemsInReadingOrder(
-    chapterCount: Int,
-    spineItemIndexByChapter: Map<Int, Int>
-): List<Int> {
-    if (chapterCount <= 0) return emptyList()
-    val ordered = LinkedHashSet<Int>(chapterCount)
-    for (chapterIndex in 0 until chapterCount) {
-        spineItemIndexByChapter[chapterIndex]?.let(ordered::add)
-    }
-    return ordered.toList()
-}
-
-/**
- * Two paths that name the same document compare equal here.
- *
- * A spine item's `absPath` and a chapter's own path routinely differ by a leading slash, a fragment,
- * or a query string, and a mapping that missed on those would drop a chapter's narration while still
- * looking correct for every other chapter in the book.
- */
-fun normalizeSharedMediaOverlayPath(path: String): String =
-    path.substringBefore('#').substringBefore('?').trim().trimStart('/')

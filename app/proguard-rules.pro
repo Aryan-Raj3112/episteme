@@ -110,3 +110,9 @@
 -keepclasseswithmembers class com.aryan.reader.shared.docparse.Md4cJni {
     native <methods>;
 }
+
+# office_oxide_bridge JNI bridge: same constraint, symbols live in
+# app/src/main/cpp/office_oxide_bridge_jni.cpp.
+-keepclasseswithmembers class com.aryan.reader.shared.office.SharedOfficeOxideJni {
+    native <methods>;
+}

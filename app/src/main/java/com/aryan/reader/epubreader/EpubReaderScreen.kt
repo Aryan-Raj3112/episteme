@@ -52,12 +52,8 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -66,7 +62,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -77,18 +72,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.layout.windowInsetsBottomHeight
-import androidx.compose.foundation.layout.windowInsetsEndWidth
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.windowInsetsStartWidth
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -131,7 +119,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -171,6 +158,8 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.audiobook.ACTION_AUDIOBOOK_STOP
 import com.aryan.reader.audiobook.AudiobookPlaybackService
 import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.search.bestReaderResultForLibraryHit
+import com.aryan.reader.shared.search.navigationQuote
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.AnnotationExportFormatter
@@ -180,6 +169,8 @@ import com.aryan.reader.shared.spendableDisplayText
 import com.aryan.reader.shared.parseSpendGuardSentinel
 import com.aryan.reader.shared.formatSpendGuardCountdown
 import com.aryan.reader.shared.highlightFillCss
+import com.aryan.reader.shared.shouldApplyAnnotationSnapshot
+import com.aryan.reader.shared.shouldSkipEmptyAnnotationSave
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
@@ -516,7 +507,9 @@ fun EpubReaderHost(
         )
     }
 
-    val userHighlights = remember(epubBook.title) {
+    // Keyed on the stable book id, not the title: two books can share a title,
+    // and a title-keyed remember would leak one book's highlights into another.
+    val userHighlights = remember(readerCacheBookId) {
         mutableStateListOf<UserHighlight>().apply {
             if (initialHighlightsJson != null) {
                 addAll(parseHighlightsJson(initialHighlightsJson))
@@ -525,8 +518,45 @@ fun EpubReaderHost(
             }
         }
     }
+    // Authoritative-state flag for this session: true once a non-empty snapshot
+    // loaded or the reader ever held non-empty local highlights. It separates
+    // "the stored snapshot has not arrived / the book has none" from a real
+    // delete-all, so an empty save is not dropped (which resurrects deleted
+    // highlights on reopen) and a late snapshot cannot revert an intentional
+    // clear.
+    var highlightsHaveLocalState by remember(readerCacheBookId) {
+        mutableStateOf(userHighlights.isNotEmpty())
+    }
+
+    // Late snapshot fill: the open and seamless-switch paths load
+    // `initialHighlightsJson` asynchronously, so the first composition may run
+    // against the prefs fallback (usually empty). Apply the real snapshot once
+    // it arrives, but never re-seed after anything touched the list.
+    LaunchedEffect(initialHighlightsJson, readerCacheBookId) {
+        val snapshotJson = initialHighlightsJson ?: return@LaunchedEffect
+        if (highlightsHaveLocalState || userHighlights.isNotEmpty()) return@LaunchedEffect
+        val parsed = parseHighlightsJson(snapshotJson)
+        if (shouldApplyAnnotationSnapshot(
+                hasLocalEdits = false,
+                localCount = userHighlights.size,
+                snapshotJson = snapshotJson,
+                snapshotCount = parsed.size,
+            )
+        ) {
+            userHighlights.addAll(parsed)
+            highlightsHaveLocalState = true
+        }
+    }
 
     LaunchedEffect(userHighlights.size, userHighlights.toList()) {
+        // Any non-empty local state means the stored snapshot is loaded or the
+        // user authored highlights, so an empty set is a real delete-all.
+        if (userHighlights.isNotEmpty()) highlightsHaveLocalState = true
+        // Skip the empty set that exists only because the async snapshot had not
+        // arrived yet; that write is what wiped highlights on open.
+        if (shouldSkipEmptyAnnotationSave(highlightsHaveLocalState, userHighlights.size)) {
+            return@LaunchedEffect
+        }
         val json = highlightsToJson(userHighlights)
         onHighlightsChanged(json)
 
@@ -649,7 +679,9 @@ fun EpubReaderHost(
     val roundedCornerBottomPadding = rememberBottomRoundedCornerPadding(view)
     val pageInfoCornerBottomPadding = roundedCornerBottomPadding.coerceAtMost(8.dp)
 
-    val bookmarksState = remember(epubBook.title) {
+    // Keyed on the stable book id, not the title: two books can share a title,
+    // and a title-keyed remember would leak one book's bookmarks into another.
+    val bookmarksState = remember(readerCacheBookId) {
         mutableStateOf(
             loadBookmarks(context, epubBook.title, epubBook.chapters, initialBookmarksJson).also {
                 Timber.d("Initial load for '${epubBook.title}': ${it.size} bookmarks loaded -> $it")
@@ -657,10 +689,50 @@ fun EpubReaderHost(
         )
     }
     var bookmarks by bookmarksState
+    // User edits are authoritative for this session. The initial save-back below
+    // must not persist a prefs-fallback empty set over the DB before the async
+    // `initialBookmarksJson` snapshot arrives.
+    var bookmarksDirty by remember(readerCacheBookId) { mutableStateOf(false) }
+    var lastAppliedBookmarksJson by remember(readerCacheBookId) { mutableStateOf(initialBookmarksJson) }
+    fun updateBookmarks(next: Set<Bookmark>) {
+        bookmarksDirty = true
+        bookmarks = next
+    }
+
+    // Late snapshot fill: openBook loads `initialBookmarksJson` asynchronously,
+    // so the first composition may run with null. Fill once the real value
+    // arrives, but never wipe user edits (see shared shouldApplyAnnotationSnapshot).
+    LaunchedEffect(initialBookmarksJson, readerCacheBookId) {
+        if (bookmarksDirty) return@LaunchedEffect
+        val snapshotJson = initialBookmarksJson ?: return@LaunchedEffect
+        if (snapshotJson == lastAppliedBookmarksJson) return@LaunchedEffect
+        lastAppliedBookmarksJson = snapshotJson
+        val parsed = loadBookmarks(context, epubBook.title, epubBook.chapters, snapshotJson)
+        if (shouldApplyAnnotationSnapshot(
+                hasLocalEdits = false,
+                localCount = bookmarks.size,
+                snapshotJson = snapshotJson,
+                snapshotCount = parsed.size,
+            ) && bookmarks.isEmpty()
+        ) {
+            bookmarks = parsed
+        }
+    }
 
     LaunchedEffect(bookmarks) {
+        // Skip the initial save-back while the snapshot has not arrived yet:
+        // persisting the prefs-fallback empty set here is what wiped bookmarks.
+        if (initialBookmarksJson == null && !bookmarksDirty) return@LaunchedEffect
         Timber.d("Bookmarks changed, saving...")
-        onBookmarksChanged(bookmarksToJson(bookmarks))
+        val json = bookmarksToJson(bookmarks)
+        // Explicit user edits bypass the stale-snapshot wipe guard so that
+        // delete-all persists; anything else stays on the protected path.
+        val editingBookId = uiState.selectedBookId ?: stableBookId
+        if (bookmarksDirty && editingBookId != null) {
+            viewModel.saveBookmarksUserEdit(editingBookId, json, uiState.selectedEpubUri)
+        } else {
+            onBookmarksChanged(json)
+        }
     }
 
     var activeBookmarkInVerticalView by remember { mutableStateOf<Bookmark?>(null) }
@@ -678,6 +750,14 @@ fun EpubReaderHost(
                 it,
                 view
             ).isAppearanceLightStatusBars
+        } == true
+    }
+    val initialIsAppearanceLightNavigationBars = remember(window, view) {
+        window?.let {
+            WindowCompat.getInsetsController(
+                it,
+                view
+            ).isAppearanceLightNavigationBars
         } == true
     }
     val initialSystemBarsBehavior = remember(window, view) {
@@ -1055,6 +1135,9 @@ fun EpubReaderHost(
     }
 
     val searchState = rememberSearchState(scope = scope, searcher = epubSearcher)
+    // Deep-links must not steal field focus (no keyboard on open); manual
+    // search opens set this back to true (see onToggleSearch call sites).
+    var searchAutoFocusEnabled by remember(bookId) { mutableStateOf(true) }
     val isEpubSliderReady = when {
         isNativeVerticalMode -> nativeVerticalTotalPages > 0
         currentRenderMode == RenderMode.VERTICAL_SCROLL -> true
@@ -1172,9 +1255,26 @@ fun EpubReaderHost(
         bookReplacementPreferences.signatureForFile(bookId)
     }
 
-    var currentThemeId by remember { mutableStateOf(loadReaderThemeId(context)) }
+    var isThemeLocal by remember { mutableStateOf(loadThemeIsLocal(context, bookId)) }
+    var currentThemeId by remember {
+        mutableStateOf(
+            if (loadThemeIsLocal(context, bookId)) {
+                loadLocalThemeId(context, bookId) ?: loadReaderThemeId(context)
+            } else {
+                loadReaderThemeId(context)
+            }
+        )
+    }
     var customThemes by remember { mutableStateOf(loadCustomThemes(context)) }
-    var globalTextureTransparency by remember { mutableFloatStateOf(loadGlobalTextureTransparency(context)) }
+    var globalTextureTransparency by remember {
+        mutableFloatStateOf(
+            if (loadThemeIsLocal(context, bookId)) {
+                loadLocalThemeTransparency(context, bookId) ?: loadGlobalTextureTransparency(context)
+            } else {
+                loadGlobalTextureTransparency(context)
+            }
+        )
+    }
 
     val activeTheme = remember(currentThemeId, customThemes) {
         BuiltInThemes.find { it.id == currentThemeId }
@@ -1221,7 +1321,9 @@ fun EpubReaderHost(
         val outR = overlayColor.red * overlayAlpha + effectiveBg.red * (1 - overlayAlpha)
         val outG = overlayColor.green * overlayAlpha + effectiveBg.green * (1 - overlayAlpha)
         val outB = overlayColor.blue * overlayAlpha + effectiveBg.blue * (1 - overlayAlpha)
-        Color(outR, outG, outB).copy(alpha = 0.95f)
+        // Opaque: the bar is chrome, not an overlay. A translucent fill let the WebView's text
+        // show through the bottom stack, unlike the PDF reader's solid bars.
+        Color(outR, outG, outB)
     }
 
     val currentChapterInPaginatedMode by remember {
@@ -2002,7 +2104,14 @@ fun EpubReaderHost(
         val narratedChapter = session.chapterIndex ?: return@LaunchedEffect
         if (narratedChapter == currentChapterIndex) return@LaunchedEffect
         Timber.tag("MediaOverlayDiag").d("Reader navigated to $currentChapterIndex; seeking narration")
-        session.start(currentChapterIndex, readerOffsetForChapter(currentChapterIndex))
+        // The reader moved deliberately, so the visible position is the intent — never the narration
+        // position this chapter was left at. That is the difference between following a chapter jump
+        // and resuming a book.
+        session.start(
+            chapterIndex = currentChapterIndex,
+            readerOffset = readerOffsetForChapter(currentChapterIndex),
+            resumeSavedNarration = false
+        )
     }
 
     // The band on the WebView vertical surface, and its follow-scroll. A chapter change scrolls;
@@ -2136,7 +2245,8 @@ fun EpubReaderHost(
         searchState = searchState,
         webViewRef = if (isNativeVerticalMode) null else webViewRefForTts,
         currentChapterIndex = currentChapterIndex,
-        focusRequester = searchFocusRequester
+        focusRequester = searchFocusRequester,
+        autoFocus = searchAutoFocusEnabled,
     )
 
     val totalPagesInCurrentChapter = remember(currentScrollHeightValue, currentClientHeightValue) {
@@ -2617,8 +2727,9 @@ fun EpubReaderHost(
         view = view,
         showBars = showBars,
         initialIsAppearanceLightStatusBars = initialIsAppearanceLightStatusBars,
+        initialIsAppearanceLightNavigationBars = initialIsAppearanceLightNavigationBars,
         initialSystemBarsBehavior = initialSystemBarsBehavior,
-        isDarkTheme = isDarkTheme,
+        readerBackground = effectiveBg,
         systemUiMode = prefs.systemUiMode
     )
 
@@ -3587,7 +3698,7 @@ fun EpubReaderHost(
         navigateToEpubJumpLocator(target)
     }
 
-    fun navigateToSearchResult(index: Int) {
+    fun navigateToSearchResult(index: Int, recordHistory: Boolean = true) {
         Timber.tag("NavDiag").d("navigateToSearchResult index: $index")
         val targetResult = searchState.searchResults.getOrNull(index)
         if (targetResult != null && currentRenderMode == RenderMode.VERTICAL_SCROLL) {
@@ -3610,10 +3721,12 @@ fun EpubReaderHost(
                     val scrollLocator = exactLocator
                         ?: bookPaginator.getLocatorForPage(pageIdx)
                         ?: Locator(targetResult.locationInSource, targetResult.chunkIndex.coerceAtLeast(0) * 20, 0)
-                    recordEpubJump(
-                        scrollLocator.toEpubJumpLocator(pageIndex = pageIdx)
-                            .copy(textQuote = targetResult.snippet.text)
-                    )
+                    if (recordHistory) {
+                        recordEpubJump(
+                            scrollLocator.toEpubJumpLocator(pageIndex = pageIdx)
+                                .copy(textQuote = targetResult.snippet.text)
+                        )
+                    }
                     requestNativeVerticalLocatorScroll(
                         locator = scrollLocator,
                         fallbackPage = pageIdx,
@@ -3624,13 +3737,15 @@ fun EpubReaderHost(
                 }
                 return
             }
-            recordEpubJump(
-                SharedReaderLocator(
-                    chapterIndex = targetResult.locationInSource,
-                    cfi = "android-search:${targetResult.chunkIndex}:${targetResult.occurrenceIndexInLocation}",
-                    textQuote = targetResult.snippet.text
+            if (recordHistory) {
+                recordEpubJump(
+                    SharedReaderLocator(
+                        chapterIndex = targetResult.locationInSource,
+                        cfi = "android-search:${targetResult.chunkIndex}:${targetResult.occurrenceIndexInLocation}",
+                        textQuote = targetResult.snippet.text
+                    )
                 )
-            )
+            }
         }
         if (targetResult != null && currentRenderMode == RenderMode.PAGINATED) {
             scope.launch {
@@ -3641,9 +3756,11 @@ fun EpubReaderHost(
                     val pageIdx = bookPaginator.findStablePageForSearchResult(targetResult) ?: return@launch
                     Timber.tag("NavDiag").d("onPaginatedScrollToPage pageIdx=$pageIdx")
                     val targetLocator = bookPaginator.getLocatorForPage(pageIdx)
-                    paginatedJumpLocatorForPage(pageIdx, targetLocator)
-                        ?.copy(textQuote = targetResult.snippet.text)
-                        ?.let { recordEpubJump(it) }
+                    if (recordHistory) {
+                        paginatedJumpLocatorForPage(pageIdx, targetLocator)
+                            ?.copy(textQuote = targetResult.snippet.text)
+                            ?.let { recordEpubJump(it) }
+                    }
                     scrollPaginatedToJumpPage(pageIdx, targetLocator)
                 } finally {
                     navigation.isNavigatingToPosition = false
@@ -3692,12 +3809,58 @@ fun EpubReaderHost(
             onPaginatedScrollToPage = { pageIdx ->
                 Timber.tag("NavDiag").d("onPaginatedScrollToPage pageIdx=$pageIdx")
                 val targetLocator = (paginator as? BookPaginator)?.getLocatorForPage(pageIdx)
-                paginatedJumpLocatorForPage(pageIdx, targetLocator)
-                    ?.copy(textQuote = searchState.searchResults.getOrNull(index)?.snippet?.text)
-                    ?.let { recordEpubJump(it) }
+                if (recordHistory) {
+                    paginatedJumpLocatorForPage(pageIdx, targetLocator)
+                        ?.copy(textQuote = searchState.searchResults.getOrNull(index)?.snippet?.text)
+                        ?.let { recordEpubJump(it) }
+                }
                 scrollPaginatedToJumpPage(pageIdx, targetLocator)
             }
         )
+    }
+
+    // Library inside-files deep-link: the book already opened at the hit's
+    // chapter (initialLocator). Seed jump history with the saved position so
+    // Back returns to it, pre-load the library query in the reader's own
+    // search UI, then auto-step once to the matching occurrence without
+    // recording a second history entry (Back goes straight to the origin).
+    val librarySearch = uiState.librarySearchDeepLink?.takeIf { it.bookId == bookId }
+    var librarySearchAutoStepDone by remember(bookId) { mutableStateOf(false) }
+    var pendingLibraryQuote by remember(bookId) { mutableStateOf<String?>(null) }
+    var pendingLibraryQuery by remember(bookId) { mutableStateOf<String?>(null) }
+    var pendingLibraryChapter by remember(bookId) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(librarySearch?.hit, bookId) {
+        val deepLink = librarySearch ?: return@LaunchedEffect
+        librarySearchAutoStepDone = false
+        deepLink.epubOrigin?.let { origin ->
+            val chapter = initialLocator?.chapterIndex ?: deepLink.hit.chapterIndex
+            if (chapter != null) {
+                recordEpubJump(chapterStartJumpLocator(chapter), currentLocator = origin)
+            }
+        }
+        pendingLibraryQuote = deepLink.hit.navigationQuote()
+        pendingLibraryQuery = deepLink.query
+        pendingLibraryChapter = deepLink.hit.chapterIndex
+        // Mirror a manual search open exactly (bars + query + results panel)
+        // so the deep-link lands in the real reader search UI — except field
+        // focus: popping the keyboard unprompted on open is wrong.
+        searchAutoFocusEnabled = false
+        searchState.onQueryChange(deepLink.query)
+        searchState.isSearchActive = true
+        searchState.showSearchResultsPanel = true
+        showBars = true
+        viewModel.consumeLibrarySearchDeepLink()
+    }
+    LaunchedEffect(searchState.searchResults) {
+        if (librarySearchAutoStepDone) return@LaunchedEffect
+        val quote = pendingLibraryQuote ?: return@LaunchedEffect
+        if (searchState.searchQuery != pendingLibraryQuery) return@LaunchedEffect
+        val results = searchState.searchResults
+        if (results.isEmpty()) return@LaunchedEffect
+        librarySearchAutoStepDone = true
+        val match = bestReaderResultForLibraryHit(quote, results.map { it.snippet.text })
+            ?: results.indexOfFirst { it.locationInSource == pendingLibraryChapter }.takeIf { it >= 0 }
+        if (match != null) navigateToSearchResult(match, recordHistory = false)
     }
 
     LaunchedEffect(paginatedPagerState.currentPage, currentRenderMode) {
@@ -4257,14 +4420,16 @@ fun EpubReaderHost(
                     }
                 },
                 onDeleteBookmark = { bookmarkToDelete ->
-                    bookmarks = bookmarks - bookmarkToDelete
+                    updateBookmarks(bookmarks - bookmarkToDelete)
                     bookmarkPageMap = bookmarkPageMap - bookmarkToDelete.cfi
                     bookmarkLocatorMap = bookmarkLocatorMap - bookmarkToDelete.cfi
                 },
                 onRenameBookmark = { bookmark, newLabel ->
-                    bookmarks = bookmarks.map {
-                        if (it.cfi == bookmark.cfi) it.copy(label = newLabel) else it
-                    }.toSet()
+                    updateBookmarks(
+                        bookmarks.map {
+                            if (it.cfi == bookmark.cfi) it.copy(label = newLabel) else it
+                        }.toSet()
+                    )
                 },
                 onDeleteHighlight = { highlightToDelete ->
                     userHighlights.remove(highlightToDelete)
@@ -4921,7 +5086,8 @@ fun EpubReaderHost(
                     onTranslateLookupFn = { p0 -> onTranslateLookup(p0) },
                     onDictionaryLookupFn = { p0 -> onDictionaryLookup(p0) },
                     onUpdateHighlightPaletteFn = { p0, p1 -> onUpdateHighlightPalette(p0, p1) },
-                    runRecapFn = { p0, p1 -> runRecap(p0, p1) }
+                    runRecapFn = { p0, p1 -> runRecap(p0, p1) },
+                    onBookmarksUserEdited = { bookmarksDirty = true }
                 )
 
                 val isBookmarked: Boolean
@@ -4967,7 +5133,7 @@ fun EpubReaderHost(
                             onBookmarkClick = {
                                 if (isBookmarked) {
                                     bookmarkedOnPage?.let { bookmarkToRemove ->
-                                        bookmarks = bookmarks - bookmarkToRemove
+                                        updateBookmarks(bookmarks - bookmarkToRemove)
                                         bookmarkPageMap = bookmarkPageMap - bookmarkToRemove.cfi
                                         bookmarkLocatorMap = bookmarkLocatorMap - bookmarkToRemove.cfi
                                         Timber.d("Native vertical click: Removing bookmark: $bookmarkToRemove")
@@ -5009,7 +5175,7 @@ fun EpubReaderHost(
                                                 totalPagesInChapter = totalPages,
                                                 chapterIndex = locator.chapterIndex
                                             )
-                                            bookmarks = bookmarks + newBookmark
+                                            updateBookmarks(bookmarks + newBookmark)
                                             bookmarkPageMap = bookmarkPageMap + (finalCfi to nativeVerticalCurrentPage)
                                             bookmarkLocatorMap = bookmarkLocatorMap + (finalCfi to locator)
                                             Timber.d("Native vertical click: Adding bookmark: $newBookmark")
@@ -5075,7 +5241,7 @@ fun EpubReaderHost(
                             if (isBookmarked) {
                                 activeBookmarkInVerticalView?.let { bookmarkToRemove ->
                                     Timber.d("Vertical click: Removing bookmark: $bookmarkToRemove")
-                                    bookmarks = bookmarks - bookmarkToRemove
+                                    updateBookmarks(bookmarks - bookmarkToRemove)
                                 }
                             } else {
                                 Timber.d("Vertical click: Adding bookmark. Requesting CFI.")
@@ -5105,7 +5271,7 @@ fun EpubReaderHost(
                         onBookmarkClick = {
                             if (isBookmarked) {
                                 bookmarkedOnPage.let { bookmarkToRemove ->
-                                    bookmarks = bookmarks - bookmarkToRemove
+                                    updateBookmarks(bookmarks - bookmarkToRemove)
                                     Timber.d("Paginated click: Removing bookmark: $bookmarkToRemove")
                                 }
                             } else {
@@ -5153,7 +5319,7 @@ fun EpubReaderHost(
                                             totalPagesInChapter = totalPages,
                                             chapterIndex = chapterIndex
                                         )
-                                        bookmarks = bookmarks + newBookmark
+                                        updateBookmarks(bookmarks + newBookmark)
                                         Timber.d("Paginated click: Adding bookmark: $newBookmark")
                                     }
                                 }
@@ -5383,198 +5549,24 @@ fun EpubReaderHost(
                 }
 
                 if (isMusicianMode && isAutoScrollModeActive) {
-                    val density = LocalDensity.current
-
-                    var leftPulseTrigger by remember { mutableLongStateOf(0L) }
-                    var rightPulseTrigger by remember { mutableLongStateOf(0L) }
-
-                    var leftHoldProgress by remember { mutableFloatStateOf(0f) }
-                    var rightHoldProgress by remember { mutableFloatStateOf(0f) }
-
-                    val leftPulseAlpha by animateFloatAsState(
-                        targetValue = if (System.currentTimeMillis() - leftPulseTrigger < 150) 0.3f else 0f,
-                        animationSpec = tween(motionPolicy.durationMillis(150)), label = "leftPulse"
+                    EpubReaderMusicianAutoScrollOverlay(
+                        scope = scope,
+                        webViewRefForTts = webViewRefForTts,
+                        motionPolicy = motionPolicy,
+                        currentClientHeightValue = currentClientHeightValue,
+                        triggerAutoScrollTempPause = { triggerAutoScrollTempPause(it) }
                     )
-                    val rightPulseAlpha by animateFloatAsState(
-                        targetValue = if (System.currentTimeMillis() - rightPulseTrigger < 150) 0.3f else 0f,
-                        animationSpec = tween(motionPolicy.durationMillis(150)), label = "rightPulse"
-                    )
-
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        val regionHeight = Modifier.fillMaxHeight(0.4f)
-                        val regionWidth = Modifier.fillMaxWidth(0.25f)
-                        val topOffset = 100.dp
-
-                        // Left Region
-                        Box(
-                            modifier = regionWidth
-                                .then(regionHeight)
-                                .align(Alignment.TopStart)
-                                .offset(y = topOffset)
-                                .padding(start = 8.dp)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = leftPulseAlpha), RoundedCornerShape(12.dp))
-                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .pointerInput(Unit) {
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown()
-                                        var isLongPress = false
-                                        val job = scope.launch {
-                                            val startTime = System.currentTimeMillis()
-                                            while (isActive) {
-                                                val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed >= 1000) {
-                                                    leftHoldProgress = 0f
-                                                    isLongPress = true
-                                                    leftPulseTrigger = System.currentTimeMillis()
-                                                    triggerAutoScrollTempPause(1000L)
-
-                                                    scope.launch {
-                                                        webViewRefForTts?.evaluateJavascript(
-                                                            "window.scrollTo({ top: 0, behavior: 'auto' });", null
-                                                        )
-                                                    }
-                                                    break
-                                                }
-                                                leftHoldProgress = elapsed / 1000f
-                                                delay(16)
-                                            }
-                                        }
-
-                                        val up = waitForUpOrCancellation()
-                                        job.cancel()
-                                        leftHoldProgress = 0f
-
-                                        if (!isLongPress && up != null) {
-                                            up.consume()
-                                            leftPulseTrigger = System.currentTimeMillis()
-                                            triggerAutoScrollTempPause(600L)
-                                            val amount = (currentClientHeightValue * 0.75f).toInt()
-                                            webViewRefForTts?.evaluateJavascript(
-                                                "window.scrollBy({ top: -${amount}, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null
-                                            )
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (leftHoldProgress > 0f) {
-                                CircularProgressIndicator(
-                                    progress = { leftHoldProgress },
-                                    modifier = Modifier.size(48.dp).alpha(0.6f),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    trackColor = Color.Transparent,
-                                    strokeWidth = 4.dp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowUpward,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp).alpha(0.6f),
-                                    tint = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-
-                        // Right Region
-                        Box(
-                            modifier = regionWidth
-                                .then(regionHeight)
-                                .align(Alignment.TopEnd)
-                                .offset(y = topOffset)
-                                .padding(end = 8.dp)
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = rightPulseAlpha), RoundedCornerShape(12.dp))
-                                .border(2.dp, Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
-                                .pointerInput(Unit) {
-                                    awaitEachGesture {
-                                        val down = awaitFirstDown()
-                                        var isLongPress = false
-                                        val job = scope.launch {
-                                            val startTime = System.currentTimeMillis()
-                                            while (isActive) {
-                                                val elapsed = System.currentTimeMillis() - startTime
-                                                if (elapsed >= 1000) {
-                                                    rightHoldProgress = 0f
-                                                    isLongPress = true
-                                                    rightPulseTrigger = System.currentTimeMillis()
-                                                    triggerAutoScrollTempPause(1000L)
-
-                                                    scope.launch {
-                                                        webViewRefForTts?.evaluateJavascript(
-                                                            "window.scrollTo({ top: document.body.scrollHeight, behavior: 'auto' });", null
-                                                        )
-                                                    }
-                                                    break
-                                                }
-                                                rightHoldProgress = elapsed / 1000f
-                                                delay(16)
-                                            }
-                                        }
-
-                                        val up = waitForUpOrCancellation()
-                                        job.cancel()
-                                        rightHoldProgress = 0f
-
-                                        if (!isLongPress && up != null) {
-                                            up.consume()
-                                            rightPulseTrigger = System.currentTimeMillis()
-                                            triggerAutoScrollTempPause(600L)
-                                            val amount = (currentClientHeightValue * 0.75f).toInt()
-                                            webViewRefForTts?.evaluateJavascript(
-                                                "window.scrollBy({ top: ${amount}, behavior: '${motionPolicy.webViewScrollBehavior()}' });", null
-                                            )
-                                        }
-                                    }
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (rightHoldProgress > 0f) {
-                                CircularProgressIndicator(
-                                    progress = { rightHoldProgress },
-                                    modifier = Modifier.size(48.dp).alpha(0.6f),
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    trackColor = Color.Transparent,
-                                    strokeWidth = 4.dp
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDownward,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(24.dp).alpha(0.6f),
-                                    tint = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                        }
-                    }
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     EpubReaderSearchOverlay(
                         searchState = searchState,
                         onNavigateResult = { index -> navigateToSearchResult(index) },
-                        bottomPadding = bottomPadding
+                        bottomPadding = bottomPadding,
                     )
                 }
 
-                val navBarScrimColor = MaterialTheme.colorScheme.surface
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .windowInsetsBottomHeight(WindowInsets.navigationBars)
-                        .background(navBarScrimColor)
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .fillMaxHeight()
-                        .windowInsetsStartWidth(WindowInsets.navigationBars)
-                        .background(navBarScrimColor)
-                )
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .windowInsetsEndWidth(WindowInsets.navigationBars)
-                        .background(navBarScrimColor)
-                )
+                EpubReaderNavBarScrims(MaterialTheme.colorScheme.surface)
 
                 // Animated Top Bar
                 EpubReaderTopBar(
@@ -5605,6 +5597,10 @@ fun EpubReaderHost(
                                             .setAction(ACTION_AUDIOBOOK_STOP)
                                     )
                                 }
+                                // Listen narration shares the overlay service: starting here
+                                // replaces it, so drop its session rather than leaving
+                                // a mini player pointed at another book's audio.
+                                com.aryan.reader.audiobook.ListenOverlayHost.get(context).stop()
                                 scope.launch {
                                     val started = session.start(
                                         currentChapterIndex,
@@ -5772,6 +5768,12 @@ fun EpubReaderHost(
                         showBars = !isMusicianMode
                     },
                     searchFocusRequester = searchFocusRequester,
+                    // This layer is inset by `effectiveTopPadding`; the bar lifts itself back to
+                    // the screen edge (see `hostTopInset`) and paints the status-bar strip inside
+                    // its own Surface, the way the PDF reader does. The ignoring-visibility inset
+                    // keeps the tool row put while transient system bars swipe in.
+                    topInset = stableChromeTopPadding,
+                    hostTopInset = effectiveTopPadding,
                     modifier = Modifier.align(Alignment.TopCenter),
                     onOpenTtsSettings = { showTtsSettingsSheet = true },
                     onOpenTtsReplacements = { showTtsReplacementsSheet = true },
@@ -5797,6 +5799,7 @@ fun EpubReaderHost(
                         }
                     },
                     onToggleSearch = {
+                        searchAutoFocusEnabled = true
                         searchState.isSearchActive = true
                         searchState.showSearchResultsPanel = true
                         showBars = true
@@ -6106,14 +6109,10 @@ fun EpubReaderHost(
                 // Animated Bottom Bar
                 EpubReaderBottomBar(
                     isVisible = showBars,
-                    currentRenderMode = currentRenderMode,
                     isTtsSessionActive = isTtsSessionActive,
-                    ttsState = ttsState,
-                    isProUser = isProUser,
                     hiddenTools = dictTools.hiddenTools,
                     toolOrder = dictTools.toolOrder,
                     bottomTools = dictTools.bottomTools,
-                    currentTtsMode = prefs.currentTtsMode,
                     isSliderActive = isPageSliderVisible,
                     onOpenAiHub = { showAiHubSheet = true },
                     onOpenDictionarySettings = { dictTools.showDictionarySettingsSheet = true },
@@ -6135,6 +6134,7 @@ fun EpubReaderHost(
                         }
                     },
                     onToggleSearch = {
+                        searchAutoFocusEnabled = true
                         searchState.isSearchActive = true
                         searchState.showSearchResultsPanel = true
                         showBars = true
@@ -6162,9 +6162,11 @@ fun EpubReaderHost(
                             }
                         }
                     },
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = bottomPadding),
+                    // Paint the navigation-bar strip inside the toolbar surface so
+                    // the bar's colour reaches the screen edge; the nav-bar scrims
+                    // below remain for the chrome-hidden state.
+                    bottomInset = bottomPadding,
+                    modifier = Modifier.align(Alignment.BottomCenter),
                     readerMotionPolicy = motionPolicy
                 )
 
@@ -6391,6 +6393,8 @@ fun EpubReaderHost(
                         currentRenderMode == RenderMode.VERTICAL_SCROLL -> totalPagesInCurrentChapter
                         else -> paginatedPagerState.pageCount
                     },
+                    isTwoPageSpread = isTwoPageSpread,
+                    totalBookPageCount = totalBookPageCount(),
                     isNativeVerticalMode = isNativeVerticalMode,
                     currentRenderMode = currentRenderMode,
                     nativeVerticalTotalPages = nativeVerticalTotalPages,
@@ -6629,16 +6633,51 @@ fun EpubReaderHost(
                 globalTextureTransparency = globalTextureTransparency,
                 onGlobalTextureTransparencyChange = {
                     globalTextureTransparency = it
-                    saveGlobalTextureTransparency(context, it)
+                    if (isThemeLocal) {
+                        saveLocalThemeTransparency(context, bookId, it)
+                    } else {
+                        saveGlobalTextureTransparency(context, it)
+                    }
                 },
                 onThemeSelected = {
                     currentThemeId = it
-                    saveReaderThemeId(context, it)
+                    if (isThemeLocal) {
+                        saveLocalThemeId(context, bookId, it)
+                    } else {
+                        saveReaderThemeId(context, it)
+                    }
                     showThemePanel = false
                 },
                 onDismiss = { showThemePanel = false },
                 customThemes = customThemes,
-                onCustomThemesUpdated = { customThemes = it; saveCustomThemes(context, it) }
+                onCustomThemesUpdated = { customThemes = it; saveCustomThemes(context, it) },
+                isLocalMode = isThemeLocal,
+                onLocalModeChange = {
+                    if (it != isThemeLocal) {
+                        if (it) {
+                            if (loadLocalThemeId(context, bookId) == null) {
+                                saveLocalThemeId(context, bookId, currentThemeId)
+                            } else {
+                                currentThemeId = loadLocalThemeId(context, bookId) ?: currentThemeId
+                            }
+                            if (loadLocalThemeTransparency(context, bookId) == null) {
+                                saveLocalThemeTransparency(context, bookId, globalTextureTransparency)
+                            } else {
+                                globalTextureTransparency = loadLocalThemeTransparency(context, bookId) ?: globalTextureTransparency
+                            }
+                        } else {
+                            currentThemeId = loadReaderThemeId(context)
+                            globalTextureTransparency = loadGlobalTextureTransparency(context)
+                        }
+                        isThemeLocal = it
+                        saveThemeIsLocal(context, bookId, it)
+                    }
+                },
+                localLabel = stringResource(R.string.theme_local),
+                globalLabel = stringResource(R.string.theme_global),
+                localDescription = stringResource(R.string.auto_scroll_saved_for_file),
+                globalDescription = stringResource(R.string.auto_scroll_applies_all_files),
+                selectModeLabel = stringResource(R.string.content_desc_select_mode)
             )
         }
 

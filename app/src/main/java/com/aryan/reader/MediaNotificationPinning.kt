@@ -7,6 +7,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.BitmapLoader
@@ -40,6 +41,26 @@ internal fun isPlaybackNotificationPinned(playWhenReady: Boolean, playbackState:
  * Must be invoked on the main thread.
  */
 @UnstableApi
+/**
+ * Whether [channelId] exists but the user has turned it off (`IMPORTANCE_NONE`).
+ *
+ * A foreground-service notification posted on such a channel is rejected inside
+ * `NotificationManagerService`, and because that happens across a binder call the failure comes
+ * back to this process as a `CannotPostForegroundServiceNotificationException("Bad notification for
+ * startForeground")` delivered on the main thread through `ActivityThread$H` — *after*
+ * `startForeground()` has returned, so no `try/catch` at the call site can catch it and the process
+ * dies. Creating the channel again does not help either: the framework keeps the user's choice.
+ * The only defence is not to post, which is what callers do with this check.
+ * See docs/crashlytics-triage.md#119.
+ */
+internal fun isServiceNotificationChannelBlocked(context: Context, channelId: String): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    val importance = context.getSystemService(NotificationManager::class.java)
+        ?.getNotificationChannel(channelId)
+        ?.importance
+    return importance == NotificationManager.IMPORTANCE_NONE
+}
+
 internal fun pinPostedPlaybackNotification(
     context: Context,
     notificationId: Int,

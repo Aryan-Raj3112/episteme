@@ -39,15 +39,44 @@ import kotlinx.coroutines.withContext
 @UnstableApi
 internal class AndroidSharedMobileEpubCloudTts(
     context: Context,
-    private val controller: TtsController,
+    /**
+     * Live service state and the command channel for a running session, owned by the host.
+     *
+     * Left null — the TTS settings sheet's case, since it only browses the cache and plays samples —
+     * the adapter makes a private controller that never connects and releases it with itself. A host
+     * that also renders playback (a reader) passes the controller it already drives, and keeps
+     * owning it: [release] only releases the private one.
+     */
+    private val hostController: TtsController? = null,
     private val getAuthToken: suspend () -> String? = { null },
+    /**
+     * Host hook for cloud voice selection. The shared sheet calls this *and* its own
+     * `onCloudTtsVoiceChange`; on Android the latter is the surface's real command (Listen persists
+     * a speaker of its own), so this only covers hosts that drive a controller of their own.
+     */
+    private val onVoiceSelected: (String) -> Unit = { voiceId -> hostController?.changeSpeaker(voiceId) },
+    /** Book whose chunk cache the settings sheet browses; null falls back to the running session. */
+    private val cacheBookTitle: () -> String? = { null },
+    /** The voice this surface is pinned to, for the cache browser's default filter. */
+    private val currentVoiceId: () -> String? = { null },
 ) : SharedMobileEpubCloudTts {
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    /** The interface's cache browser is voice-scoped, so remember which book is in play. */
-    private var activeBookTitle: String? = null
+    private val ownedController: TtsController? =
+        if (hostController == null) TtsController(appContext) else null
+
+    private val controller: TtsController get() = hostController ?: ownedController!!
+
+    /** The book a running session was started with; the cache browser's fallback title. */
+    private var sessionBookTitle: String? = null
+
+    /** The interface's cache browser is voice-scoped, so it needs a book to look files up under. */
+    private fun bookTitle(): String? = cacheBookTitle() ?: sessionBookTitle
+
+    /** The cache browser calls this voice "current": the surface's pick, else the service's. */
+    private fun currentVoice(): String? = currentVoiceId() ?: ttsState.speakerId
 
     private var authTokenOverride: String? = null
     private var workerUrlOverride: String = ""
@@ -115,9 +144,14 @@ internal class AndroidSharedMobileEpubCloudTts(
         continueSession: Boolean,
         playbackSource: String?,
         totalChapters: Int,
+        // Accepted for interface parity; Android Listen never reaches this adapter (it drives
+        // TtsPlaybackManager with its own per-call ttsMode + speakerId), and the reader path
+        // leaves both default, so both are deliberately ignored here.
+        speakerId: String?,
+        cloudModeAsserted: Boolean,
     ) {
         if (chunks.isEmpty()) return
-        activeBookTitle = bookTitle
+        sessionBookTitle = bookTitle
         activeChunks = chunks
         scope.launch {
             val token = authTokenOverride ?: getAuthToken()
@@ -160,10 +194,10 @@ internal class AndroidSharedMobileEpubCloudTts(
 
     override fun skipNext() = controller.skipToNextChunk()
 
-    override fun setVoice(identifier: String) = controller.changeSpeaker(identifier)
+    override fun setVoice(identifier: String) = onVoiceSelected(identifier)
 
     override fun clearCache() {
-        val bookTitle = activeBookTitle ?: return
+        val bookTitle = bookTitle() ?: return
         scope.launch {
             withContext(Dispatchers.IO) {
                 TtsCacheManager(appContext).clearBookCache(bookTitle)
@@ -181,7 +215,8 @@ internal class AndroidSharedMobileEpubCloudTts(
     override fun release() {
         samplePlayer?.release()
         samplePlayer = null
-        controller.release()
+        // A host-supplied controller belongs to the surface that drives it.
+        ownedController?.release()
         scope.cancel()
     }
 
@@ -196,18 +231,18 @@ internal class AndroidSharedMobileEpubCloudTts(
     private fun cachedVoiceId(fileName: String): String? = readerTtsCacheSpeakerId(fileName)
 
     override fun cachedChapterVoices(): List<String> {
-        val bookTitle = activeBookTitle ?: return emptyList()
-        val currentVoice = ttsState.speakerId
+        val bookTitle = bookTitle() ?: return emptyList()
+        val pinVoice = currentVoice()
         val fromCache = cacheManager().getBookCacheDir(bookTitle).listFiles().orEmpty()
             .flatMap { chapterDir: java.io.File -> chapterDir.listFiles().orEmpty().asIterable() }
             .mapNotNull { file -> cachedVoiceId(file.name) }
             .distinct()
             .sorted()
-        return (listOf(currentVoice) + fromCache).distinct()
+        return (listOfNotNull(pinVoice) + fromCache).distinct()
     }
 
     override fun cachedChapters(voiceId: String): List<ReaderTtsCacheChapter> {
-        val bookTitle = activeBookTitle ?: return emptyList()
+        val bookTitle = bookTitle() ?: return emptyList()
         return cacheManager().getChapterCaches(bookTitle, voiceId).map { chapter ->
             ReaderTtsCacheChapter(
                 bookTitle = bookTitle,
@@ -221,7 +256,7 @@ internal class AndroidSharedMobileEpubCloudTts(
     }
 
     override fun deleteCachedChapter(chapter: ReaderTtsCacheChapter) {
-        val bookTitle = activeBookTitle ?: return
+        val bookTitle = bookTitle() ?: return
         val cache = cacheManager()
         val match = cache.getChapterCaches(bookTitle, chapter.voiceId)
             .firstOrNull { it.directory.absolutePath == chapter.entryKey } ?: return
@@ -232,7 +267,7 @@ internal class AndroidSharedMobileEpubCloudTts(
     }
 
     override fun deleteCachedVoice(voiceId: String) {
-        val bookTitle = activeBookTitle ?: return
+        val bookTitle = bookTitle() ?: return
         val cache = cacheManager()
         scope.launch {
             withContext(Dispatchers.IO) {
@@ -245,11 +280,11 @@ internal class AndroidSharedMobileEpubCloudTts(
     }
 
     private fun cacheSummary(): ReaderTtsCacheSummary {
-        val bookTitle = activeBookTitle ?: return ReaderTtsCacheSummary()
-        val currentVoice = ttsState.speakerId
+        val bookTitle = bookTitle() ?: return ReaderTtsCacheSummary()
+        val pinVoice = currentVoice()
         val all = cacheManager().getChapterCaches(bookTitle)
         val forCurrentVoice = all.filter { chapter ->
-            chapter.matchingFiles.any { file -> cachedVoiceId(file.name) == currentVoice }
+            chapter.matchingFiles.any { file -> cachedVoiceId(file.name) == pinVoice }
         }
         return ReaderTtsCacheSummary(
             cachedChapterCount = all.size,

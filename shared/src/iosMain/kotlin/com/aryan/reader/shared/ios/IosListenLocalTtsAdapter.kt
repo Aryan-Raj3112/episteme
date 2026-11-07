@@ -31,9 +31,13 @@ internal class IosListenLocalTtsAdapter(
         get() = controller.state.connected
 
     /**
-     * Listen's player sheet closes as soon as playback stops, so requiring a full stop to reach
-     * the voice settings makes the voice unreachable. Pausing is enough: nothing is being
-     * spoken, so the rows, the language filter and preview are all safe to use.
+     * Locked only while speaking or loading; paused and idle stay free.
+     *
+     * Unlike the reader (whose session survives a stop), Listen's sheet
+     * closes on stop, so freezing picks for any live session would make the
+     * voice unreachable. Paused picks are safe here because resume re-runs
+     * the chunk through [startEngineAt], which re-pushes the current voice
+     * (including a system-default clear) before speaking.
      */
     override val isVoiceSelectionLocked: Boolean
         get() = controller.state.isPlaying || controller.state.isLoading

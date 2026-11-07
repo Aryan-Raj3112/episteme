@@ -73,8 +73,6 @@ import com.aryan.reader.shared.pdf.sharedPdfRasterImageMatrix
 import com.aryan.reader.shared.pdf.sharedPdfRotationDegreesFromPdfiumCode
 
 private const val IOS_PDF_ANNOTATION_FLAG_PRINT = 4
-private const val IOS_PDF_HIGHLIGHT_ALPHA = 102u
-private const val IOS_PDF_MARKUP_ALPHA = 235u
 
 /**
  * Raster overlay pixel buffers must outlive `FPDF_SaveAsCopy`. PDFium's
@@ -313,9 +311,12 @@ private fun addIosPdfInkAnnotation(
             }
             if (FPDFAnnot_AddInkStroke(annotation, nativePoints, pagePoints.size.toULong()) < 0) return@memScoped false
             // Android benchmark (pdfium_bridge.cpp ink path + DesktopPdfium): stroke width has a
-            // 0.25pt floor, the annot rect pads by 1.5x stroke, and opaque highlighters burn at
-            // alpha 102 to match the on-screen chisel rendering.
-            val strokeWidth = max(0.25f, ink.strokeWidth * pageWidth)
+            // 0.25pt floor, the annot rect pads by 1.5x stroke, and the annotation colour carries
+            // the same alpha as the on-screen highlighter so /AP renders translucent. The dict
+            // colour is the export colour with its alpha clamped so PDFium attaches the appearance
+            // /Resources Apple renderers need (see sharedPdfInkAnnotationDictColorArgb).
+            val strokeWidth = sharedPdfInkStrokeWidthPdfUnits(ink.strokeWidth, pageWidth)
+            val inkColorArgb = sharedPdfInkExportColorArgb(ink.tool, ink.colorArgb)
             val padding = strokeWidth * 1.5f
             val minX = pagePoints.minOf { it.x }
             val maxX = pagePoints.maxOf { it.x }
@@ -329,7 +330,7 @@ private fun addIosPdfInkAnnotation(
             }
             FPDFAnnot_SetRect(annotation, bounds.ptr)
             FPDFAnnot_SetBorder(annotation, 0f, 0f, strokeWidth)
-            setIosPdfAnnotationColor(annotation, iosPdfInkColorArgb(ink))
+            setIosPdfAnnotationColor(annotation, sharedPdfInkAnnotationDictColorArgb(inkColorArgb))
             FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationMetadata(annotation, ink.id, ink.contents)
             // Preview.app draws the annotation border rectangle when /AP is missing
@@ -338,7 +339,7 @@ private fun addIosPdfInkAnnotation(
             val appearance = sharedPdfInkAppearanceContent(
                 pagePoints = pagePoints,
                 strokeWidthPdfUnits = strokeWidth,
-                colorArgb = iosPdfInkColorArgb(ink),
+                colorArgb = inkColorArgb,
             )
             if (appearance.isNotEmpty()) {
                 setIosPdfAnnotationAppearance(annotation, appearance)
@@ -363,16 +364,6 @@ private fun setIosPdfAnnotationAppearance(
     }
     utf16.usePinned { pinned ->
         FPDFAnnot_SetAP(annotation, FPDF_ANNOT_APPEARANCEMODE_NORMAL, pinned.addressOf(0))
-    }
-}
-
-private fun iosPdfInkColorArgb(ink: SharedPdfInkAnnotationExport): Int {
-    val alpha = (ink.colorArgb ushr 24) and 0xFF
-    if (alpha != 255) return ink.colorArgb
-    return when (ink.tool) {
-        PdfInkTool.HIGHLIGHTER, PdfInkTool.HIGHLIGHTER_ROUND ->
-            (ink.colorArgb and 0x00FFFFFF) or (102 shl 24)
-        else -> ink.colorArgb
     }
 }
 
@@ -433,7 +424,10 @@ private fun addIosPdfHighlightAnnotation(
                 bottom = min(unionTop, unionBottom) - 1f
             }
             FPDFAnnot_SetRect(annotation, rect.ptr)
-            setIosPdfAnnotationColor(annotation, iosPdfHighlightColorArgb(highlight))
+            setIosPdfAnnotationColor(
+                annotation,
+                sharedPdfHighlightExportColorArgb(highlight.style, highlight.colorArgb),
+            )
             FPDFAnnot_SetFlags(annotation, IOS_PDF_ANNOTATION_FLAG_PRINT)
             setIosPdfAnnotationMetadata(annotation, highlight.id, highlight.contents)
             var commentsWritten = true
@@ -451,17 +445,6 @@ private fun addIosPdfHighlightAnnotation(
     } finally {
         FPDFPage_CloseAnnot(annotation)
     }
-}
-
-private fun iosPdfHighlightColorArgb(highlight: SharedPdfHighlightAnnotationExport): Int {
-    val alpha = (highlight.colorArgb ushr 24) and 0xFF
-    if (alpha != 255) return highlight.colorArgb
-    // Android benchmark (pdfium_bridge.cpp): opaque highlights burn at 102, other markup at 235.
-    val targetAlpha = when (highlight.style) {
-        com.aryan.reader.shared.HighlightStyle.BACKGROUND -> IOS_PDF_HIGHLIGHT_ALPHA
-        else -> IOS_PDF_MARKUP_ALPHA
-    }.toInt()
-    return (highlight.colorArgb and 0x00FFFFFF) or (targetAlpha shl 24)
 }
 
 private fun addIosPdfHighlightComment(

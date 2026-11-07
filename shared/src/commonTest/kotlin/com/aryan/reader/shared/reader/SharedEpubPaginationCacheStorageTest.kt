@@ -240,6 +240,24 @@ class SharedEpubPaginationCacheStorageTest {
         assertTrue(hiddenKey.cacheId != visibleKey.cacheId)
     }
 
+    @Test
+    fun `font weight and letter spacing change the cache configuration hash`() {
+        // Both now flow into measured pagination (Android benchmark parity),
+        // so cached pages must not survive a change to either.
+        val storage = InMemorySharedEpubPageCacheStorage()
+        val cache = SharedEpubPaginationCache(storage)
+        val book = cacheBook()
+        val settings = ReaderSettings()
+        val viewport = ReaderViewportSpec(widthPx = 900, heightPx = 700)
+
+        val baseKey = cache.keyFor(book, settings, viewport)
+        val weightedKey = cache.keyFor(book, settings.copy(fontWeight = 700), viewport)
+        val spacedKey = cache.keyFor(book, settings.copy(letterSpacing = 0.05f), viewport)
+
+        assertTrue(weightedKey.configHash != baseKey.configHash)
+        assertTrue(spacedKey.configHash != baseKey.configHash)
+    }
+
     private fun cacheBook(): SharedEpubBook {
         return SharedEpubBook(
             id = "book-id",

@@ -12,6 +12,7 @@ import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
 import com.aryan.reader.paginatedreader.intrinsicImageWidthPx
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.sharedNativeFontSizeSp
 import kotlin.math.roundToInt
 
 /*
@@ -144,7 +145,7 @@ internal fun sharedNativeImageRenderSizePxOrFallback(
         }
     }.coerceAtLeast(1f)
     val heightPx = with(density) {
-        (style.height.takeIfPositiveSpecified() ?: (settings.fontSize * 8f).sp.toDp()).toPx()
+        (style.height.takeIfPositiveSpecified() ?: (settings.sharedNativeFontSizeSp() * 8f).sp.toDp()).toPx()
     }.coerceAtLeast(1f)
     return widthPx to heightPx
 }

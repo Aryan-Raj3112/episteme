@@ -18,6 +18,7 @@ import com.aryan.reader.FileType
 import com.aryan.reader.R
 import com.aryan.reader.pptx.PptxDocumentWrapper
 import com.aryan.reader.shared.opds.OpdsStreamReference
+import com.aryan.reader.shared.compareNatural
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import com.aryan.reader.shared.pdf.sharedPdfEmbeddedAnnotationRichText
 import io.legere.pdfiumandroid.api.Bookmark
@@ -637,7 +638,7 @@ class ArchiveDocumentWrapper(private val file: File) : ReaderDocument {
             }
             if (imageEntries.isNotEmpty()) {
                 zipFile = zf
-                imageEntries.sort()
+                imageEntries.sortWith(::compareNatural)
             } else {
                 zf.close()
             }
@@ -685,7 +686,7 @@ class ArchiveDocumentWrapper(private val file: File) : ReaderDocument {
                     }
                 }
 
-                tempEntries.sortBy { it.first }
+                tempEntries.sortWith(Comparator { a, b -> compareNatural(a.first, b.first) })
                 tempEntries.forEach { imageEntries.add(it.second.absolutePath) }
 
             } catch (e: Exception) {

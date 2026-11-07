@@ -1,0 +1,45 @@
+[package]
+name = "office-oxide-bridge"
+version = "0.1.2"
+edition = "2021"
+publish = false
+description = "Stable C ABI over office_oxide for the Reader app (Android / iOS / desktop)."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "office_oxide_bridge"
+# cdylib  -> Android .so and desktop .so
+# staticlib -> iOS .a, linked into the static ReaderShared framework (same
+#              pattern as libmobi.a / libreaderarchive.a)
+crate-type = ["cdylib", "staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Exact pin: this is a pre-1.0 dependency with a fast release cadence, so an
+# accidental minor bump must not change the app's behaviour. Bump deliberately.
+office_oxide = "=0.1.13"
+# Already in the graph via office_oxide, so this adds no new crate — only the
+# ZipWriter code the align-anchor shim needs. Mirror office_oxide's own feature
+# selection (deflate only): the default features pull C dependencies (zstd-sys)
+# whose build scripts need an unversioned target clang the NDK does not ship,
+# and would bloat the .so for no reason — the shim stores entries uncompressed.
+zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
+# Minimal CFB read/write for the legacy-DOC image shim below (append the main
+# stream's picture bytes to the Data stream office_oxide scans). Pure Rust,
+# no build scripts — NDK-safe. Pinned exactly like everything else here.
+cfb = "=0.10.0"
+# Event XML reader for the legacy-DOC chart enrichment below (ODF chart
+# package inside the OLE object). Already in the graph via office_oxide, so
+# this adds no new native code — only the reader API this crate calls directly.
+quick-xml = "=0.42.0"
+
+[profile.release]
+# Size matters here: this lands in every ABI of every app variant. Measured
+# against the default profile this is ~2x smaller. See docs/office-oxide-probe.
+opt-level = "s"
+lto = true
+codegen-units = 1
+# unwind, NOT abort: the entry points below catch_unwind so a panic inside the
+# library becomes an error code instead of killing the app process.
+panic = "unwind"
+strip = true

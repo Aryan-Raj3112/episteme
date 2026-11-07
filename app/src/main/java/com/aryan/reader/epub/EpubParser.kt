@@ -31,6 +31,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToStream
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.w3c.dom.Element
 import org.w3c.dom.Node
 import java.io.File
@@ -702,9 +703,10 @@ class EpubParser(private val context: Context) {
             mergedSections.forEach { section ->
                 val entry = section.entry
                 val rangeEntries = listOf(entry) + section.absorbedEntries
-                val sectionDocument = sourceDocument.clone()
+                // Only the shell (doctype, <html> attributes, <head>) is kept from the clone;
+                // the body is rebuilt from the section's children below.
+                val sectionDocument = cloneDocumentShell(sourceDocument)
                 val sectionBody = sectionDocument.body()
-                sectionBody.empty()
                 bodyChildren.subList(section.startChildIndex, section.endChildIndexExclusive)
                     .forEach { sectionBody.appendChild(it.clone()) }
 
@@ -1008,4 +1010,23 @@ class EpubParser(private val context: Context) {
         return BitmapFactory.decodeFile(file.absolutePath, options)
     }
 
+}
+
+/**
+ * Deep-clones [source] but skips its body content. Section materialization replaces the body
+ * right after cloning, so copying it would only add a second full copy of the parsed chapter
+ * on the heap (see the `EpubParser.materializeTocSections` OOM reports). The result is
+ * otherwise identical to [Document.clone]: doctype, `<html>` attributes, `<head>` and output
+ * settings. The source body is detached only while the clone runs and restored before
+ * returning, preserving child order and node identity.
+ */
+internal fun cloneDocumentShell(source: Document): Document {
+    val body = source.body()
+    val bodyContents = body.childNodes().toList()
+    body.empty()
+    return try {
+        source.clone()
+    } finally {
+        body.appendChildren(bodyContents)
+    }
 }

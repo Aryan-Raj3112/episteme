@@ -737,6 +737,18 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         restartCurrentUtterance()
     }
 
+    /**
+     * Listen's session voice, applied without touching the reader's stored
+     * picks (see the interface). No restart: the caller speaks immediately
+     * after, and a restart with no active utterance is a no-op anyway.
+     */
+    override fun applySessionVoice(identifier: String?, rate: Float, pitch: Float) {
+        speechRate = rate.coerceIn(0.5f, 3f)
+        speechPitch = pitch.coerceIn(0.5f, 2f)
+        selectedVoiceIdentifier = identifier
+            ?.takeIf { candidate -> availableVoices.any { it.identifier == candidate } }
+    }
+
     override fun stopVoicePreview() {
         previewSynthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
     }

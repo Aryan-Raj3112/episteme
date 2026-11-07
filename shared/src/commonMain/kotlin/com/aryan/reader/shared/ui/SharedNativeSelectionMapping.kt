@@ -44,6 +44,7 @@ import com.aryan.reader.shared.epubHighlightColorTag
 import com.aryan.reader.shared.legacyEpubHighlightColorForArgb
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.sharedNativeFontSizeSp
 import com.aryan.reader.shared.reader.SharedEpubCutoffDiagnosticsTag
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import com.aryan.reader.shared.reader.logSharedReaderDiagnostic
@@ -95,14 +96,13 @@ private fun ReaderPage.ownsResolvedHighlight(
     val blocks = semanticBlocks.flattenNativeSemanticBlocks().filterIsInstance<SemanticTextBlock>()
     if (blocks.isEmpty()) return containsNativeHighlightLocator(locator, fallbackCfi)
     return blocks.any { block ->
-        val segment = chapterTextIndex.rangeInBlock(
+        chapterTextIndex.rangeInBlockFragment(
             highlight = highlight,
             blockIndex = block.blockIndex,
-            blockCfi = block.cfi
-        ) ?: return@any false
-        val from = segment.localStart.coerceIn(0, block.text.length)
-        val to = segment.localEnd.coerceIn(from, block.text.length)
-        to > from
+            blockCfi = block.cfi,
+            fragmentSourceStart = block.startCharOffsetInSource,
+            fragmentTextLength = block.text.length
+        ) != null
     }
 }
 
@@ -698,14 +698,16 @@ internal fun sharedNativeHighlightRangeForBlock(
     // matches text per block, which paints a repeated sentence on every block holding a copy. Both
     // are kept only as a fallback for surfaces with no index, such as desktop.
     if (chapterTextIndex != null) {
-        val segment = chapterTextIndex.rangeInBlock(
+        val range = chapterTextIndex.rangeInBlockFragment(
             highlight = highlight,
             blockIndex = blockIndex,
-            blockCfi = blockCfi
+            blockCfi = blockCfi,
+            // On the indexed path textStartOffset is the fragment's startCharOffsetInSource, the
+            // coordinate the resolver's segments are mapped into.
+            fragmentSourceStart = textStartOffset,
+            fragmentTextLength = textLength
         ) ?: return null
-        val from = segment.localStart.coerceIn(0, textLength)
-        val to = segment.localEnd.coerceIn(from, textLength)
-        return if (to > from) SharedNativeReaderTextRange(from, to) else null
+        return SharedNativeReaderTextRange(range.first, range.last + 1)
     }
     sharedNativeBlockLocatorHighlightRangeInBlock(
         highlight = highlight,
@@ -1358,7 +1360,7 @@ internal fun SemanticBlock.renderedDefaultBottomSpacingDp(settings: ReaderSettin
 @Composable
 internal fun ReaderSettings.renderedDefaultBlockSpacingDp(): Dp {
     val density = LocalDensity.current
-    return with(density) { (fontSize * paragraphSpacing).sp.toDp() }
+    return with(density) { (sharedNativeFontSizeSp() * paragraphSpacing).sp.toDp() }
 }
 
 internal fun SharedReaderTextAlign.toComposeTextAlign(): TextAlign {
@@ -1377,6 +1379,4 @@ internal const val DesktopHighlightMapLogTag = "EpistemeDesktopHighlightMap"
 internal const val EpubPageFitLogTag = "EpistemeEpubPageFit"
 internal const val EpubCutoffLogTag = SharedEpubCutoffDiagnosticsTag
 internal const val EpubPageFitTailBlockCount = 4
-internal const val SharedNativeListItemMarkerAreaWidthDp = 32
-internal const val SharedNativeListItemMarkerEndPaddingDp = 8
 internal val SharedNativeCssUrlRegex = Regex("""url\(\s*(['"]?)(.*?)\1\s*\)""", RegexOption.IGNORE_CASE)

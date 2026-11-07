@@ -3,6 +3,7 @@ package com.aryan.reader.tts
 import android.content.Context
 import android.media.AudioAttributes
 import android.os.Bundle
+import com.aryan.reader.shared.tts.createTextToSpeechOrNull
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import com.aryan.reader.BuildConfig
@@ -109,7 +110,7 @@ internal class DirectLocalTtsPlayer(
     private fun initialize() {
         if (tts != null) return
         Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i("engine-init-start")
-        tts = TextToSpeech(appContext) { status ->
+        tts = createTextToSpeechOrNull(appContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 initialized = true
                 tts?.setOnUtteranceProgressListener(progressListener)

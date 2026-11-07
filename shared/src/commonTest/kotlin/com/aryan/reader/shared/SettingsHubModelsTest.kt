@@ -89,6 +89,19 @@ class SettingsHubModelsTest {
     }
 
     @Test
+    fun `book cache maintenance exposes clear action when available`() {
+        val model = sharedSettingsHubModel(
+            SharedSettingsHubInput(
+                platform = SharedSettingsPlatform.IOS,
+                bookCacheMaintenanceAvailable = true,
+            )
+        )
+        val actions = model.visibleNestedActions()
+
+        assertTrue(SharedSettingsAction.CLEAR_BOOK_CACHE in actions)
+    }
+
+    @Test
     fun `ios standard settings omit auth and cloud while retaining local folders`() {
         val model = sharedSettingsHubModel(
             SharedSettingsHubInput(

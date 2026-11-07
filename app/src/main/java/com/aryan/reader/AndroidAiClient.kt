@@ -171,6 +171,18 @@ suspend fun fetchAiDefinition(
     }
 }
 
+/**
+ * Whether a selection's dictionary action should advertise Smart Dictionary instead of looking the
+ * selection up.
+ *
+ * Only the paid build has the feature to sell, and only for a multi-word selection: a single word is
+ * an ordinary dictionary lookup in both builds. In an OSS build there is nothing behind the upsell —
+ * Pro cannot be bought there — so showing it only stands between the reader and the lookup, and the
+ * whole selection has to reach the dictionary exactly as a single word does.
+ */
+fun shouldOfferSmartDictionaryUpsell(isProUser: Boolean, isOss: Boolean, wordCount: Int): Boolean =
+    !isOss && !isProUser && wordCount > 1
+
 fun countWords(text: String): Int {
     var count = 0
     var inWord = false

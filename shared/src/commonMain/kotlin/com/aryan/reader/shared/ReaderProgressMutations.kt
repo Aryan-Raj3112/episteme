@@ -35,6 +35,10 @@ fun BookItem.withReaderSessionState(
             readerSettings == session.readerSettings &&
             readerFormatIsLocal == session.readerFormatIsLocal &&
             readerLocalFormatSettings == session.readerLocalFormatSettings &&
+            readerThemeIsLocal == session.readerThemeIsLocal &&
+            readerLocalThemeSettings == session.readerLocalThemeSettings &&
+            pdfThemeIsLocal == session.pdfThemeIsLocal &&
+            pdfLocalThemeSettings == session.pdfLocalThemeSettings &&
             readerAutoScrollIsLocal == session.readerAutoScrollIsLocal &&
             readerAutoScrollLocalSpeed == session.readerAutoScrollLocalSpeed &&
             readerAutoScrollLocalMinSpeed == session.readerAutoScrollLocalMinSpeed &&
@@ -53,6 +57,10 @@ fun BookItem.withReaderSessionState(
         readerSettings = session.readerSettings,
         readerFormatIsLocal = session.readerFormatIsLocal,
         readerLocalFormatSettings = session.readerLocalFormatSettings,
+        readerThemeIsLocal = session.readerThemeIsLocal,
+        readerLocalThemeSettings = session.readerLocalThemeSettings,
+        pdfThemeIsLocal = session.pdfThemeIsLocal,
+        pdfLocalThemeSettings = session.pdfLocalThemeSettings,
         readerAutoScrollIsLocal = session.readerAutoScrollIsLocal,
         readerAutoScrollLocalSpeed = session.readerAutoScrollLocalSpeed,
         readerAutoScrollLocalMinSpeed = session.readerAutoScrollLocalMinSpeed,

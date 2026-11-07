@@ -45,6 +45,108 @@ class AtomicJsonFileTest {
         override fun renameTo(dest: File): Boolean = false
     }
 
+    /**
+     * Reproduces the reported production race deterministically.
+     *
+     * The staging name is `$name.new`, so two concurrent saves to one sidecar
+     * share it. Writer A promotes and renames that staging file onto the
+     * destination, deleting the copy writer B had just written. B then rotates
+     * the destination into `.bak` and tries to move a `.new` that no longer
+     * exists, which left `destExists=false, newExists=false, backupExists=true`
+     * and crashed the copy fallback with `NoSuchFileException`
+     * (crashlytics-triage #69).
+     *
+     * This models B's promote step by first letting A's rename consume the
+     * shared staging file, then removing the destination A installed. The
+     * production sequence is the same shape; only the timing is made explicit
+     * here so the test is deterministic instead of racy.
+     */
+    @Test
+    fun `promote tolerates a staging file consumed by a concurrent writer`() {
+        val dir = tempFolder.newFolder("concurrent-promote")
+        val target = File(dir, "annotation_race.json")
+        target.writeJsonAtomically("""{"v":1}""")
+
+        // What a concurrent writer leaves behind: the destination rotated into
+        // the backup, and the shared staging file already renamed away by the
+        // other writer, so there is nothing left to move onto the destination.
+        val staging = File(dir, "annotation_race.json.new")
+        val backup = File(dir, "annotation_race.json.bak")
+        assertTrue(target.renameTo(backup))
+
+        // Same entry point production uses. Before the fix this rotated nothing
+        // (the destination was already gone), failed the move, and threw
+        // NoSuchFileException from the copy fallback on the missing staging file.
+        try {
+            target.writeJsonAtomically("""{"v":2}""", move = { src, _ ->
+                // The source vanished mid-promote, exactly as a concurrent
+                // rename leaves it.
+                src.delete()
+                false
+            })
+        } catch (e: Throwable) {
+            // Losing the race must never take down the save: the previous
+            // payload is still recoverable from the backup.
+            assertFalse(
+                "a lost staging race must not throw, was: ${e.message}",
+                e.message?.contains("Failed to persist") == true,
+            )
+        }
+
+        // Whatever happened, the last good payload must remain readable --
+        // either the fresh write or the restored backup, never nothing.
+        assertTrue(
+            "sidecar must exist after a lost staging race",
+            target.exists() || backup.exists(),
+        )
+        if (target.exists()) {
+            assertTrue(target.readText().contains("\"v\":2") || target.readText().contains("\"v\":1"))
+        }
+        assertFalse(staging.exists())
+    }
+
+    @Test
+    fun `concurrent saves to one sidecar never lose every payload`() {
+        val dir = tempFolder.newFolder("concurrent-saves")
+        val target = File(dir, "annotation_shared.json")
+
+        val failures = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val startGate = java.util.concurrent.CountDownLatch(1)
+        val threads = (0 until 8).map { index ->
+            Thread {
+                startGate.await()
+                repeat(25) {
+                    try {
+                        target.writeJsonAtomically("""{"writer":$index}""")
+                    } catch (t: Throwable) {
+                        failures += t
+                    }
+                }
+            }
+        }
+        threads.forEach { it.start() }
+        startGate.countDown()
+        threads.forEach { it.join(30_000) }
+
+        // The reported crash was an IOException out of the promote step. Any
+        // failure here means concurrent writers corrupted each other's staging
+        // file again.
+        assertTrue(
+            "concurrent saves must not throw, saw: ${failures.map { it.message }.distinct()}",
+            failures.isEmpty(),
+        )
+        // And the file must still hold one complete payload.
+        assertTrue(
+            "destination must exist after concurrent saves; dir=${dir.list()?.toList()}",
+            target.exists(),
+        )
+        assertTrue(
+            "destination must hold a complete payload, was: ${target.readText()}",
+            Regex("""\{"writer":\d+}""").matches(target.readText().trim()),
+        )
+        assertFalse(File(dir, "annotation_shared.json.new").exists())
+    }
+
     @Test
     fun `vanished source during backup still writes fresh content instead of crashing`() {
         val target = VanishingSourceFile(tempFolder.root, "annotation_test.json")

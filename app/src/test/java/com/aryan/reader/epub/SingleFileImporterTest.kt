@@ -5,9 +5,12 @@ import com.aryan.reader.FileType
 import io.mockk.every
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -268,7 +271,8 @@ class SingleFileImporterTest {
     @Test
     fun `html import chunks very long lines into bounded chapters`() = runTest {
         val importer = SingleFileImporter(contextWithCache(temp.newFolder("html-long-line-cache")))
-        val longParagraph = "word ".repeat(260_000)
+        // Past the 8 MB chapter budget: must still chunk into bounded pieces.
+        val longParagraph = "word ".repeat(2_100_000)
         val html = "<html><body><p>$longParagraph</p></body></html>"
 
         val book = importer.importSingleFile(
@@ -282,7 +286,7 @@ class SingleFileImporterTest {
         book.chapters.forEach { chapter ->
             val chapterFile = File(book.extractionBasePath, chapter.htmlFilePath)
             assertTrue(chapterFile.isFile)
-            assertTrue(chapterFile.length() < 1_200_000L)
+            assertTrue(chapterFile.length() < 9_000_000L)
             assertTrue(chapter.plainTextContent.length <= 256_000)
             assertTrue(chapter.plainTextLength >= chapter.plainTextContent.length)
         }
@@ -384,6 +388,112 @@ class SingleFileImporterTest {
         val html = File(book.extractionBasePath, book.chapters.single().htmlFilePath).readText()
         assertTrue(html.contains("(Empty File)"))
     }
+
+    @Test
+    fun `text-align survives sanitization as align attribute`() {
+        val body = Jsoup.parseBodyFragment(
+            "<p style=\"text-align:center\">Centered</p>" +
+                "<h1 style=\"color:red; TEXT-ALIGN: right\">Right</h1>" +
+                "<p style=\"color:red\">Plain</p>" +
+                "<p style=\"text-align:middle\">Bogus</p>" +
+                "<p>No style</p>"
+        ).body()
+        retainTextAlignAttributes(body)
+        val cleaned = Jsoup.clean(
+            body.html(),
+            "",
+            buildHtmlImportSafelist(),
+            Document.OutputSettings().prettyPrint(false)
+        )
+
+        assertTrue(cleaned.contains("<p align=\"center\">Centered</p>"))
+        assertTrue(cleaned.contains("<h1 align=\"right\">Right</h1>"))
+        assertTrue(cleaned.contains("<p>Plain</p>"))
+        assertTrue(cleaned.contains("<p>Bogus</p>"))
+        assertTrue(cleaned.contains("<p>No style</p>"))
+        assertFalse("no inline CSS may survive: $cleaned", cleaned.contains("style="))
+    }
+
+    @Test
+    fun `doc import fails cleanly without a native bridge`() = runTest {
+        // The JVM has no native bridge, and DOC has no legacy fallback — the
+        // import must surface the converter's clean error, not a raw exception.
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("doc-no-bridge-cache")))
+
+        try {
+            importer.importSingleFile(
+                inputStream = ByteArrayInputStream("not a word document".toByteArray()),
+                type = FileType.DOC,
+                originalBookNameHint = "Legacy.doc",
+                bookId = "doc-no-bridge-book",
+            )
+            fail("expected IllegalStateException")
+        } catch (error: IllegalStateException) {
+            assertTrue(error.message!!.contains("DOC"))
+        }
+    }
+
+    @Test
+    fun `giant data-uri image is never split into text chapters`() = runTest {
+        // A 1 MB photo is ~1.4 MB of base64: past the old 1 MB budget but
+        // inside the 8 MB one, so the whole document stays one chapter. The
+        // splitter must still keep the tag whole instead of leaking base64 as
+        // text (the file-sample_1MB.docx bug).
+        val payload = "A".repeat(3_000_000)
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("giant-img-cache")))
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(giantImageHtml(payload).toByteArray()),
+            type = FileType.HTML,
+            originalBookNameHint = "Giant.html",
+            bookId = "giant-img-book",
+        )
+
+        assertEquals(1, book.chapters.size)
+        val chapter = book.chapters.single()
+        assertTrue(chapter.plainTextContent.contains("Before"))
+        assertTrue(chapter.plainTextContent.contains("After"))
+        val joined = File(book.extractionBasePath, chapter.htmlFilePath).readText()
+        // The pipeline inserts newlines inside long tags; strip them before comparing.
+        assertTrue(joined.filterNot { it == '\n' || it == '\r' }.contains("data:image/png;base64,$payload"))
+        for (chapter in book.chapters) {
+            assertFalse(
+                "chapter ${chapter.htmlFilePath} leaks base64 as text",
+                chapter.plainTextContent.contains("A".repeat(1000))
+            )
+        }
+    }
+
+    @Test
+    fun `mid-size data-uri image survives line chunking`() = runTest {
+        // Past the 128 KB line chunking but inside one chapter: exercises tag
+        // continuation across lines without chapter overflow.
+        val payload = "B".repeat(200_000)
+        val importer = SingleFileImporter(contextWithCache(temp.newFolder("mid-img-cache")))
+
+        val book = importer.importSingleFile(
+            inputStream = ByteArrayInputStream(giantImageHtml(payload).toByteArray()),
+            type = FileType.HTML,
+            originalBookNameHint = "Mid.html",
+            bookId = "mid-img-book",
+        )
+
+        assertEquals(1, book.chapters.size)
+        val joined = book.chapters.joinToString("") { chapter ->
+            File(book.extractionBasePath, chapter.htmlFilePath).readText()
+        }
+        assertTrue(joined.filterNot { it == '\n' || it == '\r' }.contains("data:image/png;base64,$payload"))
+        for (chapter in book.chapters) {
+            assertFalse(
+                "chapter ${chapter.htmlFilePath} leaks base64 as text",
+                chapter.plainTextContent.contains("B".repeat(1000))
+            )
+        }
+    }
+
+    private fun giantImageHtml(payload: String): String =
+        "<html><head><title>Giant</title></head><body><p>Before</p>" +
+            "<img src=\"data:image/png;base64,$payload\" alt=\"x\" /><p>After</p></body></html>"
 
     private fun contextWithCache(cacheDir: File): Context {
         val context = mockk<Context>()

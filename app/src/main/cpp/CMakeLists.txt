@@ -115,6 +115,57 @@ add_library(md4c STATIC
 target_include_directories(md4c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/md4c)
 
 # ===================================================================
+# OFFICE_OXIDE_BRIDGE (Rust cdylib, see rust/office-oxide-bridge)
+# ===================================================================
+# Path to the Rust crate. Overridable with -DOFFICE_OXIDE_BRIDGE_ROOT=...;
+# defaults to this repo's rust/office-oxide-bridge next to the app module.
+if(NOT DEFINED OFFICE_OXIDE_BRIDGE_ROOT)
+    get_filename_component(
+            OFFICE_OXIDE_BRIDGE_ROOT
+            "${CMAKE_CURRENT_SOURCE_DIR}/../../../../rust/office-oxide-bridge"
+            ABSOLUTE)
+endif()
+
+# Cargo target triple per Android ABI.
+set(OFFICE_OXIDE_ABI_TRIPLES
+        "arm64-v8a=aarch64-linux-android"
+        "armeabi-v7a=armv7-linux-androideabi"
+        "x86=i686-linux-android"
+        "x86_64=x86_64-linux-android")
+set(OFFICE_OXIDE_TRIPLE "")
+foreach(ENTRY ${OFFICE_OXIDE_ABI_TRIPLES})
+    string(REPLACE "=" ";" PARTS ${ENTRY})
+    list(GET PARTS 0 ABI)
+    list(GET PARTS 1 TRIPLE)
+    if(ABI STREQUAL "${ANDROID_ABI}")
+        set(OFFICE_OXIDE_TRIPLE "${TRIPLE}")
+    endif()
+endforeach()
+
+if(NOT OFFICE_OXIDE_TRIPLE)
+    message(FATAL_ERROR "No cargo target triple configured for ANDROID_ABI=${ANDROID_ABI}")
+endif()
+
+set(OFFICE_OXIDE_LIB "${OFFICE_OXIDE_BRIDGE_ROOT}/target/${OFFICE_OXIDE_TRIPLE}/release/liboffice_oxide_bridge.so")
+if(NOT EXISTS "${OFFICE_OXIDE_LIB}")
+    message(FATAL_ERROR
+            "Missing liboffice_oxide_bridge.so for ${ANDROID_ABI}.\n"
+            "Expected at: ${OFFICE_OXIDE_LIB}\n"
+            "Build it first:  ./gradlew :app:buildOfficeOxideLibraries\n"
+            "Requires a Rust toolchain (https://rustup.rs) with the "
+            "'${OFFICE_OXIDE_TRIPLE}' target installed.")
+endif()
+
+add_library(office_oxide_bridge SHARED IMPORTED)
+set_target_properties(office_oxide_bridge PROPERTIES IMPORTED_LOCATION "${OFFICE_OXIDE_LIB}")
+# The cargo-built .so carries no SONAME, so without this the linker records the
+# absolute host path as DT_NEEDED and dlopen fails on device with ".../target/
+# .../liboffice_oxide_bridge.so not found". With it, only the basename is
+# recorded and the loader resolves it from the app's own lib/<abi> directory,
+# where the .so is packaged next to native-lib.
+set_target_properties(office_oxide_bridge PROPERTIES IMPORTED_NO_SONAME TRUE)
+
+# ===================================================================
 # FINAL NATIVE LIBRARY FOR THE APP
 # ===================================================================
 # 6. Define our final JNI wrapper library.
@@ -125,6 +176,7 @@ add_library(
         mobi_jni_bridge.c
         pdfium_bridge.cpp  # Add this new file
         md4c_jni.c
+        office_oxide_bridge_jni.cpp
 )
 
 # 7. Tell our library where to find all necessary header files.
@@ -132,6 +184,7 @@ target_include_directories(native-lib
         PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/woff2/include
         ${CMAKE_CURRENT_SOURCE_DIR}/libmobi/src
+        ${OFFICE_OXIDE_BRIDGE_ROOT}/include
 )
 
 # 8. Find the Android logging and zlib libraries.
@@ -145,6 +198,7 @@ target_link_libraries(
         woff2dec
         mobi
         md4c
+        office_oxide_bridge
         ${log-lib}
         ${z-lib}
         dl

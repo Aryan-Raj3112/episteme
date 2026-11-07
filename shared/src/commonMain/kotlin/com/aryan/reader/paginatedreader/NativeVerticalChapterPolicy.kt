@@ -87,21 +87,21 @@ fun nativeVerticalFlowItemWeight(block: ContentBlock?): Int {
 fun buildNativeVerticalFlowItems(
     chapters: List<NativeVerticalFlowChapter>,
 ): List<NativeVerticalFlowItem> = chapters.flatMapIndexed { chapterOrdinal, chapter ->
-    val boundary = if (chapterOrdinal > 0) {
-        listOf(NativeVerticalFlowItem("chapter-${chapter.chapterIndex}-gap", chapter.chapterIndex, -2, null, NativeVerticalFlowItemKind.CHAPTER_GAP, 0))
+    val boundary = if (shouldInsertNativeVerticalGap(chapterOrdinal)) {
+        listOf(NativeVerticalFlowItem(nativeVerticalGapKey(chapter.chapterIndex), chapter.chapterIndex, -2, null, NativeVerticalFlowItemKind.CHAPTER_GAP, 0))
     } else emptyList()
     when {
         !chapter.isLoaded -> boundary + NativeVerticalFlowItem(
-            "chapter-${chapter.chapterIndex}-unloaded", chapter.chapterIndex, -1, null,
+            nativeVerticalUnloadedKey(chapter.chapterIndex), chapter.chapterIndex, -1, null,
             NativeVerticalFlowItemKind.UNLOADED_CHAPTER, chapter.estimatedLocationWeight.coerceAtLeast(24),
         )
         chapter.blocks.isEmpty() -> boundary + NativeVerticalFlowItem(
-            "chapter-${chapter.chapterIndex}-empty", chapter.chapterIndex, -1, null,
+            nativeVerticalEmptyKey(chapter.chapterIndex), chapter.chapterIndex, -1, null,
             NativeVerticalFlowItemKind.EMPTY_CHAPTER, 0,
         )
         else -> boundary + chapter.blocks.mapIndexed { ordinal, block ->
             NativeVerticalFlowItem(
-                "chapter-${chapter.chapterIndex}-block-$ordinal-${block.blockIndex}",
+                nativeVerticalBlockKey(chapter.chapterIndex, ordinal, block.blockIndex),
                 chapter.chapterIndex, ordinal, block, NativeVerticalFlowItemKind.BLOCK,
                 nativeVerticalFlowItemWeight(block),
             )
@@ -114,7 +114,7 @@ fun nativeVerticalNavigationTargetForBlock(
     block: ContentBlock,
 ): ReaderNavigationTarget {
     val textBlocks = listOf(block).nativeVerticalTextBlocks()
-    val firstTextBlock = textBlocks.firstOrNull { it.content.text.isNotBlank() } ?: textBlocks.firstOrNull()
+    val firstTextBlock = pickNativeVerticalFirstTextUnit(textBlocks) { it.content.text }
     return if (firstTextBlock != null) {
         ReaderNavigationTarget(chapterIndex, firstTextBlock.blockIndex, nativeVerticalTextBlockCharOffset(firstTextBlock))
     } else ReaderNavigationTarget(chapterIndex, block.blockIndex, 0)
@@ -149,8 +149,8 @@ fun findNativeVerticalFlowItemIndexForTarget(
     target: ReaderNavigationTarget,
 ): Int? {
     val targetTextBlock = findNativeVerticalFlowTextBlockForTarget(chapters, target)
-    if (targetTextBlock != null && targetTextBlock.blockIndex == target.blockIndex) {
-        val exactIndex = items.indexOfFirst { item ->
+    val exactIndex = if (targetTextBlock != null && targetTextBlock.blockIndex == target.blockIndex) {
+        items.indexOfFirst { item ->
             item.chapterIndex == target.chapterIndex && item.block?.let { block ->
                 listOf(block).nativeVerticalTextBlocks().any { textBlock ->
                     textBlock.cfi == targetTextBlock.cfi ||
@@ -158,14 +158,15 @@ fun findNativeVerticalFlowItemIndexForTarget(
                             nativeVerticalTextBlockCharOffset(textBlock) == nativeVerticalTextBlockCharOffset(targetTextBlock))
                 }
             } == true
-        }
-        if (exactIndex >= 0) return exactIndex
-    }
+        }.takeIf { it >= 0 }
+    } else null
     val containerIndex = items.indexOfFirst { it.chapterIndex == target.chapterIndex && it.block?.let { block -> nativeVerticalFlowBlockMatchesTarget(block, target) } == true }
-    if (containerIndex >= 0) return containerIndex
+        .takeIf { it >= 0 }
     val blockIndex = items.indexOfFirst { it.chapterIndex == target.chapterIndex && (it.block?.blockIndex ?: Int.MAX_VALUE) >= target.blockIndex }
-    if (blockIndex >= 0) return blockIndex
-    return items.indexOfFirst { it.chapterIndex == target.chapterIndex }.takeIf { it >= 0 }
+        .takeIf { it >= 0 }
+    val chapterIndex = items.indexOfFirst { it.chapterIndex == target.chapterIndex }.takeIf { it >= 0 }
+    // Four-level cascade lives in the shared core so both stacks resolve in the same order.
+    return resolveNativeVerticalFlowIndexInOrder(exactIndex, containerIndex, blockIndex, chapterIndex)
 }
 
 fun nativeVerticalNavigationTargetForItem(item: NativeVerticalFlowItem): ReaderNavigationTarget =

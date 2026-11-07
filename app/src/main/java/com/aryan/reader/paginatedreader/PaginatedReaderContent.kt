@@ -62,10 +62,8 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.geometry.toRect
@@ -77,13 +75,11 @@ import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.graphics.drawscope.Fill
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -129,6 +125,7 @@ import coil.imageLoader
 import coil.request.ImageRequest.Builder
 import com.aryan.reader.R
 import com.aryan.reader.countWords
+import com.aryan.reader.shouldOfferSmartDictionaryUpsell
 import com.aryan.reader.epubreader.HighlightColor
 import com.aryan.reader.epubreader.PaginatedTextSelectionMenu
 import com.aryan.reader.epubreader.PaletteManagerDialog
@@ -136,6 +133,7 @@ import com.aryan.reader.epubreader.UserHighlight
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.ui.drawSharedSpreadSpineCrease
+import com.aryan.reader.shared.ui.sharedNativeCssBox
 import com.aryan.reader.shared.ui.sharedPaginatedCurlTranslationX
 import com.aryan.reader.shared.ui.sharedPaginatedPagerRightToLeft
 import com.aryan.reader.shared.ui.spreadPageCurlFold
@@ -1023,32 +1021,6 @@ internal fun PaginatedReaderContent(
                                                 color = ttsHighlightColor
                                             )
 
-                                            @Suppress(
-                                                "UnusedVariable",
-                                                "Unused"
-                                            ) val diagnosticModifier =
-                                                if (block.textAlign == TextAlign.Justify) {
-                                                    Modifier.onGloballyPositioned { coordinates ->
-                                                        val width =
-                                                            coordinates.size.width
-                                                        Timber.d(
-                                                            """
-                                                [UI Render]
-                                                Block Index: ${block.blockIndex}
-                                                Text Start: ${
-                                                                block.content.text.take(
-                                                                    20
-                                                                )
-                                                            }...
-                                                Actual Render Width Px: $width
-                                                ------------------------------------------------
-                                            """.trimIndent()
-                                                        )
-                                                    }
-                                                } else {
-                                                    Modifier
-                                                }
-
                                             TextWithEmphasis(
                                                 text = finalContent,
                                                 style = paragraphStyle,
@@ -1201,8 +1173,8 @@ internal fun PaginatedReaderContent(
                                                 verticalAlignment = Alignment.Top
                                             ) {
                                                 val markerAreaModifier =
-                                                    Modifier.width(32.dp)
-                                                        .padding(end = 8.dp)
+                                                    Modifier.width(NATIVE_LIST_MARKER_AREA_WIDTH_DP.dp)
+                                                        .padding(end = NATIVE_LIST_MARKER_END_PADDING_DP.dp)
                                                 val itemMarkerImage = block.itemMarkerImage
                                                 val itemMarker = block.itemMarker
 
@@ -1214,7 +1186,7 @@ internal fun PaginatedReaderContent(
                                                             )
                                                         ).crossfade(true).build()
                                                     val imageSize = with(density) {
-                                                        (textStyle.fontSize.value * 0.8f).sp.toDp()
+                                                        nativeListMarkerImageSizeSp(textStyle.fontSize.value).sp.toDp()
                                                     }
 
                                                     AsyncImage(
@@ -1307,19 +1279,9 @@ internal fun PaginatedReaderContent(
 
                                             if (block.style.flexDirection == "row") {
                                                 val horizontalArrangement =
-                                                    when (block.style.justifyContent) {
-                                                        "center" -> Arrangement.Center
-                                                        "flex-end" -> Arrangement.End
-                                                        "space-between" -> Arrangement.SpaceBetween
-                                                        "space-around" -> Arrangement.SpaceAround
-                                                        else -> Arrangement.Start
-                                                    }
+                                                    nativeFlexRowHorizontalArrangement(block.style.justifyContent)
                                                 val verticalAlignment =
-                                                    when (block.style.alignItems) {
-                                                        "center" -> Alignment.CenterVertically
-                                                        "flex-end" -> Alignment.Bottom
-                                                        else -> Alignment.Top
-                                                    }
+                                                    nativeFlexRowVerticalAlignment(block.style.alignItems)
                                                 val chantChildren: @Composable () -> Unit = {
                                                     block.children.forEach { childBlock ->
                                                         RenderFlexChildBlock(
@@ -1375,19 +1337,9 @@ internal fun PaginatedReaderContent(
                                                 }
                                             } else {
                                                 val verticalArrangement =
-                                                    when (block.style.justifyContent) {
-                                                        "center" -> Arrangement.Center
-                                                        "flex-end" -> Arrangement.Bottom
-                                                        "space-between" -> Arrangement.SpaceBetween
-                                                        "space-around" -> Arrangement.SpaceAround
-                                                        else -> Arrangement.Top
-                                                    }
+                                                    nativeFlexColumnVerticalArrangement(block.style.justifyContent)
                                                 val horizontalAlignment =
-                                                    when (block.style.alignItems) {
-                                                        "center" -> Alignment.CenterHorizontally
-                                                        "flex-end" -> Alignment.End
-                                                        else -> Alignment.Start
-                                                    }
+                                                    nativeFlexColumnHorizontalAlignment(block.style.alignItems)
                                                 Column(
                                                     modifier = paddingModifier.fillMaxWidth(),
                                                     verticalArrangement = verticalArrangement,
@@ -1566,30 +1518,8 @@ internal fun PaginatedReaderContent(
                                             val style = block.style
                                             val colorFilter =
                                                 if (block.style.filter == "invert(100%)") {
-                                                    val matrix = floatArrayOf(
-                                                        -1f,
-                                                        0f,
-                                                        0f,
-                                                        0f,
-                                                        255f,
-                                                        0f,
-                                                        -1f,
-                                                        0f,
-                                                        0f,
-                                                        255f,
-                                                        0f,
-                                                        0f,
-                                                        -1f,
-                                                        0f,
-                                                        255f,
-                                                        0f,
-                                                        0f,
-                                                        0f,
-                                                        1f,
-                                                        0f
-                                                    )
                                                     ColorFilter.colorMatrix(
-                                                        ColorMatrix(matrix)
+                                                        ColorMatrix(nativeInvertColorMatrix())
                                                     )
                                                 } else {
                                                     null
@@ -1744,12 +1674,12 @@ internal fun PaginatedReaderContent(
                                                                         cellStyle.width
                                                                     )
                                                                     else Modifier.weight(
-                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
+                                                                        nativeTableCellWeight(cell.colspan),
                                                                         fill = true
                                                                     )
                                                                 } else {
                                                                     Modifier.weight(
-                                                                        cell.colspan.coerceAtLeast(1).toFloat(),
+                                                                        nativeTableCellWeight(cell.colspan),
                                                                         fill = true
                                                                     )
                                                                 }
@@ -2238,7 +2168,7 @@ internal fun PaginatedReaderContent(
                                 },
                                 onSelectAll = null,
                                 onDictionary = {
-                                    if (isProUser || countWords(sel.text) <= 1) {
+                                    if (!shouldOfferSmartDictionaryUpsell(isProUser, isOss, countWords(sel.text))) {
                                         onWordSelectedForAiDefinition(sel.text)
                                     } else {
                                         onShowDictionaryUpsellDialog()
@@ -2792,8 +2722,8 @@ internal fun RenderFlexChildBlock(
         is ListItemBlock -> {
             Row(modifier = Modifier, verticalAlignment = Alignment.Top) {
                 val markerAreaModifier = Modifier
-                    .width(32.dp)
-                    .padding(end = 8.dp)
+                    .width(NATIVE_LIST_MARKER_AREA_WIDTH_DP.dp)
+                    .padding(end = NATIVE_LIST_MARKER_END_PADDING_DP.dp)
                 val itemMarkerImage = childBlock.itemMarkerImage
                 val itemMarker = childBlock.itemMarker
 
@@ -2801,7 +2731,7 @@ internal fun RenderFlexChildBlock(
                     val imageRequest =
                         Builder(LocalContext.current).data(nativeVerticalImageModelData(itemMarkerImage))
                             .crossfade(true).build()
-                    val imageSize = with(density) { (textStyle.fontSize.value * 0.8f).sp.toDp() }
+                    val imageSize = with(density) { nativeListMarkerImageSizeSp(textStyle.fontSize.value).sp.toDp() }
 
                     AsyncImage(
                         model = imageRequest,
@@ -2830,29 +2760,7 @@ internal fun RenderFlexChildBlock(
         is ImageBlock -> if (!hideImages) {
             val style = childBlock.style
             val colorFilter = if (childBlock.style.filter == "invert(100%)") {
-                val matrix = floatArrayOf(
-                    -1f,
-                    0f,
-                    0f,
-                    0f,
-                    255f,
-                    0f,
-                    -1f,
-                    0f,
-                    0f,
-                    255f,
-                    0f,
-                    0f,
-                    -1f,
-                    0f,
-                    255f,
-                    0f,
-                    0f,
-                    0f,
-                    1f,
-                    0f
-                )
-                ColorFilter.colorMatrix(ColorMatrix(matrix))
+                ColorFilter.colorMatrix(ColorMatrix(nativeInvertColorMatrix()))
             } else null
 
             BoxWithConstraints(contentAlignment = imageBlockContentAlignment(style)) {
@@ -2945,7 +2853,7 @@ internal fun RenderFlexChildBlock(
                             } else if (hasFixedWidths && cellStyle.width != Dp.Unspecified) {
                                 Modifier.width(cellStyle.width)
                             } else {
-                                Modifier.weight(cell.colspan.coerceAtLeast(1).toFloat(), fill = true)
+                                Modifier.weight(nativeTableCellWeight(cell.colspan), fill = true)
                             }
                             val cellModifier = cellContainerModifier
                                 .then(
@@ -3328,163 +3236,8 @@ internal fun Modifier.realisticBookPage(
         }
 }
 
-@Suppress("KotlinConstantConditions")
 @Composable
 fun Modifier.drawCssBorders(
     blockStyle: BlockStyle,
     @Suppress("unused") density: Density
-): Modifier = this.drawBehind {
-    val borderTop = blockStyle.borderTop
-    val borderRight = blockStyle.borderRight
-    val borderBottom = blockStyle.borderBottom
-    val borderLeft = blockStyle.borderLeft
-    val topWidth = borderTop?.width?.toPx() ?: 0f
-    val rightWidth = borderRight?.width?.toPx() ?: 0f
-    val bottomWidth = borderBottom?.width?.toPx() ?: 0f
-    val leftWidth = borderLeft?.width?.toPx() ?: 0f
-
-    val tlRadius = blockStyle.borderTopLeftRadius.toPx()
-    val trRadius = blockStyle.borderTopRightRadius.toPx()
-    val brRadius = blockStyle.borderBottomRightRadius.toPx()
-    val blRadius = blockStyle.borderBottomLeftRadius.toPx()
-
-    if (blockStyle.backgroundColor.isSpecified && blockStyle.backgroundColor != Color.Transparent) {
-        val bgPath = Path().apply {
-            addRoundRect(
-                RoundRect(
-                    rect = size.toRect(),
-                    topLeft = CornerRadius(tlRadius, tlRadius),
-                    topRight = CornerRadius(trRadius, trRadius),
-                    bottomRight = CornerRadius(brRadius, brRadius),
-                    bottomLeft = CornerRadius(blRadius, blRadius)
-                )
-            )
-        }
-        drawPath(bgPath, color = blockStyle.backgroundColor, style = Fill)
-    }
-
-    // 2. Helper for PathEffects
-    fun getPathEffect(style: String?, width: Float): PathEffect? {
-        return when (style) {
-            "dashed" -> PathEffect.dashPathEffect(floatArrayOf(width * 3f, width * 2f), 0f)
-            "dotted" -> PathEffect.dashPathEffect(floatArrayOf(width, width), 0f)
-            else -> null
-        }
-    }
-
-    // TOP
-    if (topWidth > 0f && borderTop != null) {
-        val color = borderTop.color
-        val effect = getPathEffect(borderTop.style, topWidth)
-        val offset = topWidth / 2f
-
-        val startX = if (tlRadius > 0) tlRadius else 0f
-        val endX = if (trRadius > 0) size.width - trRadius else size.width
-
-        drawLine(
-            color = color,
-            start = Offset(startX, offset),
-            end = Offset(endX, offset),
-            strokeWidth = topWidth,
-            pathEffect = effect
-        )
-    }
-
-    // BOTTOM
-    if (bottomWidth > 0f && borderBottom != null) {
-        val color = borderBottom.color
-        val effect = getPathEffect(borderBottom.style, bottomWidth)
-        val offset = size.height - (bottomWidth / 2f)
-
-        val startX = if (blRadius > 0) blRadius else 0f
-        val endX = if (brRadius > 0) size.width - brRadius else size.width
-
-        drawLine(
-            color = color,
-            start = Offset(startX, offset),
-            end = Offset(endX, offset),
-            strokeWidth = bottomWidth,
-            pathEffect = effect
-        )
-    }
-
-    // LEFT
-    if (leftWidth > 0f && borderLeft != null) {
-        val color = borderLeft.color
-        val effect = getPathEffect(borderLeft.style, leftWidth)
-        val offset = leftWidth / 2f
-
-        val startY = if (tlRadius > 0) tlRadius else 0f
-        val endY = if (blRadius > 0) size.height - blRadius else size.height
-
-        drawLine(
-            color = color,
-            start = Offset(offset, startY),
-            end = Offset(offset, endY),
-            strokeWidth = leftWidth,
-            pathEffect = effect
-        )
-    }
-
-    // RIGHT
-    if (rightWidth > 0f && borderRight != null) {
-        val color = borderRight.color
-        val effect = getPathEffect(borderRight.style, rightWidth)
-        val offset = size.width - (rightWidth / 2f)
-
-        val startY = if (trRadius > 0) trRadius else 0f
-        val endY = if (brRadius > 0) size.height - brRadius else size.height
-
-        drawLine(
-            color = color,
-            start = Offset(offset, startY),
-            end = Offset(offset, endY),
-            strokeWidth = rightWidth,
-            pathEffect = effect
-        )
-    }
-
-    if (tlRadius > 0f && topWidth > 0f && leftWidth > 0f && borderTop != null) {
-        drawArc(
-            color = borderTop.color,
-            startAngle = 180f, sweepAngle = 90f,
-            useCenter = false,
-            topLeft = Offset(leftWidth/2f, topWidth/2f),
-            size = Size(tlRadius * 2 - leftWidth, tlRadius * 2 - topWidth),
-            style = Stroke(width = topWidth)
-        )
-    }
-
-    if (trRadius > 0f && topWidth > 0f && rightWidth > 0f && borderTop != null) {
-        drawArc(
-            color = borderTop.color,
-            startAngle = 270f, sweepAngle = 90f,
-            useCenter = false,
-            topLeft = Offset(size.width - (trRadius * 2) + (rightWidth/2f), topWidth/2f),
-            size = Size(trRadius * 2 - rightWidth, trRadius * 2 - topWidth),
-            style = Stroke(width = topWidth)
-        )
-    }
-
-    if (brRadius > 0f && bottomWidth > 0f && rightWidth > 0f && borderBottom != null) {
-        drawArc(
-            color = borderBottom.color,
-            startAngle = 0f, sweepAngle = 90f,
-            useCenter = false,
-            topLeft = Offset(size.width - (brRadius * 2) + (rightWidth/2f), size.height - (brRadius * 2) + (bottomWidth/2f)),
-            size = Size(brRadius * 2 - rightWidth, brRadius * 2 - bottomWidth),
-            style = Stroke(width = bottomWidth)
-        )
-    }
-
-    if (blRadius > 0f && bottomWidth > 0f && leftWidth > 0f && borderBottom != null) {
-        drawArc(
-            color = borderBottom.color,
-            startAngle = 90f, sweepAngle = 90f,
-            useCenter = false,
-            topLeft = Offset(leftWidth/2f, size.height - (blRadius * 2) + (bottomWidth/2f)),
-            size = Size(blRadius * 2 - leftWidth, blRadius * 2 - bottomWidth),
-            style = Stroke(width = bottomWidth)
-        )
-    }
-}
+): Modifier = sharedNativeCssBox(blockStyle)

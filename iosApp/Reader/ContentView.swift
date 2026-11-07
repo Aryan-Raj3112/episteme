@@ -116,7 +116,24 @@ struct ContentView: View {
                     return
                 }
                 if importKind == .folder, let folderURL = urls.first {
-                    let folderName = rememberImportedFolder(folderURL, bridge: bridge)
+                    guard let folderName = rememberImportedFolder(folderURL, bridge: bridge) else {
+                        // No bookmark means no durable access. Report the link as
+                        // failed instead of importing books whose refs die with
+                        // the picker callback.
+                        bridge.recordImportedFolder(
+                            folderName: folderURL.lastPathComponent,
+                            fileNames: [],
+                            filePaths: [],
+                            contentIds: [],
+                            relativePaths: [],
+                            fileSizes: [],
+                            lastModifiedTimestamps: [],
+                            scanSucceeded: false,
+                            scanStatusRaw: ImportedFolderScanStatus.unavailable.rawValue,
+                            scanDetail: "bookmark_failed: the folder could not be linked. Remove it and add it again."
+                        )
+                        return
+                    }
                     scheduleImportedFolderScan(
                         bridge: bridge,
                         folderName: folderName,
@@ -231,10 +248,19 @@ struct ContentView: View {
                 addImportedFolderFile(folderName: folderName, sourcePath: sourcePath, fileName: fileName)
             }
             // Lets Kotlin resolve an in-place book ref through the bookmark.
-            // Installed before any folder state is read.
-            bridge.setFolderBookmarkResolver { folderName in
-                resolveImportedFolderPath(folderName)
+            // Installed before any folder state is read. The weak capture keeps
+            // the bridge from retaining itself through the handler it owns.
+            bridge.setFolderBookmarkResolver { [weak bridge] folderName in
+                resolveImportedFolderPath(folderName, bridge: bridge)
             }
+            // Lets Kotlin hold scope across a byte read, SAF-style. The
+            // resolver above stops scope on return (resolve+stat only); every
+            // actual file read must go through acquire/release instead, or it
+            // fails on device while passing in the simulator.
+            bridge.setFolderScopeAcquireHandler { [weak bridge] folderName in
+                acquireImportedFolderScope(folderName, bridge: bridge)
+            }
+            bridge.setFolderScopeReleaseHandler { folderName in releaseImportedFolderScope(folderName) }
             audiobookPlayer.onPlaybackUpdate = { isPlaying, isLoading, positionMs, durationMs, speed, sleepTimerRemainingMs, error in
                 bridge.updateAudiobookPlaybackState(
                     isPlaying: isPlaying,
@@ -367,6 +393,10 @@ struct ContentView: View {
                 }
             }
             bridge.setUnifiedDiagnosticsProvider { captureUnifiedLogEntries() }
+            // "Export logs" gains a "Linked folders" section: each stored
+            // bookmark is re-verified (resolve, scope, root) at export time, so
+            // one export answers whether the link itself is broken.
+            bridge.setFolderDiagnosticsProvider { captureImportedFolderDiagnostics() }
             // Folder-transfer executor (P0 #4): Swift owns the Drive/Firestore
             // orchestration; Kotlin owns selection/prefs/Compose state. The
             // controller publishes executor state back through the bridge
@@ -523,9 +553,12 @@ struct ContentView: View {
 /// `NSURLBookmarkCreationWithoutImplicitSecurityScope` documents as valid
 /// "until reboot at the latest", which is what makes an in-place read survive
 /// relaunch without the macOS-only option.
-private let importedFolderBookmarkOptions: URL.BookmarkCreationOptions = [
-    .minimalBookmark
-]
+///
+/// Full-fidelity bookmarks (no `.minimalBookmark`): minimal bookmarks drop
+/// metadata the resolver needs after a reboot / provider eviction on device.
+/// The bytes are small (one per folder); durability beats size here, matching
+/// Android's indefinite SAF grant.
+private let importedFolderBookmarkOptions: URL.BookmarkCreationOptions = []
 
 private let importedFolderBookmarksKey = "reader.ios.importedFolderBookmarks.v1"
 
@@ -562,6 +595,105 @@ private func storedImportedFolderBookmark(folderName: String) -> Data? {
     return bookmarks[folderName]
 }
 
+/// Swift-owned scope holds for SAF-like in-place reads.
+///
+/// Android's SAF grant is process-wide; iOS scope is per-URL and dies with
+/// `stopAccessingSecurityScopedResource`. Kotlin cannot hold the
+/// bookmark-resolved `NSURL` (it only ever sees a `String` path — and a
+/// `fileURLWithPath` rebuilt from that path carries no entitlement), so Swift
+/// retains the resolved URL here across an acquire/release pair. Refcounted:
+/// nested acquires on the same folder reuse the live scope.
+private let importedFolderScopeLock = NSLock()
+private var importedFolderScopeHolds: [String: (url: URL, count: Int)] = [:]
+
+/// Acquires scope for `folderName` and returns its root path. The scope stays
+/// held until a matching `releaseImportedFolderScope` — unlike
+/// `resolveImportedFolderPath`, which stops scope on return and is only safe
+/// for resolve+stat, never for byte reads on device.
+nonisolated func acquireImportedFolderScope(_ folderName: String, bridge: ReaderIosBridge? = nil) -> String? {
+    guard let bookmark = UserDefaults.standard
+        .dictionary(forKey: importedFolderBookmarksKey)?[folderName] as? Data else {
+        // The old "no bookmark" state: silent here used to mean a library of
+        // "path not found" with nothing in the export to explain it.
+        logFolderScan("scope.acquire_no_bookmark folder=\(folderName)", bridge: bridge)
+        return nil
+    }
+    importedFolderScopeLock.lock()
+    if let held = importedFolderScopeHolds[folderName] {
+        importedFolderScopeHolds[folderName] = (held.url, held.count + 1)
+        let path = held.url.standardizedFileURL.path
+        importedFolderScopeLock.unlock()
+        return path
+    }
+    importedFolderScopeLock.unlock()
+    var isStale = false
+    let url: URL
+    do {
+        url = try URL(
+            resolvingBookmarkData: bookmark,
+            options: [.withoutUI, .withoutImplicitStartAccessing],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+    } catch {
+        logFolderScan(
+            "scope.acquire_resolve_failed folder=\(folderName) \(folderScanErrorDetail(error))",
+            bridge: bridge
+        )
+        return nil
+    }
+    if isStale {
+        updateImportedFolderBookmark(url, folderName: folderName, bridge: bridge)
+    }
+    guard url.startAccessingSecurityScopedResource() else {
+        logFolderScan("scope.acquire_denied folder=\(folderName) stale=\(isStale)", bridge: bridge)
+        return nil
+    }
+    importedFolderScopeLock.lock()
+    // Re-check under lock: a concurrent acquire may have won while we resolved.
+    if let held = importedFolderScopeHolds[folderName] {
+        // Balance the start we just took; reuse the live hold.
+        url.stopAccessingSecurityScopedResource()
+        importedFolderScopeHolds[folderName] = (held.url, held.count + 1)
+        let path = held.url.standardizedFileURL.path
+        importedFolderScopeLock.unlock()
+        return path
+    }
+    importedFolderScopeHolds[folderName] = (url, 1)
+    let path = url.standardizedFileURL.path
+    importedFolderScopeLock.unlock()
+    return path
+}
+
+/// Balances one `acquireImportedFolderScope`. Stops scope when the last holder
+/// releases, mirroring Android's `releasePersistableUriPermission` on unlink.
+nonisolated func releaseImportedFolderScope(_ folderName: String) {
+    importedFolderScopeLock.lock()
+    guard let held = importedFolderScopeHolds[folderName] else {
+        importedFolderScopeLock.unlock()
+        return
+    }
+    if held.count <= 1 {
+        importedFolderScopeHolds.removeValue(forKey: folderName)
+        importedFolderScopeLock.unlock()
+        held.url.stopAccessingSecurityScopedResource()
+    } else {
+        importedFolderScopeHolds[folderName] = (held.url, held.count - 1)
+        importedFolderScopeLock.unlock()
+    }
+}
+
+/// Drops any held scope for `folderName`; used when unlinking a folder.
+nonisolated func releaseAllImportedFolderScopes(_ folderName: String) {
+    importedFolderScopeLock.lock()
+    guard let held = importedFolderScopeHolds.removeValue(forKey: folderName) else {
+        importedFolderScopeLock.unlock()
+        return
+    }
+    importedFolderScopeLock.unlock()
+    held.url.stopAccessingSecurityScopedResource()
+}
+
 /// Shared diagnostics tag with Kotlin's `LOCAL_FOLDER_SCAN_LOG_TAG`. Filter
 /// the exported diagnostics for this single string to see the whole
 /// folder-scan pipeline (bookmark resolution, security-scoped copy,
@@ -595,26 +727,152 @@ private var importedFolderScanTasks: [String: Task<Void, Never>] = [:]
 @MainActor
 private var importedFolderScanGenerations: [String: Int] = [:]
 
-@discardableResult
-private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> String {
+/// Creates bookmark data while the URL's security scope is started.
+///
+/// This is the durable half of Android's persisted SAF grant, and the reason a
+/// linked folder used to die on device but not in the simulator. A picker URL
+/// is security-scoped, and iOS only embeds the provider's access grant in the
+/// bookmark when the scope is active. Creating it without starting access
+/// succeeds on the simulator (which does not enforce the app sandbox) and
+/// fails on device with `NSCocoaErrorDomain` 257 — which left the folder with
+/// no bookmark at all, so every book in it resolved to nothing once the
+/// picker URL went away.
+///
+/// `startAccessingSecurityScopedResource` returns false for URLs that are not
+/// security-scoped (an app-container folder, a resolved bookmark that already
+/// carries no scope). That is not an error for bookmarking: the call is only
+/// needed to keep an existing grant active. Only the bookmark call itself can
+/// fail, and its error is what callers report.
+private func scopedBookmarkData(for url: URL, folderName: String, bridge: ReaderIosBridge? = nil) throws -> Data {
+    let didStartAccessing = url.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            url.stopAccessingSecurityScopedResource()
+        }
+    }
+    logFolderScan(
+        "bookmark.create folder=\(folderName) scope_started=\(didStartAccessing) provider=\(folderProviderKind(url))",
+        bridge: bridge
+    )
+    let bookmark = try url.bookmarkData(
+        options: importedFolderBookmarkOptions,
+        includingResourceValuesForKeys: nil,
+        relativeTo: nil
+    )
+    logFolderScan("bookmark.created folder=\(folderName) bytes=\(bookmark.count)", bridge: bridge)
+    return bookmark
+}
+
+private func normalizedFolderPath(_ url: URL) -> String {
+    // `/private/var/...` and `/var/...` name the same container entry; the
+    // picker and a resolved bookmark disagree on the prefix.
+    let path = url.standardizedFileURL.path
+    return path.hasPrefix("/private/") ? String(path.dropFirst("/private".count)) : path
+}
+
+/// Coarse classification of where a picked folder actually lives. These
+/// families fail differently on device — sandbox scope, iCloud eviction and
+/// third-party File Providers — so the diagnostics have to tell them apart;
+/// "path not found" alone does not.
+private func folderProviderKind(_ url: URL) -> String {
+    let values = try? url.resourceValues(
+        forKeys: [.isUbiquitousItemKey, .ubiquitousItemDownloadingStatusKey]
+    )
+    if values?.isUbiquitousItem == true {
+        let status = values?.ubiquitousItemDownloadingStatus
+        if status == .current { return "icloud_current" }
+        if status == .downloaded { return "icloud_downloaded" }
+        if status == .notDownloaded { return "icloud_not_downloaded" }
+        return "icloud"
+    }
+    let path = url.standardizedFileURL.path
+    if path.contains("/Mobile Documents/") { return "icloud" }
+    if path.contains("/File Provider Storage/") { return "file_provider" }
+    if path.contains("/Containers/") { return "app_container" }
+    return "local"
+}
+
+/// One bookmark's verdict: does it resolve, and does the resolved URL yield a
+/// scoped, existing root? Logged at link time and in "Export logs" so both
+/// reports use the same vocabulary.
+///
+/// Diagnostic only. A bookmark that cannot be re-resolved right after creation
+/// is proof the link is dead — the state the old build shipped silently — but
+/// a slow provider must not turn into a failed link, so linking still succeeds
+/// and the verdict carries the evidence instead.
+private func importedFolderBookmarkVerdict(_ bookmark: Data) -> String {
+    var isStale = false
+    let url: URL
+    do {
+        url = try URL(
+            resolvingBookmarkData: bookmark,
+            options: [.withoutUI, .withoutImplicitStartAccessing],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+    } catch {
+        return "resolve_failed stale=\(isStale) \(folderScanErrorDetail(error))"
+    }
+    let provider = folderProviderKind(url)
+    let didStartAccessing = url.startAccessingSecurityScopedResource()
+    defer {
+        if didStartAccessing {
+            url.stopAccessingSecurityScopedResource()
+        }
+    }
+    let rootPath = normalizedFolderPath(url)
+    guard didStartAccessing else {
+        return "scope_denied stale=\(isStale) provider=\(provider) root=\(rootPath)"
+    }
+    let rootExists = FileManager.default.fileExists(atPath: url.path)
+    return "ok stale=\(isStale) provider=\(provider) root_exists=\(rootExists) root=\(rootPath)"
+}
+
+/// Per-folder state dump appended to "Export logs". Every stored bookmark is
+/// re-verified here, so a single user-triggered export separates a broken link
+/// from a broken read.
+private func captureImportedFolderDiagnostics() -> String? {
+    let bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
+    if bookmarks.isEmpty { return "No linked folders." }
+    return bookmarks
+        .sorted { $0.key < $1.key }
+        .map { entry in
+            "folder=\(entry.key) bookmark_bytes=\(entry.value.count) \(importedFolderBookmarkVerdict(entry.value))"
+        }
+        .joined(separator: "\n")
+}
+
+/// Links `url` (a folder the picker just returned) and returns the name it is
+/// stored under, or nil when no durable bookmark could be created.
+///
+/// A nil return is deliberate and must not fall back to a name anyway: the
+/// scan would still succeed from the picker URL, adding books whose refs can
+/// never be resolved after the callback returns. That is exactly the
+/// "path not found for every book" state this replaces.
+private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> String? {
     let baseName = url.lastPathComponent
     var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
     do {
-        let bookmark = try url.bookmarkData(
-            options: importedFolderBookmarkOptions,
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
+        let bookmark = try scopedBookmarkData(for: url, folderName: baseName, bridge: bridge)
+        logFolderScan(
+            "bookmark.verify picked=\(baseName) \(importedFolderBookmarkVerdict(bookmark))",
+            bridge: bridge
         )
         var matchedFolderName: String?
         var shouldRefreshMatch = false
+        let pickedPath = normalizedFolderPath(url)
         for (folderName, existingBookmark) in bookmarks {
             var isStale = false
-            if existingBookmark == bookmark || (try? URL(
+            // NB: `.withoutImplicitStartAccessing` — the main resolve path
+            // defers scope start to the caller. Resolving here without it
+            // would implicitly start access and never stop it (leak).
+            let resolvedExisting = try? URL(
                 resolvingBookmarkData: existingBookmark,
-                options: [.withoutUI],
+                options: [.withoutUI, .withoutImplicitStartAccessing],
                 relativeTo: nil,
                 bookmarkDataIsStale: &isStale
-            ).standardizedFileURL) == url.standardizedFileURL {
+            )
+            if existingBookmark == bookmark || (resolvedExisting.map(normalizedFolderPath) == pickedPath) {
                 matchedFolderName = folderName
                 shouldRefreshMatch = isStale
                 break
@@ -638,24 +896,33 @@ private func rememberImportedFolder(_ url: URL, bridge: ReaderIosBridge) -> Stri
         logFolderScan("remember created folder=\(folderName) bookmarks=\(bookmarks.count)", bridge: bridge)
         return folderName
     } catch {
-        // The managed copy remains usable if a document provider cannot issue a bookmark.
         logFolderScan(
             "remember bookmark_failed folder=\(baseName) \(folderScanErrorDetail(error))",
             bridge: bridge
         )
-        return bridge.availableImportedFolderName(
-            preferredName: baseName,
-            existingNames: Array(bookmarks.keys)
-        )
+        // The bookmark was not created, but an earlier link to the same folder
+        // may still be valid (a re-pick of a working folder). Reuse it instead
+        // of linking a second, unusable folder name.
+        let resolvedPath = normalizedFolderPath(url)
+        for (folderName, existingBookmark) in bookmarks {
+            var isStale = false
+            guard let existingURL = try? URL(
+                resolvingBookmarkData: existingBookmark,
+                options: [.withoutUI, .withoutImplicitStartAccessing],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) else { continue }
+            if normalizedFolderPath(existingURL) == resolvedPath {
+                logFolderScan("remember reusing folder=\(folderName) after bookmark_failed", bridge: bridge)
+                return folderName
+            }
+        }
+        return nil
     }
 }
 
 private func updateImportedFolderBookmark(_ url: URL, folderName: String, bridge: ReaderIosBridge? = nil) {
-    guard let bookmark = try? url.bookmarkData(
-        options: importedFolderBookmarkOptions,
-        includingResourceValuesForKeys: nil,
-        relativeTo: nil
-    ) else {
+    guard let bookmark = try? scopedBookmarkData(for: url, folderName: folderName, bridge: bridge) else {
         logFolderScan("bookmark.reissue_failed folder=\(folderName)", bridge: bridge)
         return
     }
@@ -719,6 +986,23 @@ private func refreshImportedFolders(bridge: ReaderIosBridge) {
             sourceURL: folderURL
         )
     }
+
+    // A folder the library still references but that has no bookmark cannot be
+    // linked at all. Skipping it left the user with books that only ever said
+    // "not found"; reporting it lets the UI tell them to add the folder again.
+    for folderName in bridge.foldersNeedingRelink(linkedFolderNames: Array(bookmarks.keys)) {
+        logFolderScan("refresh.no_bookmark folder=\(folderName)", bridge: bridge)
+        recordImportedFolderScan(
+            bridge: bridge,
+            folderName: folderName,
+            scan: ImportedFolderScan(
+                files: [],
+                succeeded: false,
+                status: .unavailable,
+                detail: "no_bookmark: access was never granted; remove and re-add the folder"
+            )
+        )
+    }
 }
 
 /// Re-resolves the scan URL from the stored bookmark. The picker URL is only
@@ -732,7 +1016,10 @@ private func sourceURLForFolder(named folderName: String, fallback: URL, bridge:
     }
     do {
         let resolved = try resolveImportedFolderBookmark(bookmark, folderName: folderName)
-        logFolderScan("picker.url_resolved folder=\(folderName) stale=\(resolved.isStale)", bridge: bridge)
+        logFolderScan(
+            "picker.url_resolved folder=\(folderName) stale=\(resolved.isStale) path=\(normalizedFolderPath(resolved.url))",
+            bridge: bridge
+        )
         return resolved.url
     } catch {
         logFolderScan(
@@ -793,6 +1080,7 @@ private func removeImportedFolder(named folderName: String) {
             _ = await pendingTask.value
         }
         importedFolderScanTasks.removeValue(forKey: folderName)
+        releaseAllImportedFolderScopes(folderName)
         var bookmarks = UserDefaults.standard.dictionary(forKey: importedFolderBookmarksKey) as? [String: Data] ?? [:]
         bookmarks.removeValue(forKey: folderName)
         UserDefaults.standard.set(bookmarks, forKey: importedFolderBookmarksKey)
@@ -1043,13 +1331,31 @@ nonisolated private func scanImportedFolderInPlace(
         .isRegularFileKey,
         .isDirectoryKey,
         .fileSizeKey,
-        .contentModificationDateKey
+        .contentModificationDateKey,
+        .ubiquitousItemDownloadingStatusKey,
+        .ubiquitousItemIsDownloadingKey,
     ]
     // Android skips dotfiles and the sidecar directory during recursion
     // (FolderSyncWorker.kt:927). The enumerator cannot prune a directory it
     // has already descended into, so the check is applied to the path.
     let sidecarDirectoryName = "EpistemeSyncData"
-    let sourcePrefix = sourceURL.standardizedFileURL.path
+
+    // Coordinate the enumeration so File Provider / iCloud materialises the
+    // directory listing, mirroring Android's ContentResolver query which
+    // forces the provider to publish entries. Scope is already held above and
+    // stays held for the whole coordinated block.
+    var coordError: NSError?
+    var coordinatedSource: URL = sourceURL
+    NSFileCoordinator().coordinate(readingItemAt: sourceURL, options: [], error: &coordError) { url in
+        coordinatedSource = url
+    }
+    if let coordError {
+        localFolderScanLogger.error("scan.coordinate_failed folder=\(folderName, privacy: .public) \(folderScanErrorDetail(coordError), privacy: .public)")
+        // Fall through to direct enumeration: local On-My-iPhone folders need
+        // no coordination, and failing the whole scan on a coordination miss
+        // would regress them.
+    }
+    let sourcePrefix = coordinatedSource.standardizedFileURL.path
 
     var sawChildError = false
     var skippedCount = 0
@@ -1060,7 +1366,7 @@ nonisolated private func scanImportedFolderInPlace(
     }
 
     guard let enumerator = fileManager.enumerator(
-        at: sourceURL,
+        at: coordinatedSource,
         includingPropertiesForKeys: resourceKeys,
         options: [.skipsHiddenFiles, .skipsPackageDescendants],
         errorHandler: { url, error in
@@ -1104,6 +1410,18 @@ nonisolated private func scanImportedFolderInPlace(
             // the way Android does so they never become books.
             guard !itemURL.lastPathComponent.hasPrefix(".") else { continue }
             guard !itemURL.lastPathComponent.lowercased().hasSuffix(".json") else { continue }
+            // iCloud / File Provider stub: entry listed but bytes not local
+            // yet. Trigger download and mark PARTIAL (Android parity: never
+            // infer deletions from a view it could not see). Next foreground
+            // rescan picks the file up once materialised.
+            if let status = try? itemURL.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus,
+               status != .current {
+                try? fileManager.startDownloadingUbiquitousItem(at: itemURL)
+                sawChildError = true
+                noteSkipped("not_downloaded relative=\(relativePath) status=\(status.rawValue)")
+                localFolderScanLogger.info("scan.not_downloaded folder=\(folderName, privacy: .public) relative=\(relativePath, privacy: .public)")
+                continue
+            }
             scanned.append(
                 ImportedReaderFile(
                     name: itemURL.lastPathComponent,
@@ -1474,26 +1792,31 @@ nonisolated private func copyImportedAudiobookFolderToAppSupport(_ sourceURL: UR
 /// The scope is released when this returns. That is correct for enumeration,
 /// stat and hashing, but a long-lived read (a PDF keeps its fd for the whole
 /// session) must hold a scope token instead — see `IosFolderScopeRegistry`.
-nonisolated func resolveImportedFolderPath(_ folderName: String) -> String? {
+nonisolated func resolveImportedFolderPath(_ folderName: String, bridge: ReaderIosBridge? = nil) -> String? {
     guard let bookmark = UserDefaults.standard
         .dictionary(forKey: importedFolderBookmarksKey)?[folderName] as? Data else {
+        logFolderScan("ref.resolve_no_bookmark folder=\(folderName)", bridge: bridge)
         return nil
     }
     var isStale = false
-    guard let url = try? URL(
-        resolvingBookmarkData: bookmark,
-        // `.withSecurityScope` is macOS-only (API_UNAVAILABLE(ios)); on iOS the
-        // bookmark carries an implicit ephemeral scope.
-        options: [.withoutUI, .withoutImplicitStartAccessing],
-        relativeTo: nil,
-        bookmarkDataIsStale: &isStale
-    ) else {
+    let url: URL
+    do {
+        url = try URL(
+            resolvingBookmarkData: bookmark,
+            // `.withSecurityScope` is macOS-only (API_UNAVAILABLE(ios)); on iOS the
+            // bookmark carries an implicit ephemeral scope.
+            options: [.withoutUI, .withoutImplicitStartAccessing],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+    } catch {
+        logFolderScan("ref.resolve_failed folder=\(folderName) \(folderScanErrorDetail(error))", bridge: bridge)
         return nil
     }
     guard url.startAccessingSecurityScopedResource() else {
         // A resolved-but-unscoped URL is worse than none: reads through it can
         // silently return nothing, so report the folder as unreachable.
-        localFolderScanLogger.error("ref.resolve_access_denied folder=\(folderName, privacy: .public)")
+        logFolderScan("ref.resolve_access_denied folder=\(folderName) stale=\(isStale)", bridge: bridge)
         return nil
     }
     defer { url.stopAccessingSecurityScopedResource() }
@@ -1737,6 +2060,20 @@ private struct ReaderComposeHost: UIViewControllerRepresentable {
             onRemoveFolder: onRemoveFolder
         )
         let hostController = ReaderStatusBarHostController(content: composeController)
+        hostController.onDeviceLayoutChange = { foldPresent, foldActive, left, top, width, height, columnWidth, columnTop, columnOnTrailing, isDuoDevice in
+            bridge.updateIosDeviceLayout(
+                foldPresent: foldPresent,
+                foldActive: foldActive,
+                foldLeftFraction: left,
+                foldTopFraction: top,
+                foldWidthFraction: width,
+                foldHeightFraction: height,
+                controlColumnWidthFraction: columnWidth,
+                controlColumnTopFraction: columnTop,
+                controlColumnOnTrailing: columnOnTrailing,
+                isDuoDevice: isDuoDevice
+            )
+        }
         bridge.setSystemUiHandler { statusHidden, navigationHidden, lightContent, backgroundArgb in
             DispatchQueue.main.async {
                 isSystemUiHidden = statusHidden.boolValue
@@ -1765,6 +2102,11 @@ private final class ReaderStatusBarHostController: UIViewController {
     private var usesLightStatusBarContent = false
     private var readerOrientationMode: Int32 = 0
     private var pencilInteraction: UIPencilInteraction?
+
+    /// Reports iPhone Duo fold geometry and the system's side control column to the shared
+    /// layer. Values are fractions of the window so nothing has to be converted between
+    /// points and dp in Kotlin.
+    var onDeviceLayoutChange: ((_ foldPresent: Bool, _ foldActive: Bool, _ left: Double, _ top: Double, _ width: Double, _ height: Double, _ columnWidth: Float, _ columnTop: Float, _ columnOnTrailing: Bool, _ isDuoDevice: Bool) -> Void)?
 
     init(content: UIViewController) {
         self.contentController = content
@@ -1809,6 +2151,75 @@ private final class ReaderStatusBarHostController: UIViewController {
             setNeedsStatusBarAppearanceUpdate()
             setNeedsUpdateOfHomeIndicatorAutoHidden()
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        publishDeviceLayout()
+    }
+
+    /// iPhone Duo is the only iPhone whose view exposes a fold *division* reserved region,
+    /// so its presence is a capability signal rather than a size or idiom guess. It is
+    /// queried including inactive regions because it is still present when the device is
+    /// flat. Pre-27.1 SDKs and every non-phone idiom report a plain single-screen device.
+    private func publishDeviceLayout() {
+        guard let emit = onDeviceLayoutChange else { return }
+        let singleScreen = { emit(false, false, 0, 0, 0, 0, 0, 0, true, false) }
+        guard UIDevice.current.userInterfaceIdiom == .phone, #available(iOS 27.1, *) else {
+            return singleScreen()
+        }
+        let bounds = view.bounds
+        guard bounds.width > 0, bounds.height > 0 else { return singleScreen() }
+
+        // Duo is the only iPhone that reports reserved regions: a fold *division* on the
+        // inner display, and the camera / Dynamic Island *occlusion* on the outer display.
+        // Either one means this is a Duo display, which is the capability the rail is
+        // gated on. No other iPhone reports either, so this cannot false-positive.
+        let fold = view.reservedRegions(kind: .division, options: .includeInactive).first
+        let occlusions = view.reservedRegions(kind: .occlusion, options: .includeInactive)
+        guard fold != nil || !occlusions.isEmpty else { return singleScreen() }
+
+        // The system's side control column: the Dynamic Island and status bar share the
+        // display's trailing edge with the app's rail, so the app must leave room for the
+        // status area at the top of that column and put its rail on the same edge. In
+        // portrait the status bar runs across the top instead, and only its right-hand
+        // slice sits over the column.
+        //
+        // The safe-area insets describe the column exactly (the trailing inset measures
+        // 84pt on both Duo displays, which is Apple's vertical-bar width), and a leading
+        // inset means the app is in the left half of Split View and the column has moved
+        // to the leading edge. The status area's *depth* is not queryable: the side status
+        // bar's `statusBarFrame` is a degenerate rect and the safe area's top inset is 0
+        // because the status is not at the top. Reserve the platform's own occlusion (the
+        // camera + island block on the outer display, measured 174pt deep) and Apple's
+        // published status depth (24 + 86pt) on the inner display, where the camera is
+        // hidden and reports nothing.
+        let window = view.window
+        let windowBounds = window?.bounds ?? bounds
+        let safeArea = window?.safeAreaInsets ?? .zero
+        let sideColumnWidth = max(safeArea.left, safeArea.right)
+        // Only occlusions anchored at the very top belong to the status/island block. The
+        // inner display also reports one lower down (measured y 215-273 in portrait) that
+        // has nothing to do with the top of the column; taking its maxY pushed the rail's
+        // first item a third of the way down the display.
+        let topAnchoredOcclusions = occlusions.filter { $0.frame.minY <= 1 }
+        let occlusionBottom = topAnchoredOcclusions.map { $0.frame.maxY }.max() ?? 0
+        let statusDepth: CGFloat = sideColumnWidth > 0 ? 110 : 0
+        let topReserve = max(safeArea.top, max(occlusionBottom, statusDepth))
+        let columnOnTrailing = safeArea.left <= safeArea.right
+
+        emit(
+            fold != nil,
+            fold?.isActive ?? false,
+            Double((fold?.frame.minX ?? 0) / bounds.width),
+            Double((fold?.frame.minY ?? 0) / bounds.height),
+            Double((fold?.frame.width ?? 0) / bounds.width),
+            Double((fold?.frame.height ?? 0) / bounds.height),
+            Float(sideColumnWidth / windowBounds.width),
+            Float(topReserve / windowBounds.height),
+            columnOnTrailing,
+            true
+        )
     }
 
     override var prefersStatusBarHidden: Bool { hidesStatusBar }

@@ -64,8 +64,12 @@ class LibraryProjector {
             SortOrder.RECENT -> books.sortedByDescending { it.timestamp }
             SortOrder.DATE_ADDED_NEWEST -> books.sortedByDescending { it.libraryFileDateTimestamp() }
             SortOrder.DATE_ADDED_OLDEST -> books.sortedBy { it.libraryFileDateTimestamp() }
-            SortOrder.TITLE_ASC -> books.sortedBy { it.title?.lowercase() ?: it.displayName.lowercase() }
-            SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast()) { it.author?.lowercase() })
+            SortOrder.TITLE_ASC -> books.sortedWith(
+                Comparator { a, b ->
+                    compareNatural(a.title ?: a.displayName, b.title ?: b.displayName)
+                }
+            )
+            SortOrder.AUTHOR_ASC -> books.sortedWith(compareBy(nullsLast(::compareNatural)) { it.author })
             SortOrder.PERCENT_ASC -> books.sortedBy { it.progressPercentage ?: 0f }
             SortOrder.PERCENT_DESC -> books.sortedByDescending { it.progressPercentage ?: 0f }
             SortOrder.SIZE_ASC -> books.sortedBy { it.fileSize }
@@ -139,7 +143,12 @@ class LibraryProjector {
             }
 
         return (seriesShelves + folderShelves + tagShelves)
-            .sortedWith(compareBy({ it.type.ordinal }, { it.name.lowercase() }))
+            .sortedWith(
+                Comparator { a, b ->
+                    val typeCmp = a.type.ordinal.compareTo(b.type.ordinal)
+                    if (typeCmp != 0) typeCmp else compareNatural(a.name, b.name)
+                }
+            )
     }
 }
 

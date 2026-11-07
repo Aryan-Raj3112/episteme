@@ -926,6 +926,10 @@ internal fun SharedReaderAnnotationsTab(
         SharedReaderEmptyNavigation(readerString("desktop_no_annotations_yet", "No annotations yet"))
     } else {
         val listState = rememberLazyListState()
+        // Keys must be unique within the list (the bookmarks list dedupes its rows the same way):
+        // a repeated id crashes the measure pass with "Key ... was already used" mid-scroll, and
+        // two rows sharing an id are one highlight, so showing both would be wrong anyway.
+        val highlights = remember(session.highlights) { session.highlights.distinctBy { it.id } }
         var menuExpandedFor by remember { mutableStateOf<UserHighlight?>(null) }
         var deleteConfirmFor by remember { mutableStateOf<UserHighlight?>(null) }
         val colors = highlightPalette.sanitized()
@@ -939,7 +943,7 @@ internal fun SharedReaderAnnotationsTab(
                         .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(session.highlights, key = { it.id }) { highlight ->
+                    items(highlights, key = { it.id }) { highlight ->
                         val locator = highlight.locator.withFallbacks(
                             chapterIndex = highlight.chapterIndex,
                             cfi = highlight.cfi,

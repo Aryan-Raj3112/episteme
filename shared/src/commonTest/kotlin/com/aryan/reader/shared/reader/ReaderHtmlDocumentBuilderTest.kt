@@ -1159,6 +1159,70 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `registry paint records the highlight id rather than a boolean flag`() {
+        // Every caller passes the highlight's id as `realId`, but the params coerced it with `!!` and
+        // the entry was built as `id: p.realId || ''` — so a registry-painted highlight carried the
+        // literal boolean `true` as its id. The tap hit-test returned that, native looked up
+        // `{"id":"true"}`, matched no highlight, and the sheet silently never opened. Only highlights
+        // that went through adoption escaped it, because adoption assigns a real id by hand.
+        val script = readerHtmlAnnotationScript()
+
+        assertTrue(script.contains("id: realId || '',"))
+        assertTrue(script.contains("temp: !p.realId, id: p.id || ''"))
+        assertFalse(
+            script.contains("id: p.realId || ''"),
+            "the id must not be read off the boolean realId flag"
+        )
+    }
+
+    @Test
+    fun `registry adopts a freshly made highlight even after its colour changed`() {
+        // A highlight made in the WebView is painted as a temp entry keyed by its cfi, with no id, and
+        // only becomes tappable once the reconcile adopts it. Adoption matched on colourId, so a
+        // recolour — which changes the incoming colourId while the temp entry still holds the old
+        // one — left the entry stranded under its `local:` key: never adopted, so never tappable,
+        // and its previous paint still sitting in the CSS highlight group underneath.
+        val script = readerHtmlAnnotationScript()
+
+        assertTrue(script.contains("function findIncomingForPaintedEntryByCfi(incoming, entry)"))
+        // The colour match stays a preference; the cfi is the fallback that rescues a recolour.
+        assertTrue(script.contains("findIncomingForPaintedEntry(list, entry) ||"))
+        assertTrue(script.contains("findIncomingForPaintedEntryByCfi(list, entry);"))
+        // Adopting settles identity, not appearance: a recoloured entry still has to be repainted,
+        // or it comes back tappable while showing the colour it had before.
+        assertTrue(script.contains("if (!paintedEntryMatches(entry, match)) {"))
+        assertTrue(script.contains("unpaintUserHighlightByKey(match.id);"))
+    }
+
+    @Test
+    fun `registry paint identity includes the argb and not only the named colour`() {
+        // Every custom palette colour reports the same fallback colourId, so comparing that alone
+        // cannot tell two of them apart. Compared strictly, missing included: an entry painted with
+        // no argb of its own is a different colour from one painted with a custom argb.
+        val script = readerHtmlAnnotationScript()
+
+        assertTrue(script.contains("function readerHighlightArgbValue(value)"))
+        assertTrue(script.contains("colorArgb: readerHighlightArgbValue(p.colorArgb),"))
+        assertTrue(script.contains("colorArgb: highlight.colorArgb,"))
+        assertTrue(script.contains("if (incomingArgb !== entryArgb) return false;"))
+        assertTrue(script.contains("if (incomingArgb !== markerArgb) return false;"))
+    }
+
+    @Test
+    fun `highlight tap does not depend on the selection menu existing`() {
+        // `menu` is resolved once, when the scripts run. A document that has not built the in-page
+        // selection toolbar yet leaves it null, and the unguarded `menu.contains(...)` threw — which
+        // aborted the click listener before the registry branch, so a tap on a registry-painted
+        // highlight did nothing at all. Every use is now null-guarded.
+        val script = readerHtmlSelectionScript()
+
+        assertTrue(script.contains("var inMenu = function (node) { return !!(menu && node && menu.contains(node)); };"))
+        assertTrue(script.contains("if (highlight && !inMenu(highlight)) {"))
+        assertTrue(script.contains("typeof userHighlightIdFromPoint === 'function' && !inMenu(target)) {"))
+        assertTrue(script.contains("if (!anchor || inMenu(anchor)) return;"))
+    }
+
+    @Test
     fun `apply highlights keeps already painted markers instead of re-deriving them`() {
         val script = readerHtmlAnnotationScript()
 

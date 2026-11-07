@@ -129,6 +129,10 @@ fun mergeCloudReadingState(
                     readerSettings = remoteBook.readerSettings,
                     readerFormatIsLocal = remoteBook.readerFormatIsLocal,
                     readerLocalFormatSettings = remoteBook.readerLocalFormatSettings,
+                    readerThemeIsLocal = remoteBook.readerThemeIsLocal,
+                    readerLocalThemeSettings = remoteBook.readerLocalThemeSettings,
+                    pdfThemeIsLocal = remoteBook.pdfThemeIsLocal,
+                    pdfLocalThemeSettings = remoteBook.pdfLocalThemeSettings,
                     readerAutoScrollIsLocal = remoteBook.readerAutoScrollIsLocal,
                     readerAutoScrollLocalSpeed = remoteBook.readerAutoScrollLocalSpeed,
                     readerAutoScrollLocalMinSpeed = remoteBook.readerAutoScrollLocalMinSpeed,
@@ -336,7 +340,7 @@ private fun mergeCloudTags(
     return (local + remote)
         .associateBy(Tag::id)
         .values
-        .sortedBy { it.name.lowercase() }
+        .sortedWith(compareByNatural { it.name })
 }
 
 private fun mergeCloudCustomFonts(

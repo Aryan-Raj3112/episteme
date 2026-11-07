@@ -48,7 +48,9 @@ import platform.Vision.VNRequest
 import platform.Vision.VNRequestTextRecognitionLevelAccurate
 import platform.posix.memcpy
 import kotlin.math.roundToInt
+import com.aryan.reader.shared.ios.acquireScopeForBookPath
 import com.aryan.reader.shared.ios.resolveIosReadablePath
+import com.aryan.reader.shared.ios.withResolvedIosBookPath
 
 /** A Vision result expressed in the same top-left normalized coordinate space as PDF overlays. */
 internal data class IosPdfOcrWord(
@@ -64,10 +66,25 @@ internal suspend fun recognizeIosPdfPageWords(
     recognitionLanguages: List<String>,
 ): List<IosPdfOcrWord> = withContext(Dispatchers.Default) {
     val rawPath = path?.trim()?.takeIf { it.isNotBlank() } ?: return@withContext emptyList()
-    val resolvedPath = rawPath.resolveIosReadablePath() ?: rawPath
-    if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return@withContext emptyList()
+    // Hold scope across render+Vision; nested acquires refcount safely.
+    val scope = acquireScopeForBookPath(rawPath)
+    try {
+        recognizeIosPdfPageWordsScoped(rawPath, pageIndex, password, recognitionLanguages)
+    } finally {
+        scope?.close()
+    }
+}
 
-    IosPdfiumRuntime.mutex.withLock {
+private suspend fun recognizeIosPdfPageWordsScoped(
+    rawPath: String,
+    pageIndex: Int,
+    password: String?,
+    recognitionLanguages: List<String>,
+): List<IosPdfOcrWord> {
+    val resolvedPath = rawPath.resolveIosReadablePath() ?: rawPath
+    if (!NSFileManager.defaultManager.fileExistsAtPath(resolvedPath)) return emptyList()
+
+    return IosPdfiumRuntime.mutex.withLock {
         IosPdfiumRuntime.ensureInitialized()
         val document = FPDF_LoadDocument(resolvedPath, password) ?: return@withLock emptyList()
         try {
@@ -344,7 +361,10 @@ internal fun persistIosPdfOcrLanguage(language: SharedPdfOcrLanguage) {
 }
 
 private fun iosPdfFileRevision(path: String): String {
-    val attributes = NSFileManager.defaultManager.attributesOfItemAtPath(path.resolveIosReadablePath() ?: path, error = null)
+    val resolved = withResolvedIosBookPath(path) { it } ?: path.resolveIosReadablePath() ?: path
+    val attributes = withResolvedIosBookPath(path) {
+        NSFileManager.defaultManager.attributesOfItemAtPath(it, error = null)
+    } ?: NSFileManager.defaultManager.attributesOfItemAtPath(resolved, error = null)
     val size = (attributes?.get(NSFileSize) as? NSNumber)?.longLongValue ?: 0L
     val modified = attributes?.get(NSFileModificationDate)?.toString().orEmpty()
     return "$size:$modified"

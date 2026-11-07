@@ -31,6 +31,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import platform.Foundation.NSFileManager
 import platform.Foundation.NSURL
+import com.aryan.reader.shared.ios.acquireScopeForBookPath
 import com.aryan.reader.shared.ios.resolveIosReadablePath
 
 private data class IosPdfSearchCacheKey(
@@ -66,6 +67,20 @@ internal actual suspend fun searchSharedMobilePdf(
 }
 
 private suspend fun searchIosPdfLocked(
+    book: BookItem,
+    query: String,
+    password: String?,
+): List<SharedPdfSearchResult> {
+    // Scope must span the whole index build (resolve + every FPDF_LoadPage).
+    val scope = acquireScopeForBookPath(book.path)
+    try {
+        return searchIosPdfLockedScoped(book, query, password)
+    } finally {
+        scope?.close()
+    }
+}
+
+private suspend fun searchIosPdfLockedScoped(
     book: BookItem,
     query: String,
     password: String?,

@@ -2,6 +2,7 @@ package com.aryan.reader.shared.ui
 
 import android.media.AudioAttributes
 import android.os.Bundle
+import com.aryan.reader.shared.tts.createTextToSpeechOrNull
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.runtime.Composable
@@ -264,8 +265,8 @@ private class AndroidSharedMobileEpubLocalTts(
 
     private fun ensureEngine() {
         if (released || engine != null) return
-        engine = TextToSpeech(context) { status ->
-            if (released) return@TextToSpeech
+        engine = createTextToSpeechOrNull(context) { status ->
+            if (released) return@createTextToSpeechOrNull
             if (status == TextToSpeech.SUCCESS) {
                 initialized = true
                 engine?.setOnUtteranceProgressListener(listener)

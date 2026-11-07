@@ -1,0 +1,21 @@
+# Local dev config for cross-compiling without Gradle.
+#
+# Copy to `.cargo/config.toml` (gitignored) and edit NDK_HOME:
+#
+#   cp .cargo/config.toml.example .cargo/config.toml
+#
+# Without this, `cargo build --target aarch64-linux-android` fails with
+# `ld: unknown options: --version-script ...` because cargo falls back to the
+# host `cc`, which does not understand the flags Rust emits for Android.
+#
+# The Gradle build does not use this file: it sets CARGO_TARGET_<TRIPLE>_LINKER
+# in the Exec task environment, so the NDK path is discovered from the local
+# SDK location instead of being hardcoded.
+
+[target.aarch64-linux-android]
+linker = "/Users/aryan/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang"
+
+[target.armv7-linux-androideabi]
+linker = "/Users/aryan/Library/Android/sdk/ndk/28.2.13676358/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi26-clang"
+
+# Apple targets need no linker entry: rustc finds clang via xcrun.

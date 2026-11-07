@@ -1,6 +1,9 @@
 package com.aryan.reader
 
 import com.aryan.reader.shared.calculateSharedTtsAudiobookProgress
+import com.aryan.reader.shared.compareByNatural
+import com.aryan.reader.shared.compareNatural
+import com.aryan.reader.shared.isOverlay
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
@@ -108,9 +111,7 @@ import coil.compose.AsyncImage
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.audiobook.AudiobookPlaybackRequest
 import com.aryan.reader.audiobook.BookTtsAudiobookController
-import com.aryan.reader.audiobook.BookTtsContentRepository
 import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
-import com.aryan.reader.audiobook.BookTtsSessionCoordinator
 import com.aryan.reader.tts.loadListenNativeVoice
 import com.aryan.reader.tts.loadListenTtsMode
 import com.aryan.reader.tts.loadListenTtsSpeaker
@@ -237,17 +238,14 @@ private fun sortListenItems(
         }
 
         ListenSort.TITLE -> {
-            items.sortedBy {
-                it.title.lowercase()
-            }
+            items.sortedWith(compareByNatural { it.title })
         }
 
         ListenSort.AUTHOR -> {
             items.sortedWith(
-                compareBy<AudiobookUiItem> {
-                    it.author.lowercase()
-                }.thenBy {
-                    it.title.lowercase()
+                Comparator { a, b ->
+                    val authorCmp = compareNatural(a.author, b.author)
+                    if (authorCmp != 0) authorCmp else compareNatural(a.title, b.title)
                 }
             )
         }
@@ -282,6 +280,21 @@ internal fun RecentFileItem.toTtsAudiobookUiItem(
     addedAt = dateAddedTimestamp.takeIf { it > 0L } ?: timestamp,
     lastListenedAt = progress?.updatedAt ?: 0L
 )
+
+/**
+ * Everything a Listen voice pick can change, as one comparable key.
+ *
+ * The voice sheet's tabs have no uniform change callback (the device tab
+ * saves through its own prefs), so the sheet snapshots this on open and
+ * restarts the session on dismiss only when it moved — one restart for any
+ * number of picks, and none for a peek.
+ */
+internal fun listenVoicePickKey(context: android.content.Context): String =
+    listOf(
+        loadListenTtsMode(context).name,
+        loadListenTtsSpeaker(context),
+        loadListenNativeVoice(context),
+    ).joinToString("\u001F")
 
 internal fun AudiobookEntity.toUiItem(
     libraryItem: RecentFileItem? = null
@@ -348,6 +361,8 @@ internal fun AudiobooksLibrarySection(
     onAudiobookClick: (AudiobookUiItem) -> Unit,
     onListenWithTtsClick: (RecentFileItem) -> Unit,
     onAddAudiobookClick: () -> Unit,
+    onPlayTtsClick: (RecentFileItem) -> Unit = onListenWithTtsClick,
+    onPlayAudiobookClick: (AudiobookUiItem) -> Unit = onAudiobookClick,
 ) {
     val adapterLibraryBooksById = remember(libraryBooks) { libraryBooks.associateBy(RecentFileItem::bookId) }
     val sharedAudiobooks = remember(audiobooks, adapterLibraryBooksById) {
@@ -408,8 +423,16 @@ internal fun AudiobooksLibrarySection(
                 ?.toUiItem(adapterLibraryBooksById[sharedBook.bookId])
                 ?.let(onAudiobookClick)
         },
+        onPlayAudiobook = { sharedBook ->
+            audiobooks.firstOrNull { it.bookId == sharedBook.bookId }
+                ?.toUiItem(adapterLibraryBooksById[sharedBook.bookId])
+                ?.let(onPlayAudiobookClick)
+        },
         onOpenTtsPlayer = { item, _ ->
             adapterLibraryBooksById[item.book.id]?.let(onListenWithTtsClick)
+        },
+        onPlayTtsPlayer = { item ->
+            adapterLibraryBooksById[item.book.id]?.let(onPlayTtsClick)
         },
         onAddAudiobook = onAddAudiobookClick,
         modifier = modifier,
@@ -627,6 +650,16 @@ internal fun TtsBookPickerSheet(
     val controller = remember { AudiobookController(context) }
     val playback by controller.state.collectAsStateWithLifecycle()
     LaunchedEffect(item.id) { item.playbackRequest?.let(controller::connect) }
+    // Row play buttons open the sheet with autoStart: start once the session
+    // is connected. Card taps open idle. togglePlay is a no-op until the
+    // controller exists, so a late connection can never double-start.
+    var autoStarted by remember(item.id) { mutableStateOf(false) }
+    LaunchedEffect(item.id, playback.connected, playback.isPlaying, item.autoStart) {
+        if (item.autoStart && !autoStarted && playback.connected && !playback.isPlaying) {
+            autoStarted = true
+            controller.togglePlay(onBeforePlay)
+        }
+    }
     DisposableEffect(controller) { onDispose(controller::release) }
     val request = item.playbackRequest
     val sharedAudiobook = remember(item) {
@@ -680,24 +713,25 @@ private fun BookTtsPlayerSheet(
         BookTtsAudiobookController(context, authTokenProvider = getAuthToken)
     }
     val prepared by controller.uiState.collectAsStateWithLifecycle()
-    val playback by controller.sharedPlaybackState.collectAsStateWithLifecycle()
+    val playback by controller.listenPlaybackState.collectAsStateWithLifecycle()
+    val overlayInfo by controller.overlayInfo.collectAsStateWithLifecycle()
+    val listenSource by controller.listenSource.collectAsStateWithLifecycle()
+    val overlaySpeed by controller.overlaySpeed.collectAsStateWithLifecycle()
+    val inOverlayMode = listenSource.isOverlay() && overlayInfo.hasNarration
     // Listen voice is independent from the Reader voice: bound to the Listen
     // prefs, with the full Reader sheet feature set (cloud/device/cache tabs).
     var showListenVoiceSettings by remember { mutableStateOf(false) }
     var listenMode by remember(context) { mutableStateOf(loadListenTtsMode(context)) }
     var listenSpeaker by remember(context) { mutableStateOf(loadListenTtsSpeaker(context)) }
-    // Locked for any live Listen session — playing, loading AND paused. A
-    // paused session keeps old-voice audio queued (and Listen applies voice
-    // changes at the next session start), so switching then resuming would
-    // keep playing the previous voice.
-    val listenTtsActive = playback.connected && !playback.sessionFinished
-    // Only freeze the voice/engine controls while something is actually being spoken. The
-    // Listen player sheet closes on stop, so requiring a full stop would make the voice
-    // settings unreachable; pausing is a safe point to change it.
-    val listenTtsVoiceLocked = playback.isPlaying
+    // Locked while speaking/loading, free while paused or idle: the reader
+    // benchmark freezes pickers for any live session, but Listen's sheet
+    // closes on stop, which would make the voice unreachable. Paused picks
+    // restart the session on dismiss (below), so they are heard.
+    val listenTtsActive = !inOverlayMode && playback.connected && !playback.sessionFinished
+    val listenTtsVoiceLocked = !inOverlayMode && (playback.isPlaying || playback.isLoading)
     var adapterRate by remember { mutableFloatStateOf(prepared.savedProgress?.speechRate ?: loadTtsSpeechRate(context)) }
     var adapterPitch by remember { mutableFloatStateOf(prepared.savedProgress?.pitch ?: loadTtsPitch(context)) }
-    val sharedItem = remember(sourceBook, prepared.savedProgress) {
+    val sharedItem = remember(sourceBook, prepared.savedProgress, overlayInfo) {
         com.aryan.reader.shared.SharedTtsListenItem(
             book = sourceBook.toSharedBookItem(),
             progress = prepared.savedProgress?.let { progress ->
@@ -715,12 +749,16 @@ private fun BookTtsPlayerSheet(
                     updatedAt = progress.updatedAt,
                 )
             },
+            mediaOverlay = com.aryan.reader.shared.SharedListenMediaOverlayInfo(
+                hasNarration = overlayInfo.hasNarration,
+                narrator = overlayInfo.narrator,
+                narratedChapterIndices = overlayInfo.narratedChapterIndices,
+            ),
         )
     }
     val isThisBookActive = playback.connected && playback.bookId == sourceBook.bookId
     LaunchedEffect(sourceBook.bookId) {
-        controller.connect(sourceBook.bookId)
-        if (item.autoStart) controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_RESUME)
+        controller.connect(sourceBook.bookId, item.autoStart)
     }
     LaunchedEffect(prepared.savedProgress?.updatedAt) {
         prepared.savedProgress?.let { progress ->
@@ -733,7 +771,7 @@ private fun BookTtsPlayerSheet(
     com.aryan.reader.shared.ui.SharedMobileTtsPlayerSheet(
         item = sharedItem,
         playback = playback.copy(
-            speechRate = adapterRate,
+            speechRate = if (inOverlayMode) overlaySpeed else adapterRate,
             pitch = adapterPitch,
             chapterIndex = adapterChapterIndex,
             chapterCount = prepared.book?.chapters?.size ?: playback.chapterCount,
@@ -742,20 +780,14 @@ private fun BookTtsPlayerSheet(
             error = playback.error ?: prepared.error,
         ),
         chapterTitles = prepared.book?.chapters?.map { it.title },
-        onTogglePlayback = {
-            if (isThisBookActive) controller.togglePlay()
-            else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_RESUME)
-        },
+        onTogglePlayback = { controller.toggleListenPlayback(sourceBook.bookId) },
         onSeekChunk = { target ->
             if (target < playback.chunkIndex) controller.previousChunk() else controller.nextChunk()
         },
-        onSeekChapter = { target ->
-            if (isThisBookActive) controller.selectChapter(target)
-            else controller.start(sourceBook.bookId, BookTtsSessionCoordinator.START_CHAPTER, target)
-        },
+        onSeekChapter = { target -> controller.seekListenChapter(sourceBook.bookId, target) },
         onSpeedChange = { selectedSpeed ->
-            adapterRate = selectedSpeed
-            controller.setParameters(rate = selectedSpeed, pitch = adapterPitch)
+            if (!inOverlayMode) adapterRate = selectedSpeed
+            controller.setListenSpeed(selectedSpeed)
         },
         onSleepTimer = { minutes -> controller.startSleepTimer(minutes ?: 0) },
         customSleepTimerMinutes = customSleepTimers,
@@ -766,9 +798,19 @@ private fun BookTtsPlayerSheet(
         onStopPlayback = controller::stop,
         onDismiss = onDismiss,
         onOpenVoiceSettings = { showListenVoiceSettings = true },
+        listenSource = listenSource,
+        onListenSourceChange = { source -> controller.selectListenSource(source) },
     )
     DisposableEffect(controller) { onDispose(controller::release) }
 
+    // Voice picks across every tab (engine, cloud speaker, device voice)
+    // funnel through one restart: the service applies voice/mode only at
+    // session start, so a single stop-chained restart on dismiss both covers
+    // tabs with no change callback and avoids a restart per tap.
+    var voicePickBaseline by remember { mutableStateOf("") }
+    LaunchedEffect(showListenVoiceSettings) {
+        if (showListenVoiceSettings) voicePickBaseline = listenVoicePickKey(context)
+    }
     if (showListenVoiceSettings) {
         TtsSettingsSheet(
             isVisible = true,
@@ -777,6 +819,10 @@ private fun BookTtsPlayerSheet(
                 // Re-read in case the device-voice tab changed the native pick.
                 listenMode = loadListenTtsMode(context)
                 listenSpeaker = loadListenTtsSpeaker(context)
+                if (listenVoicePickKey(context) != voicePickBaseline) {
+                    voicePickBaseline = listenVoicePickKey(context)
+                    controller.restartListenSessionForVoiceChange(sourceBook.bookId)
+                }
             },
             currentMode = listenMode,
             onModeChange = { newMode ->

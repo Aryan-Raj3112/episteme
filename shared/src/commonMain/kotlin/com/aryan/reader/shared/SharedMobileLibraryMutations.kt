@@ -51,11 +51,29 @@ fun shouldRequestCloudSyncAfterFolderSyncChange(
  */
 const val LOCAL_FOLDER_SCAN_LOG_TAG = "LocalFolderScan"
 
+/**
+ * Common diagnostics tag for the cover pipeline, end to end: pending-extraction
+ * queue -> extraction result -> cover file write -> path resolution -> library
+ * render lookup. A cover that is missing on screen is indistinguishable from one
+ * that was never generated unless every hand-off is logged, and the stages live
+ * in different files, so they share this one tag.
+ *
+ * Ungated, like [LOCAL_FOLDER_SCAN_LOG_TAG]: an active cover bug should not also
+ * require flipping a hidden diagnostics preference. Volume is per book and per
+ * render lookup, which is bounded by what the library can show.
+ */
+const val LIBRARY_COVER_LOG_TAG = "LibraryCover"
+
 data class SharedMobileFolderScanResult(
     val folderName: String,
     val files: List<SharedFolderScannedFile>,
     val succeeded: Boolean = true,
     val scanStatus: LocalFolderScanStatus = LocalFolderScanStatus.COMPLETE,
+    /**
+     * Native failure detail (`access_denied`, `bookmark_failed`, …). Used only
+     * to pick the user-facing message; the scan itself never acts on it.
+     */
+    val scanDetail: String = "",
 )
 
 /**
@@ -116,6 +134,42 @@ fun enqueueMobileFolderScan(
  */
 fun shouldApplyMobileFolderScan(configuredFolder: SyncedFolder?): Boolean =
     configuredFolder?.localSyncEnabled != false
+
+/**
+ * Banner text for a folder scan that could not be applied.
+ *
+ * A folder whose access grant is gone (link lost, permission refused — iOS
+ * reports both through the security-scope pipeline) needs the user to re-link
+ * it; telling them to try again would be a dead end. Everything else keeps the
+ * existing "try again later" wording.
+ */
+fun mobileFolderScanFailureMessage(folderName: String, scanDetail: String): String {
+    val detail = scanDetail.lowercase()
+    val linkLost = LINK_FAILURE_MARKERS.any { it in detail }
+    return if (linkLost) {
+        "$folderName is no longer accessible. Remove the folder and add it again to restore access."
+    } else {
+        "Could not refresh $folderName; keeping the previous scan"
+    }
+}
+
+private val LINK_FAILURE_MARKERS = listOf("access_denied", "bookmark_failed", "no_bookmark", "bookmark.reissue_failed")
+
+/**
+ * Whether a linked folder whose access grant is gone should be reported to the
+ * user as needing a re-link.
+ *
+ * Only when the folder still holds books and none of them is readable: a
+ * legacy folder still served by its app-managed copy (or one whose books were
+ * all deleted) has nothing to warn about. The grant is what makes in-place
+ * reading possible, so an unlinked folder with unreadable books is a dead end
+ * until the user picks it again.
+ */
+fun mobileFolderNeedsRelink(
+    isLinked: Boolean,
+    bookPaths: List<String?>,
+    isReadable: (String?) -> Boolean,
+): Boolean = !isLinked && bookPaths.isNotEmpty() && bookPaths.none(isReadable)
 
 data class SharedMobileFolderFileTypesUpdate(
     val state: SharedReaderScreenState,
@@ -290,6 +344,17 @@ fun SharedReaderScreenState.withMobileLibrarySearchQuery(
     } else {
         this
     }
+}
+
+/**
+ * Library "search inside files" toggle. False preserves metadata-only
+ * search; hosts bulk-index on enable and clear content state on disable.
+ */
+fun SharedReaderScreenState.withMobileLibrarySearchInsideFiles(
+    enabled: Boolean,
+): SharedReaderScreenState {
+    if (searchInsideFiles == enabled) return this
+    return reduce(LibraryAction.SearchInsideFilesChanged(enabled))
 }
 
 fun planMobileImportBatch(
@@ -616,6 +681,55 @@ fun SharedReaderScreenState.withMobileBookTabClosed(bookId: String): SharedReade
     return updated.copy(
         openTabs = updated.openTabIds.mapNotNull { id ->
             updated.rawLibraryBooks.firstOrNull { it.id == id }
+        },
+    )
+}
+
+/**
+ * Android benchmark (`AppUiModels.setTabsEnabled`): disabling tabs keeps the
+ * active tab in memory so re-enabling restores it. The shared
+ * [AppAction.TabsEnabledChanged] reducer wipes all tabs on disable, so mobile
+ * shells must route toggles through here instead of reducing directly.
+ */
+fun SharedReaderScreenState.withMobileTabsEnabled(enabled: Boolean): SharedReaderScreenState {
+    if (enabled) {
+        return reduce(AppAction.TabsEnabledChanged(true))
+    }
+    val activeId = activeTabBookId ?: return reduce(AppAction.TabsEnabledChanged(false))
+    val activeBook = openTabs.firstOrNull { it.id == activeId }
+        ?: rawLibraryBooks.firstOrNull { it.id == activeId }
+    return reduce(AppAction.TabsEnabledChanged(false)).copy(
+        openTabIds = listOf(activeId),
+        activeTabBookId = activeId,
+        openTabs = listOfNotNull(activeBook),
+    )
+}
+
+/**
+ * Drops tab ids that no longer exist in the library and enforces
+ * [MAX_OPEN_PDF_TABS], mirroring Android's `reconcileTabState` before every
+ * tab open/switch/close. Passive pruning only: the reader selection is left
+ * to the explicit close/remove paths.
+ */
+fun SharedReaderScreenState.withReconciledMobilePdfTabs(
+    maxOpenTabs: Int = MAX_OPEN_PDF_TABS,
+): SharedReaderScreenState {
+    val availableIds = rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
+    val reconciledIds = openTabIds
+        .asSequence()
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .filter { it in availableIds }
+        .take(maxOpenTabs.coerceAtLeast(0))
+        .toList()
+    val reconciledActive = activeTabBookId?.takeIf { it in reconciledIds }
+    if (reconciledIds == openTabIds && reconciledActive == activeTabBookId) return this
+    return copy(
+        openTabIds = reconciledIds,
+        activeTabBookId = reconciledActive,
+        openTabs = reconciledIds.mapNotNull { id ->
+            rawLibraryBooks.firstOrNull { it.id == id }
         },
     )
 }

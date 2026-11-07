@@ -235,6 +235,9 @@ val PageInfoPosition.titleRes: Int
     }
 
 private const val FORMAT_IS_LOCAL_PREFIX = "format_is_local_"
+private const val THEME_IS_LOCAL_PREFIX = "theme_is_local_"
+private const val LOCAL_THEME_ID_PREFIX = "local_theme_id_"
+private const val LOCAL_THEME_TRANSPARENCY_PREFIX = "local_theme_transparency_"
 private const val LOCAL_FONT_SIZE_PREFIX = "local_font_size_"
 private const val LOCAL_LINE_HEIGHT_PREFIX = "local_line_height_"
 private const val LOCAL_PARAGRAPH_GAP_PREFIX = "local_paragraph_gap_"
@@ -258,6 +261,38 @@ fun loadFormatIsLocal(context: Context, bookId: String): Boolean {
 fun saveFormatIsLocal(context: Context, bookId: String, isLocal: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putBoolean(FORMAT_IS_LOCAL_PREFIX + bookId, isLocal) }
+}
+
+fun loadThemeIsLocal(context: Context, bookId: String): Boolean {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getBoolean(THEME_IS_LOCAL_PREFIX + bookId, false)
+}
+
+fun saveThemeIsLocal(context: Context, bookId: String, isLocal: Boolean) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putBoolean(THEME_IS_LOCAL_PREFIX + bookId, isLocal) }
+}
+
+fun loadLocalThemeId(context: Context, bookId: String): String? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return prefs.getString(LOCAL_THEME_ID_PREFIX + bookId, null)
+}
+
+fun saveLocalThemeId(context: Context, bookId: String, themeId: String) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putString(LOCAL_THEME_ID_PREFIX + bookId, themeId) }
+}
+
+fun loadLocalThemeTransparency(context: Context, bookId: String): Float? {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return if (prefs.contains(LOCAL_THEME_TRANSPARENCY_PREFIX + bookId)) {
+        prefs.getFloat(LOCAL_THEME_TRANSPARENCY_PREFIX + bookId, 0f)
+    } else null
+}
+
+fun saveLocalThemeTransparency(context: Context, bookId: String, transparency: Float) {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit { putFloat(LOCAL_THEME_TRANSPARENCY_PREFIX + bookId, transparency) }
 }
 
 fun saveLocalReaderSettings(

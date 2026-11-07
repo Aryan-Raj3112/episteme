@@ -77,7 +77,14 @@ fun ReaderThemePanel(
     onGlobalTextureTransparencyChange: (Float) -> Unit,
     onThemeSelected: (String) -> Unit,
     onCustomThemesUpdated: (List<ReaderTheme>) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    isLocalMode: Boolean = false,
+    onLocalModeChange: (Boolean) -> Unit = {},
+    localLabel: String? = null,
+    globalLabel: String? = null,
+    localDescription: String? = null,
+    globalDescription: String? = null,
+    selectModeLabel: String? = null
 ) {
     val context = LocalContext.current
     com.aryan.reader.shared.ui.SharedReaderThemePanel(
@@ -142,6 +149,15 @@ fun ReaderThemePanel(
                 onCancel = onCancel,
             )
         },
+        isLocalMode = isLocalMode,
+        onLocalModeChange = onLocalModeChange,
+        modeLabels = com.aryan.reader.shared.ui.SharedReaderThemeModeLabels(
+            global = globalLabel ?: stringResource(R.string.theme_global),
+            local = localLabel ?: stringResource(R.string.theme_local),
+            globalDescription = globalDescription ?: stringResource(R.string.auto_scroll_applies_all_files),
+            localDescription = localDescription ?: stringResource(R.string.auto_scroll_saved_for_file),
+            selectMode = selectModeLabel ?: stringResource(R.string.content_desc_select_mode),
+        ),
     )
 }
 

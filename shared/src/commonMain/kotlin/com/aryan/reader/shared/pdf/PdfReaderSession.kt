@@ -497,7 +497,33 @@ fun initialSharedPdfReaderState(
     initialPageIndex: Int,
     highlighterPalette: SharedPdfHighlighterPalette = SharedPdfHighlighterPalette(),
     isHighlighterSnapEnabled: Boolean = false,
+    isLocalTheme: Boolean = false,
+    localThemeSettings: ReaderSettings? = null,
 ): SharedPdfReaderState {
+    if (isLocalTheme) {
+        val local = localThemeSettings
+        return persistedState
+            ?.copy(
+                themeId = local?.themeId ?: persistedState.themeId,
+                reverseColorMode = local?.pdfReverseColorMode ?: persistedState.reverseColorMode,
+                preserveImageColors = local?.pdfPreserveImageColors ?: persistedState.preserveImageColors,
+                highlighterPalette = highlighterPalette.sanitized().colors,
+                isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+            )
+            ?.coerced()
+            ?: SharedPdfReaderState.initial(
+                pageCount = (initialPageIndex.coerceAtLeast(0) + 1).coerceAtLeast(1),
+                initialPageIndex = initialPageIndex,
+            )
+                .copy(
+                    displayMode = PdfDisplayMode.VERTICAL_SCROLL,
+                    themeId = local?.themeId ?: defaults.themeId ?: "no_theme",
+                    reverseColorMode = local?.pdfReverseColorMode ?: defaults.pdfReverseColorMode,
+                    preserveImageColors = local?.pdfPreserveImageColors ?: defaults.pdfPreserveImageColors,
+                    highlighterPalette = highlighterPalette.sanitized().colors,
+                    isHighlighterSnapEnabled = isHighlighterSnapEnabled,
+                )
+    }
     return persistedState
         ?.copy(
             themeId = defaults.themeId ?: persistedState.themeId,

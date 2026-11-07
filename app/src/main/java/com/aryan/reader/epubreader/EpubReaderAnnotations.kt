@@ -29,10 +29,8 @@ import android.text.style.URLSpan
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
-import timber.log.Timber
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,26 +39,20 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -76,8 +68,12 @@ import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.ReaderHighlightPalette
+import com.aryan.reader.shared.epubHighlightColorFromToken
+import com.aryan.reader.shared.ui.SharedMobileEpubAnnotationLabels
+import com.aryan.reader.shared.ui.SharedMobileEpubAnnotationSheet
+import com.aryan.reader.shared.ui.SharedMobileEpubHighlightColorRow
+import com.aryan.reader.shared.ui.SharedMobileEpubHighlightStyleRow
 import com.aryan.reader.shared.ui.SharedReaderHighlightPaletteDialog
-import com.aryan.reader.shared.ui.SharedReaderHighlightPaletteSpectrumButton
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.DefaultEpubHighlightPaletteArgb
 import com.aryan.reader.shared.sanitizeEpubHighlightPalette
@@ -275,45 +271,31 @@ fun highlightStyleIconRes(style: HighlightStyle): Int {
     }
 }
 
+/**
+ * EPUB highlight palette row.
+ *
+ * Thin adapter over the shared [SharedMobileEpubHighlightColorRow]: this was the original
+ * implementation and the shared one carries the identical layout (four ARGB slots, 28dp swatches,
+ * 3dp selection border, check glyph, spectrum entry to the palette editor). Android stays the
+ * benchmark for behaviour — the ARGB list shape and the selection rule are unchanged — while the
+ * row itself now lives in one place for both hosts.
+ */
 @Composable
-private fun HighlightStyleRow(
-    selectedStyle: HighlightStyle,
-    effectiveText: Color,
-    onStyleSelect: (HighlightStyle) -> Unit,
-    modifier: Modifier = Modifier
+fun HighlightColorRow(
+    modifier: Modifier = Modifier,
+    activeHighlightPalette: List<Int>,
+    selectedColorArgb: Int? = null,
+    onColorSelect: (Int) -> Unit,
+    onOpenPaletteManager: (() -> Unit)? = null,
 ) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        HighlightStyle.entries.forEach { style ->
-            Box(
-                modifier = Modifier
-                    .padding(horizontal = 4.dp)
-                    .size(34.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (selectedStyle == style) effectiveText.copy(alpha = 0.16f)
-                        else effectiveText.copy(alpha = 0.06f)
-                    )
-                    .border(
-                        width = 1.dp,
-                        color = if (selectedStyle == style) effectiveText.copy(alpha = 0.55f) else effectiveText.copy(alpha = 0.24f),
-                        shape = RoundedCornerShape(8.dp)
-                    )
-                    .clickable { onStyleSelect(style) },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    painter = painterResource(id = highlightStyleIconRes(style)),
-                    contentDescription = style.id,
-                    tint = effectiveText,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
+    SharedMobileEpubHighlightColorRow(
+        palette = ReaderHighlightPalette(colors = activeHighlightPalette),
+        selectedColorArgb = selectedColorArgb ?: activeHighlightPalette.firstOrNull()
+            ?: return,
+        onColorSelect = onColorSelect,
+        modifier = modifier,
+        onOpenPaletteManager = onOpenPaletteManager,
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -334,162 +316,40 @@ fun AnnotationBottomSheet(
     onTranslate: () -> Unit,
     onSearch: () -> Unit
 ) {
-    val context = LocalContext.current
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var noteText by remember { mutableStateOf(highlight.note ?: "") }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = effectiveBg, // Matches user theme
-        contentColor = effectiveText,
-        contentWindowInsets = { WindowInsets.navigationBars }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp)
-        ) {
-            // Top: Highlight Style + Colors
-            HighlightStyleRow(
-                selectedStyle = highlight.style,
-                effectiveText = effectiveText,
-                onStyleSelect = {
-                    savePreferredHighlightStyle(context, it)
-                    onStyleChange(it)
-                },
-                modifier = Modifier.padding(bottom = 10.dp)
-            )
-            HighlightColorRow(
-                activeHighlightPalette = activeHighlightPalette,
-                selectedColorArgb = highlight.colorArgb ?: highlight.color.color.toArgb(),
-                onColorSelect = onColorChange,
-                onOpenPaletteManager = onOpenPaletteManager,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            // Middle: Elegant Highlight Snippet Card
-            Surface(
-                color = highlight.effectiveColor.copy(alpha = 0.1f),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, highlight.effectiveColor.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-                    // Left colored accent bar
-                    Box(
-                        modifier = Modifier
-                            .width(6.dp)
-                            .fillMaxHeight()
-                            .background(highlight.effectiveColor)
-                    )
-                    Text(
-                        text = "\"${highlight.text}\"",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
-                        maxLines = 4,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        color = effectiveText.copy(alpha = 0.9f),
-                        modifier = Modifier.padding(16.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // Action Tools Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                BottomSheetToolButton(icon = R.drawable.copy, label = stringResource(R.string.action_copy), onClick = onCopy, effectiveText = effectiveText)
-                BottomSheetToolButton(icon = R.drawable.dictionary, label = stringResource(R.string.label_dict), onClick = onDictionary, effectiveText = effectiveText)
-                BottomSheetToolButton(icon = R.drawable.translate, label = stringResource(R.string.dict_translate), onClick = onTranslate, effectiveText = effectiveText)
-                BottomSheetToolButton(icon = R.drawable.search, label = stringResource(R.string.action_search), onClick = onSearch, effectiveText = effectiveText)
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // Note TextField
-            OutlinedTextField(
-                value = noteText,
-                onValueChange = { noteText = it },
-                placeholder = { Text(stringResource(R.string.placeholder_add_note), color = effectiveText.copy(alpha = 0.5f)) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 100.dp),
-                maxLines = 5,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = effectiveText.copy(alpha = 0.3f),
-                    focusedTextColor = effectiveText,
-                    unfocusedTextColor = effectiveText
-                ),
-                shape = RoundedCornerShape(12.dp)
-            )
-
-            Spacer(Modifier.height(24.dp))
-
-            // Bottom Actions
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = onDelete,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.action_delete))
-                }
-                Button(
-                    onClick = { onSave(noteText) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) {
-                    Text(stringResource(R.string.action_save_note))
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun BottomSheetToolButton(
-    icon: Int,
-    label: String,
-    onClick: () -> Unit,
-    effectiveText: Color
-) {
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Icon(
-            painter = painterResource(id = icon),
-            contentDescription = label,
-            tint = effectiveText.copy(alpha = 0.8f),
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = effectiveText.copy(alpha = 0.8f)
-        )
-    }
+    // Thin adapter over the shared sheet. This was the original implementation: the layout (style
+    // row, palette row, quoted snippet with its accent bar, tool row, note field, delete/save) is
+    // Android's, moved to `SharedMobileEpubAnnotationSheet` so both hosts render one surface.
+    //
+    // What still differs per host is behaviour, not layout: the tool callbacks stay Android's own
+    // (AI define / external dictionary packages / clipboard), and the labels come from Android
+    // resources rather than a shared lookup, because the Android reader composes without a
+    // LocalSharedStringResolver and would otherwise render the English fallbacks.
+    SharedMobileEpubAnnotationSheet(
+        highlight = highlight,
+        palette = ReaderHighlightPalette(colors = activeHighlightPalette),
+        effectiveBg = effectiveBg,
+        effectiveText = effectiveText,
+        labels = SharedMobileEpubAnnotationLabels(
+            copy = stringResource(R.string.action_copy),
+            speak = stringResource(R.string.label_speak),
+            dictionary = stringResource(R.string.label_dict),
+            translate = stringResource(R.string.dict_translate),
+            search = stringResource(R.string.action_search),
+            notePlaceholder = stringResource(R.string.placeholder_add_note),
+            delete = stringResource(R.string.action_delete),
+            saveNote = stringResource(R.string.action_save_note)
+        ),
+        onColorChange = onColorChange,
+        onStyleChange = onStyleChange,
+        onCopy = onCopy,
+        onDictionary = onDictionary,
+        onTranslate = onTranslate,
+        onSearch = onSearch,
+        onOpenPaletteManager = onOpenPaletteManager,
+        onDismiss = onDismiss,
+        onSave = onSave,
+        onDelete = onDelete
+    )
 }
 
 private class MenuActionItem(
@@ -499,62 +359,6 @@ private class MenuActionItem(
     val onClick: () -> Unit,
     val isError: Boolean = false
 )
-
-@Composable
-fun HighlightColorRow(
-    modifier: Modifier = Modifier,
-    activeHighlightPalette: List<Int>,
-    selectedColorArgb: Int? = null,
-    onColorSelect: (Int) -> Unit,
-    onOpenPaletteManager: (() -> Unit)? = null,
-) {
-    Row(
-        modifier = modifier
-            .padding(vertical = 8.dp, horizontal = 10.dp)
-            .fillMaxWidth(),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        activeHighlightPalette.forEach { argb ->
-            val swatchColor = Color(argb)
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .padding(horizontal = 4.dp)
-                    .size(28.dp)
-                    .testTag("HighlightColor_${highlightColorTag(argb)}")
-                    .clip(CircleShape)
-                    .background(swatchColor)
-                    .clickable {
-                        Timber.d("HighlightColorRow: Color clicked -> ${highlightColorTag(argb)}")
-                        onColorSelect(argb)
-                    }
-                    .border(
-                        width = if (selectedColorArgb == argb) 3.dp else 1.dp,
-                        color = if (selectedColorArgb == argb) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline.copy(alpha=0.3f),
-                        shape = CircleShape
-                    )
-            ) {
-                if (selectedColorArgb == argb) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = stringResource(R.string.content_desc_selected),
-                        tint = if (swatchColor.luminance() > 0.5f) Color.Black else Color.White,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        }
-
-        if (onOpenPaletteManager != null) {
-            Spacer(modifier = Modifier.width(6.dp))
-            SharedReaderHighlightPaletteSpectrumButton(
-                onClick = onOpenPaletteManager,
-                size = 28.dp
-            )
-        }
-    }
-}
 
 @Composable
 fun PaginatedTextSelectionMenu(
@@ -588,7 +392,7 @@ fun PaginatedTextSelectionMenu(
         Column(modifier = Modifier.width(IntrinsicSize.Max).widthIn(min = 180.dp)) {
             // 1. Highlight style and colors row
             if (onHighlight != null) {
-                HighlightStyleRow(
+                SharedMobileEpubHighlightStyleRow(
                     selectedStyle = selectedHighlightStyle,
                     effectiveText = MaterialTheme.colorScheme.onSurface,
                     onStyleSelect = {

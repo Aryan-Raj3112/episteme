@@ -499,7 +499,10 @@ fun AppNavigation(
                                 }
                             },
                             onBookmarksChanged = { bookmarksJson ->
-                                val bookId = uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
+                                // Prefer the explicit selection: a delayed save from one book
+                                // must not be attributed to whichever book is active when it runs.
+                                val bookId = uiState.selectedBookId
+                                    ?: uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
                                 if (bookId != null) {
                                     viewModel.saveBookmarks(bookId, bookmarksJson)
                                 } else {

@@ -30,6 +30,7 @@ import androidx.media3.common.util.UnstableApi
 import com.aryan.reader.BuildConfig
 import com.aryan.reader.R
 import com.aryan.reader.shared.ui.sanitizeSharedMobileTtsSampleText
+import com.aryan.reader.shared.compareByNatural
 import com.aryan.reader.shared.patchReaderTtsWavHeader
 import com.aryan.reader.shared.createReaderTtsWavHeaderUnknownLength
 import kotlinx.coroutines.CoroutineScope
@@ -329,7 +330,7 @@ class TtsCacheManager(private val context: Context) {
                     matchingFiles = files
                 )
             }
-        }?.sortedBy { it.chapterTitle } ?: emptyList()
+        }?.sortedWith(compareByNatural { it.chapterTitle }) ?: emptyList()
     }
 
     fun deleteChapterCache(chapterDir: File) {

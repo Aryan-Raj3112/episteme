@@ -2,6 +2,7 @@ package com.aryan.reader.shared.pdf
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class SharedPdfInkAppearanceTest {
@@ -48,6 +49,45 @@ class SharedPdfInkAppearanceTest {
                 0xFF000000.toInt(),
             ),
         )
+    }
+
+    @Test
+    fun `translucent stroke references the opacity graphics state PDFium attaches`() {
+        val content = sharedPdfInkAppearanceContent(
+            pagePoints = listOf(PdfPagePoint(10f, 20f), PdfPagePoint(30f, 40f)),
+            strokeWidthPdfUnits = 2.5f,
+            colorArgb = 0x8CFFEB3B.toInt(),
+        )
+
+        // FPDFAnnot_SetAP only installs /Resources/ExtGState/GS while the annotation's
+        // /CA is below 1, so the stream must select it explicitly; exporters write /CA
+        // from sharedPdfInkAnnotationDictColorArgb, which keeps this colour unchanged.
+        assertTrue(content.startsWith("q\n/GS gs\n"), content)
+        assertTrue(content.contains("1 0.921 0.231 RG"), content)
+    }
+
+    @Test
+    fun `opaque stroke omits the opacity graphics state`() {
+        val content = sharedPdfInkAppearanceContent(
+            pagePoints = listOf(PdfPagePoint(10f, 20f), PdfPagePoint(30f, 40f)),
+            strokeWidthPdfUnits = 2.5f,
+            colorArgb = 0xFFFFEB3B.toInt(),
+        )
+
+        assertTrue(content.startsWith("q\n"), content)
+        assertFalse(content.contains("gs"), content)
+    }
+
+    @Test
+    fun `fully transparent stroke still selects the opacity graphics state`() {
+        val content = sharedPdfInkAppearanceContent(
+            pagePoints = listOf(PdfPagePoint(10f, 20f), PdfPagePoint(30f, 40f)),
+            strokeWidthPdfUnits = 2.5f,
+            colorArgb = 0x00FF0000,
+        )
+
+        // A zero alpha must stay invisible instead of falling back to a solid stroke.
+        assertTrue(content.startsWith("q\n/GS gs\n"), content)
     }
 
     @Test

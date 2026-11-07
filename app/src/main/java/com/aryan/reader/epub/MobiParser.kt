@@ -25,13 +25,18 @@ import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import java.io.File
 import java.io.InputStream
 import java.util.UUID
 
 class MobiParser(private val context: Context) {
 
-    private data class ParsedMobiTocEntry(val title: String, val filePosition: Int) : Comparable<ParsedMobiTocEntry> {
+    /**
+     * One NCX (or guide) TOC entry. `internal` rather than private so the split it feeds can be
+     * unit tested without the JNI parser; the JNI constructor lookup is unaffected.
+     */
+    internal data class ParsedMobiTocEntry(val title: String, val filePosition: Int) : Comparable<ParsedMobiTocEntry> {
         override fun compareTo(other: ParsedMobiTocEntry): Int = this.filePosition.compareTo(other.filePosition)
     }
 
@@ -182,11 +187,22 @@ class MobiParser(private val context: Context) {
             .toMap()
 
         if (parseContent) {
-            parsedData.resources.forEach { resource ->
+            parsedData.resources.forEachIndexed { index, resource ->
                 try {
                     val file = File(extractionDir, resource.path)
                     file.parentFile?.mkdirs()
                     file.writeBytes(resource.data)
+                    // The payload is on disk now, so release this copy before the chapter work below.
+                    // Every embedded image and font would otherwise stay resident byte-for-byte,
+                    // leaving a low-heap device with nothing to allocate the chapter split from
+                    // (docs/crashlytics-triage.md#91). Only on success: a failed write still needs
+                    // its bytes. CSS and the cover are read again after this loop, so they keep
+                    // theirs.
+                    if (resource.mediaType != "text/css" &&
+                        resource.uid != parsedData.coverImageResourceUid
+                    ) {
+                        parsedData.resources[index] = resource.copy(data = ByteArray(0))
+                    }
                     Timber.d("Wrote resource to disk -> Path: ${file.absolutePath}")
                 } catch (e: Exception) {
                     Timber.e(e, "Parser: FAILED to write resource to disk: ${resource.path}")
@@ -201,66 +217,24 @@ class MobiParser(private val context: Context) {
                 "kindle:flow:${String.format("%04d", index)}?mime=text/css" to it.path
             }
 
-        val processChapterHtml: (String) -> String = { html ->
-            val doc = Jsoup.parse(html)
-
-            doc.select("link[href]").forEach { link ->
-                val originalHref = link.attr("href")
-                cssFlowMap[originalHref]?.let { newPath ->
-                    link.attr("href", newPath)
-                    Timber.d("Rewrote CSS link from '$originalHref' to '$newPath'")
-                } ?: Timber.w("Could not find mapping for CSS link: $originalHref")
-            }
-
-            doc.select("img").forEach { img ->
-                val src = img.attr("src")
-                if (src.startsWith("kindle:embed:")) {
-                    val embedIndexString = src.substringAfter("embed:").substringBefore("?")
-                    val embedIndex = embedIndexString.toIntOrNull()
-                    if (embedIndex != null) {
-                        // **THE FIX**: Use the sequential map, not a UID map
-                        sequentialImageMap[embedIndex]?.let { newPath ->
-                            img.attr("src", newPath)
-                            Timber.d("Rewrote image src from '$src' to '$newPath' using sequential map")
-                        } ?: Timber.w("No resource found for sequential image index: $embedIndex")
-                    }
-                } else if (img.hasAttr("recindex")) {
-                    val recIndex = img.attr("recindex").toIntOrNull()
-                    if (recIndex != null) {
-                        sequentialImageMap[recIndex]?.let { newPath ->
-                            img.attr("src", newPath)
-                            img.removeAttr("recindex")
-                        } ?: Timber.w("Kotlin: No matching image found for recindex: $recIndex")
-                    }
-                }
-            }
-            doc.outerHtml()
-        }
-
         // --- CHAPTER SPLITTING LOGIC ---
-        val rawHtmlBytes = parsedData.rawHtmlContent.toByteArray(Charsets.UTF_8)
-        val chapterHtmlParts = mutableListOf<Pair<String, String>>()
-
-        val sortedToc = parsedData.toc?.sorted()
-        if (!sortedToc.isNullOrEmpty()) {
-            Timber.d("Splitting content using TOC (${sortedToc.size} entries).")
-            for (i in sortedToc.indices) {
-                val tocEntry = sortedToc[i]
-                val startByte = tocEntry.filePosition
-                val endByte = if (i + 1 < sortedToc.size) sortedToc[i + 1].filePosition else rawHtmlBytes.size
-                if (startByte >= endByte) continue
-                val chapterBytes = rawHtmlBytes.sliceArray(startByte until endByte)
-                val chapterHtml = String(chapterBytes, Charsets.UTF_8)
-                chapterHtmlParts.add(Pair(chapterHtml, tocEntry.title))
+        // Only the chapter list below consumes this, so a metadata-only import skips it entirely.
+        val chapterHtmlParts = if (parseContent) {
+            val rawHtml = parsedData.rawHtmlContent
+            val sortedToc = parsedData.toc?.sorted()
+            if (!sortedToc.isNullOrEmpty()) {
+                Timber.d("Splitting content using TOC (${sortedToc.size} entries).")
+                splitMobiChaptersByFilePosition(rawHtml, sortedToc)
+            } else {
+                Timber.d("No TOC found. Falling back to splitting by <mbp:pagebreak/>.")
+                // String-side split, so a book without a TOC never encodes its HTML at all.
+                rawHtml.split("(?i)<mbp:pagebreak\\s*/>".toRegex())
+                    .mapIndexedNotNull { index, html ->
+                        html.takeIf(String::isNotBlank)?.let { it to "Chapter ${index + 1}" }
+                    }
             }
         } else {
-            Timber.d("No TOC found. Falling back to splitting by <mbp:pagebreak/>.")
-            val parts = parsedData.rawHtmlContent.split("(?i)<mbp:pagebreak\\s*/>".toRegex())
-            parts.forEachIndexed { index, html ->
-                if (html.isNotBlank()) {
-                    chapterHtmlParts.add(Pair(html, "Chapter ${index + 1}"))
-                }
-            }
+            emptyList()
         }
 
         Timber.d("Successfully split content into ${chapterHtmlParts.size} chapters.")
@@ -268,8 +242,12 @@ class MobiParser(private val context: Context) {
         val epubChapters = if (parseContent) {
             chapterHtmlParts.mapIndexedNotNull { index, (chapterHtml, title) ->
                 try {
-                    val rewrittenHtml = processChapterHtml(chapterHtml)
-                    val doc = Jsoup.parse(rewrittenHtml)
+                    // One DOM per chapter: it is serialized once for the chapter file, and the
+                    // plain text comes from the same tree. The old code re-parsed the string it had
+                    // just serialized, building a second full DOM per chapter for nothing
+                    // (docs/crashlytics-triage.md#116).
+                    val doc = rewriteMobiChapterDocument(chapterHtml, cssFlowMap, sequentialImageMap)
+                    val rewrittenHtml = doc.outerHtml()
                     val chapterFileName = "chapter_$index.html"
                     val chapterFile = File(extractionDir, chapterFileName)
                     chapterFile.writeText(rewrittenHtml)
@@ -323,5 +301,77 @@ class MobiParser(private val context: Context) {
         )
         Timber.d("Final EpubBook created. CSS map size: ${finalBook.css.size}, Image count: ${finalBook.images.size}")
         return@withContext finalBook
+    }
+}
+
+/**
+ * Splits the concatenated MOBI flow into chapters at the NCX file positions, which are byte offsets
+ * into that flow (not character offsets, so the text has to be encoded once).
+ *
+ * The encode is deliberately scoped to this call: it is a second full copy of the book's HTML — a
+ * 15 MB array for a 15 MB book — and it must not stay reachable while the chapters are rewritten
+ * and parsed afterwards (docs/crashlytics-triage.md#91). Decoding each chapter straight out of the
+ * array also drops the per-chapter `sliceArray` copy the split used to make.
+ */
+/**
+ * Parses one chapter and rewrites its asset references to the paths used after extraction.
+ *
+ * Returns the DOM, not its HTML, so the caller can take the chapter's text from the same tree it
+ * serializes for the chapter file. The previous shape returned only [Document.outerHtml] and the
+ * caller immediately re-parsed that string to get the text, which meant two full jsoup documents
+ * per chapter were alive at once - a multi-MB peak per chapter on a big MOBI for no benefit
+ * (docs/crashlytics-triage.md#116).
+ */
+internal fun rewriteMobiChapterDocument(
+    html: String,
+    cssFlowMap: Map<String, String>,
+    sequentialImageMap: Map<Int, String>,
+): Document {
+    val doc = Jsoup.parse(html)
+
+    doc.select("link[href]").forEach { link ->
+        val originalHref = link.attr("href")
+        cssFlowMap[originalHref]?.let { newPath ->
+            link.attr("href", newPath)
+            Timber.d("Rewrote CSS link from '$originalHref' to '$newPath'")
+        } ?: Timber.w("Could not find mapping for CSS link: $originalHref")
+    }
+
+    doc.select("img").forEach { img ->
+        val src = img.attr("src")
+        if (src.startsWith("kindle:embed:")) {
+            val embedIndexString = src.substringAfter("embed:").substringBefore("?")
+            val embedIndex = embedIndexString.toIntOrNull()
+            if (embedIndex != null) {
+                // **THE FIX**: Use the sequential map, not a UID map
+                sequentialImageMap[embedIndex]?.let { newPath ->
+                    img.attr("src", newPath)
+                    Timber.d("Rewrote image src from '$src' to '$newPath' using sequential map")
+                } ?: Timber.w("No resource found for sequential image index: $embedIndex")
+            }
+        } else if (img.hasAttr("recindex")) {
+            val recIndex = img.attr("recindex").toIntOrNull()
+            if (recIndex != null) {
+                sequentialImageMap[recIndex]?.let { newPath ->
+                    img.attr("src", newPath)
+                    img.removeAttr("recindex")
+                } ?: Timber.w("Kotlin: No matching image found for recindex: $recIndex")
+            }
+        }
+    }
+
+    return doc
+}
+
+internal fun splitMobiChaptersByFilePosition(
+    rawHtml: String,
+    sortedToc: List<MobiParser.ParsedMobiTocEntry>
+): List<Pair<String, String>> {
+    val rawHtmlBytes = rawHtml.toByteArray(Charsets.UTF_8)
+    return sortedToc.mapIndexedNotNull { index, entry ->
+        val startByte = entry.filePosition
+        val endByte = if (index + 1 < sortedToc.size) sortedToc[index + 1].filePosition else rawHtmlBytes.size
+        if (startByte >= endByte) return@mapIndexedNotNull null
+        String(rawHtmlBytes, startByte, endByte - startByte, Charsets.UTF_8) to entry.title
     }
 }

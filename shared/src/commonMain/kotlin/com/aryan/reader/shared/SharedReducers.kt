@@ -5,7 +5,11 @@ import com.aryan.reader.shared.reader.ReaderSessionState
 
 fun LibraryState.reduce(action: LibraryAction): LibraryState {
     return when (action) {
-        is LibraryAction.SearchChanged -> copy(searchQuery = action.query)
+        is LibraryAction.SearchChanged -> copy(searchQuery = action.query, contentSearchResults = emptyList())
+        is LibraryAction.SearchInsideFilesChanged -> copy(
+            searchInsideFiles = action.enabled,
+            contentSearchResults = emptyList(),
+        )
         is LibraryAction.SortChanged -> copy(sortOrder = action.sortOrder)
         is LibraryAction.FiltersChanged -> copy(filters = action.filters)
         is LibraryAction.BookSelectionToggled -> {
@@ -114,6 +118,8 @@ fun AppShelfState.reduce(action: AppShelfAction): AppShelfState = when (action) 
 fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenState {
     val reduced = LibraryState(
         searchQuery = searchQuery,
+        searchInsideFiles = searchInsideFiles,
+        contentSearchResults = emptyList(),
         sortOrder = sortOrder,
         filters = libraryFilters,
         selectedBookIds = selectedBookIds,
@@ -123,12 +129,32 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
     ).reduce(action)
     return copy(
         searchQuery = reduced.searchQuery,
+        searchInsideFiles = reduced.searchInsideFiles,
         sortOrder = reduced.sortOrder,
         libraryFilters = reduced.filters,
         selectedBookIds = reduced.selectedBookIds,
         selectedShelfIds = reduced.selectedShelfIds,
         libraryScreenStartPage = reduced.libraryPage,
         recentFilesLimit = reduced.recentLimit,
+        // Hosts that apply actions straight onto the projected state (iOS) do not run
+        // the projector again, so shelf contents have to be re-ordered here or the
+        // shelf screens would keep rendering the previous order. Android re-projects
+        // and never takes this path.
+        shelves = if (action is LibraryAction.SortChanged) {
+            shelves.map { shelf -> shelf.resortedFor(reduced.sortOrder) }
+        } else {
+            shelves
+        },
+    )
+}
+
+/** Restores the order the shared projector would produce for [sortOrder]. */
+private fun Shelf.resortedFor(sortOrder: SortOrder): Shelf = when (type) {
+    // The projector orders series shelves by series index, not by the library sort.
+    ShelfType.SERIES -> this
+    else -> copy(
+        books = sortBooks(books, sortOrder),
+        directBooks = sortBooks(directBooks, sortOrder),
     )
 }
 

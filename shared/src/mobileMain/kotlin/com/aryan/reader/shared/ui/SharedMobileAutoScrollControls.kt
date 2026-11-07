@@ -1,6 +1,12 @@
+@file:OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class
+)
+
 package com.aryan.reader.shared.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -37,12 +43,15 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -52,11 +61,70 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.aryan.reader.shared.ReaderMotionPolicy
 import kotlin.math.roundToInt
+
+/**
+ * Localised labels the auto-scroll surface renders.
+ *
+ * The composable itself does not call `readerString` for these: the Android reader composes shared
+ * surfaces without a [LocalSharedStringResolver], so a shared lookup would silently fall back to
+ * English inside the reader while the rest of the app is translated. Each host supplies its own
+ * table — Android passes `stringResource(...)` values, iOS and desktop use
+ * [sharedMobileAutoScrollLabels].
+ */
+data class SharedMobileAutoScrollLabels(
+    val expand: String,
+    val collapse: String,
+    val pause: String,
+    val play: String,
+    val globalSpeed: String,
+    val localSpeed: String,
+    val selectMode: String,
+    val appliesToAllFiles: String,
+    val savedForThisFile: String,
+    val scrollToTop: String,
+    val enableMusicianMode: String,
+    val disableMusicianMode: String,
+    val swapControls: String,
+    val close: String,
+    val min: String,
+    val max: String,
+    val slower: String,
+    val faster: String,
+)
+
+/** Resolver-backed labels, for hosts that provide one. */
+@Composable
+fun sharedMobileAutoScrollLabels(): SharedMobileAutoScrollLabels {
+    return SharedMobileAutoScrollLabels(
+        expand = readerString("content_desc_expand", "Expand"),
+        collapse = readerString("content_desc_collapse", "Collapse"),
+        pause = readerString("tooltip_tts_pause", "Pause"),
+        play = readerString("content_desc_start_playback", "Play"),
+        globalSpeed = readerString("auto_scroll_global_speed", "Global Speed"),
+        localSpeed = readerString("auto_scroll_local_speed", "Local Speed"),
+        selectMode = readerString("content_desc_select_mode", "Select Mode"),
+        appliesToAllFiles = readerString("auto_scroll_applies_all_files", "Applies to all files"),
+        savedForThisFile = readerString("auto_scroll_saved_for_file", "Saved for this file only"),
+        scrollToTop = readerString("action_scroll_to_top", "Scroll to Top"),
+        enableMusicianMode = readerString("content_desc_enable_musician_mode", "Enable Musician Mode"),
+        disableMusicianMode = readerString("content_desc_disable_musician_mode", "Disable Musician Mode"),
+        swapControls = readerString("content_desc_swap_controls", "Swap Controls"),
+        close = readerString("action_close", "Close"),
+        min = readerString("label_min", "Min"),
+        max = readerString("label_max", "Max"),
+        slower = readerString("content_desc_slower", "Slower"),
+        faster = readerString("content_desc_faster", "Faster"),
+    )
+}
 
 /**
  * One auto-scroll control surface for every vertical reader (EPUB WebView,
@@ -73,9 +141,16 @@ import kotlin.math.roundToInt
  *  - expanded: mode selector on the left, tool row on the right, then the
  *    play/pause pill next to the Min/Max menus and either the slider or the
  *    +/- stepper
+ *
+ * Android's own copy also honoured its `ReaderMotionPolicy`: under reduce-motion it
+ * skips `animateContentSize` and uses `EnterTransition.None`/`ExitTransition.None`
+ * instead of the 200ms fade, which is why the parameter is here rather than being
+ * different on the two hosts.
  */
 @Composable
-internal fun SharedMobileAutoScrollControls(
+fun SharedMobileAutoScrollControls(
+    labels: SharedMobileAutoScrollLabels = sharedMobileAutoScrollLabels(),
+    readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
     isPlaying: Boolean,
     isTempPaused: Boolean,
     speed: Float,
@@ -100,11 +175,7 @@ internal fun SharedMobileAutoScrollControls(
 ) {
     var showModeMenu by remember { mutableStateOf(false) }
     val safeSpeed = speed.coerceIn(minSpeed, maxSpeed.coerceAtLeast(minSpeed))
-    val playPauseDescription = if (isPlaying) {
-        readerString("tooltip_tts_pause", "Pause")
-    } else {
-        readerString("content_desc_start_playback", "Play")
-    }
+    val playPauseDescription = if (isPlaying) labels.pause else labels.play
     Surface(
         shape = RoundedCornerShape(28.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.6f),
@@ -113,12 +184,18 @@ internal fun SharedMobileAutoScrollControls(
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
         modifier = modifier
             .widthIn(max = 400.dp)
-            .animateContentSize()
+            .then(if (readerMotionPolicy.reduceMotion) Modifier else Modifier.animateContentSize())
     ) {
         AnimatedContent(
             targetState = isCollapsed,
-            transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(200)) },
-            label = "SharedMobileAutoScrollCollapse"
+            transitionSpec = {
+                if (readerMotionPolicy.reduceMotion) {
+                    EnterTransition.None togetherWith ExitTransition.None
+                } else {
+                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                }
+            },
+            label = "AutoScrollUnified"
         ) { collapsed ->
             if (collapsed) {
                 Row(
@@ -129,7 +206,7 @@ internal fun SharedMobileAutoScrollControls(
                     IconButton(onClick = { onCollapseChange(false) }, modifier = Modifier.size(36.dp)) {
                         Icon(
                             Icons.Default.ChevronLeft,
-                            contentDescription = readerString("content_desc_expand", "Expand"),
+                            contentDescription = labels.expand,
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -168,21 +245,18 @@ internal fun SharedMobileAutoScrollControls(
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
                                     .clickable { showModeMenu = true }
                                     .padding(4.dp)
                             ) {
                                 Text(
-                                    text = if (isLocalMode) {
-                                        readerString("auto_scroll_local_speed", "Local Speed")
-                                    } else {
-                                        readerString("auto_scroll_global_speed", "Global Speed")
-                                    },
+                                    text = if (isLocalMode) labels.localSpeed else labels.globalSpeed,
                                     style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.primary
                                 )
                                 Icon(
                                     Icons.Default.ArrowDropDown,
-                                    contentDescription = readerString("content_desc_select_mode", "Select Mode"),
+                                    contentDescription = labels.selectMode,
                                     tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -193,38 +267,35 @@ internal fun SharedMobileAutoScrollControls(
                             ) {
                                 SharedMobileAutoScrollModeMenuItem(
                                     selected = !isLocalMode,
-                                    title = readerString("auto_scroll_global_speed", "Global Speed"),
-                                    subtitle = readerString("auto_scroll_applies_all_files", "Applies to all files"),
+                                    title = labels.globalSpeed,
+                                    subtitle = labels.appliesToAllFiles,
                                     onSelect = { onLocalModeChange(false); showModeMenu = false }
                                 )
-                                androidx.compose.material3.HorizontalDivider()
+                                HorizontalDivider()
                                 SharedMobileAutoScrollModeMenuItem(
                                     selected = isLocalMode,
-                                    title = readerString("auto_scroll_local_speed", "Local Speed"),
-                                    subtitle = readerString("auto_scroll_saved_for_file", "Saved for this file only"),
+                                    title = labels.localSpeed,
+                                    subtitle = labels.savedForThisFile,
                                     onSelect = { onLocalModeChange(true); showModeMenu = false }
                                 )
                             }
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                             if (onScrollToTop != null) {
-                                IconButton(onClick = onScrollToTop, modifier = Modifier.size(32.dp)) {
+                                IconButton(onClick = onScrollToTop, modifier = Modifier.size(48.dp)) {
                                     Icon(
                                         Icons.Default.ArrowUpward,
-                                        contentDescription = readerString("action_scroll_to_top", "Scroll to Top"),
+                                        contentDescription = labels.scrollToTop,
                                         modifier = Modifier.size(18.dp),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
-                            IconButton(onClick = onMusicianModeToggle, modifier = Modifier.size(32.dp)) {
+                            IconButton(onClick = onMusicianModeToggle, modifier = Modifier.size(48.dp)) {
                                 Icon(
                                     SharedReaderIcons.MusicNote,
-                                    contentDescription = if (isMusicianMode) {
-                                        readerString("content_desc_disable_musician_mode", "Disable Musician Mode")
-                                    } else {
-                                        readerString("content_desc_enable_musician_mode", "Enable Musician Mode")
-                                    },
+                                    contentDescription =
+                                        if (isMusicianMode) labels.disableMusicianMode else labels.enableMusicianMode,
                                     modifier = Modifier.size(18.dp),
                                     tint = if (isMusicianMode) {
                                         MaterialTheme.colorScheme.primary
@@ -233,26 +304,26 @@ internal fun SharedMobileAutoScrollControls(
                                     }
                                 )
                             }
-                            IconButton(onClick = onInputModeToggle, modifier = Modifier.size(32.dp)) {
+                            IconButton(onClick = onInputModeToggle, modifier = Modifier.size(48.dp)) {
                                 Icon(
                                     Icons.Default.SwapHoriz,
-                                    contentDescription = readerString("content_desc_swap_controls", "Swap Controls"),
+                                    contentDescription = labels.swapControls,
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = { onCollapseChange(true) }, modifier = Modifier.size(32.dp)) {
+                            IconButton(onClick = { onCollapseChange(true) }, modifier = Modifier.size(48.dp)) {
                                 Icon(
                                     Icons.Default.ChevronRight,
-                                    contentDescription = readerString("content_desc_collapse", "Collapse"),
+                                    contentDescription = labels.collapse,
                                     modifier = Modifier.size(18.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = onClose, modifier = Modifier.size(32.dp)) {
+                            IconButton(onClick = onClose, modifier = Modifier.size(48.dp)) {
                                 Icon(
                                     Icons.Default.Close,
-                                    contentDescription = readerString("action_close", "Close"),
+                                    contentDescription = labels.close,
                                     tint = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.size(18.dp)
                                 )
@@ -297,12 +368,12 @@ internal fun SharedMobileAutoScrollControls(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     SharedMobileAutoScrollSpeedMenu(
-                                        label = readerString("label_min", "Min"),
+                                        label = labels.min,
                                         value = minSpeed,
                                         onValueChange = onMinSpeedChange
                                     )
                                     SharedMobileAutoScrollSpeedMenu(
-                                        label = readerString("label_max", "Max"),
+                                        label = labels.max,
                                         value = maxSpeed,
                                         onValueChange = onMaxSpeedChange
                                     )
@@ -316,7 +387,8 @@ internal fun SharedMobileAutoScrollControls(
                                     ) {
                                         Text(
                                             text = sharedMobileAutoScrollSpeedLabel(safeSpeed),
-                                            style = MaterialTheme.typography.titleMedium,
+                                            style = MaterialTheme.typography.titleMedium
+                                                .copy(fontFeatureSettings = "tnum"),
                                             modifier = Modifier.width(45.dp),
                                             textAlign = TextAlign.End
                                         )
@@ -326,7 +398,39 @@ internal fun SharedMobileAutoScrollControls(
                                             onValueChange = { onSpeedChange(snapSharedMobileAutoScrollSpeed(it)) },
                                             valueRange = minSpeed..safeMax,
                                             steps = if (steps > 0) steps else 0,
-                                            modifier = Modifier.weight(1f)
+                                            modifier = Modifier.weight(1f),
+                                            thumb = {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(20.dp)
+                                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
+                                                )
+                                            },
+                                            track = { sliderState ->
+                                                val fraction =
+                                                    (sliderState.value - sliderState.valueRange.start) /
+                                                        (sliderState.valueRange.endInclusive - sliderState.valueRange.start)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .height(4.dp)
+                                                        .background(
+                                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
+                                                            RoundedCornerShape(2.dp)
+                                                        ),
+                                                    contentAlignment = Alignment.CenterStart
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth(fraction)
+                                                            .height(4.dp)
+                                                            .background(
+                                                                MaterialTheme.colorScheme.primary,
+                                                                RoundedCornerShape(2.dp)
+                                                            )
+                                                    )
+                                                }
+                                            }
                                         )
                                     }
                                 } else {
@@ -351,12 +455,13 @@ internal fun SharedMobileAutoScrollControls(
                                             ) {
                                                 Icon(
                                                     Icons.Default.Remove,
-                                                    readerString("content_desc_slower", "Slower")
+                                                    labels.slower
                                                 )
                                             }
                                             Text(
                                                 text = sharedMobileAutoScrollSpeedLabel(safeSpeed),
-                                                style = MaterialTheme.typography.titleMedium,
+                                                style = MaterialTheme.typography.titleMedium
+                                                    .copy(fontFeatureSettings = "tnum"),
                                                 textAlign = TextAlign.Center
                                             )
                                             IconButton(
@@ -370,7 +475,7 @@ internal fun SharedMobileAutoScrollControls(
                                             ) {
                                                 Icon(
                                                     Icons.Default.Add,
-                                                    readerString("content_desc_faster", "Faster")
+                                                    labels.faster
                                                 )
                                             }
                                         }
@@ -404,8 +509,11 @@ private fun SharedMobileAutoScrollModeMenuItem(
             }
         },
         onClick = onSelect,
+        // Android benchmark (AutoScrollControls mode menu): the trailing check is decorative,
+        // so it carries no content description — the item's title and subtitle already state which
+        // mode is active, and an extra "Enabled" node only adds a second announcement.
         trailingIcon = {
-            if (selected) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_enabled", "Enabled"))
+            if (selected) Icon(Icons.Default.Check, contentDescription = null)
         }
     )
 }

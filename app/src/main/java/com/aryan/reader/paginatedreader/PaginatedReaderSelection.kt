@@ -77,7 +77,10 @@ import coil.request.ImageRequest.Builder
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.epubreader.UserHighlight
+import com.aryan.reader.shared.AndroidEpubFormatBenchmark
 import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
+import com.aryan.reader.shared.SharedNativePaginationNormalLineHeightMultiplier
+import com.aryan.reader.shared.sharedPaginationLineHeightMultiplier
 import com.aryan.reader.shared.isReaderExternalHref as sharedIsReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
 import com.aryan.reader.shared.reader.SharedPlaybackFragment
@@ -290,7 +293,8 @@ internal fun textBlockLayoutKey(
 
 internal fun legacyTextBlockLayoutKey(cfi: String, pageIndex: Int): String = "${cfi}_$pageIndex"
 
-internal const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER = 1.2f
+internal const val WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER =
+    SharedNativePaginationNormalLineHeightMultiplier
 internal const val ReaderUiCutoffLogTag = "EpistemeEpubCutoff"
 internal const val ReaderUiPageGapDiagLogTag = "EpistemePageGapDiag"
 internal const val AndroidEpubEdgeDiagLogTag = "ReaderEdgeDiag"
@@ -340,8 +344,19 @@ internal fun UserHighlight.androidHighlightRenderLabel(): String {
         "locatorCfi=${highlightDiagSnippet(highlightLocator.cfi.orEmpty(), 120)}"
 }
 
+/**
+ * The line-height multiplier native pagination renders for the reader's line-height setting.
+ *
+ * The setting itself is a WebView/CSS multiplier, where 1.0 is the app's normal CSS line height;
+ * native Compose pagination renders that untouched position at
+ * [WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER] and every other position as its own value. The rule
+ * lives in the shared reader ([sharedPaginationLineHeightMultiplier]) because the iOS and desktop
+ * pagination surfaces are Compose too and have to apply exactly the same conversion.
+ */
 internal fun paginationLineHeightMultiplierForWebViewSetting(multiplier: Float): Float {
-    return if (abs(multiplier - 1.0f) < 0.001f) WEB_VIEW_NORMAL_LINE_HEIGHT_MULTIPLIER else multiplier
+    return sharedPaginationLineHeightMultiplier(
+        AndroidEpubFormatBenchmark.baseLineSpacing * multiplier
+    )
 }
 
 internal fun createHeaderTextStyle(
@@ -1678,22 +1693,11 @@ internal fun computeImageRenderSizeDp(
     return with(density) { widthPx.toDp() to heightPx.toDp() }
 }
 
-internal fun imageBlockContentAlignment(style: BlockStyle): Alignment {
-    return when {
-        style.float == "right" || style.horizontalAlign == "right" || style.horizontalAlign == "end" -> Alignment.CenterEnd
-        style.float == "left" || style.horizontalAlign == "left" || style.horizontalAlign == "start" -> Alignment.CenterStart
-        else -> Alignment.Center
-    }
-}
+internal fun imageBlockContentAlignment(style: BlockStyle): Alignment =
+    nativeImageContentAlignment(style)
 
-internal fun imageContentScale(style: BlockStyle): ContentScale {
-    return when (style.objectFit) {
-        "cover" -> ContentScale.Crop
-        "fill" -> ContentScale.FillBounds
-        "contain", "scale-down" -> ContentScale.Fit
-        else -> ContentScale.Fit
-    }
-}
+internal fun imageContentScale(style: BlockStyle): ContentScale =
+    nativeImageContentScale(style)
 
 internal fun nativeVerticalSvgContentFromDataUri(source: String): String? {
     return decodeNativeVerticalSvgDataUri(source)

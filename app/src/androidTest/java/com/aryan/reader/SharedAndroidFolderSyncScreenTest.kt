@@ -1,10 +1,15 @@
 package com.aryan.reader
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.SyncedFolder
@@ -53,6 +58,39 @@ class SharedAndroidFolderSyncScreenTest {
             assertThat(enabled).isFalse()
             assertThat(removeData).isFalse()
         }
+    }
+
+    @Test
+    fun addFolderFabSitsOnTheSectionBottomEdge() {
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedAndroidFolderSyncScreen(
+                    folders = listOf(SyncedFolder("folder://one", "Books", 0L, setOf(FileType.EPUB), true)),
+                    statsByFolderUri = emptyMap(),
+                    syncableFileTypes = listOf(FileType.EPUB),
+                    isLoading = false,
+                    strings = strings(),
+                    onAddFolder = {},
+                    onRemoveFolder = {},
+                    onLocalSyncChange = { _, _, _ -> },
+                    onFileTypesChange = { _, _ -> },
+                    onScanAll = {},
+                    onSyncMetadata = {},
+                    formatLastScan = { "formatted" },
+                    syncIcon = {},
+                )
+            }
+        }
+
+        val rootBottom = composeTestRule.onRoot().getBoundsInRoot().bottom
+        val fabBottom = composeTestRule
+            .onNodeWithTag("UnifiedLibraryAddFolder")
+            .assertIsDisplayed()
+            .getBoundsInRoot()
+            .bottom
+        // The host Scaffold owns window insets: this section keeps only the shared 16.dp
+        // edge spacing so its FAB lines up with the FABs on the other tabs.
+        assertThat(fabBottom.value).isWithin(1f).of((rootBottom - 16.dp).value)
     }
 
     private fun strings() = SharedAndroidFolderSyncStrings(

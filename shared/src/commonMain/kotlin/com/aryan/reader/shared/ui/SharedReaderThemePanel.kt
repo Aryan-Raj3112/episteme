@@ -13,6 +13,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
@@ -50,6 +52,14 @@ data class SharedReaderThemePanelLabels(
     val reverseLumaSymmetric: String = "Invert luma (symmetric)",
 )
 
+data class SharedReaderThemeModeLabels(
+    val global: String = "Global Theme",
+    val local: String = "Local Theme",
+    val globalDescription: String = "Applies to all files",
+    val localDescription: String = "Saved for this file",
+    val selectMode: String = "Select theme mode",
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SharedReaderThemePanel(
@@ -77,6 +87,9 @@ fun SharedReaderThemePanel(
         onSave: (ReaderTheme) -> Unit,
         onCancel: () -> Unit,
     ) -> Unit,
+    isLocalMode: Boolean = false,
+    onLocalModeChange: (Boolean) -> Unit = {},
+    modeLabels: SharedReaderThemeModeLabels = SharedReaderThemeModeLabels(),
 ) {
     if (!isVisible) return
     var showBuilder by remember { mutableStateOf(false) }
@@ -131,12 +144,71 @@ fun SharedReaderThemePanel(
                         .fillMaxHeight(0.85f)
                         .padding(horizontal = 16.dp),
                 ) {
-                    Text(
-                        labels.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(bottom = 16.dp, top = 8.dp),
-                    )
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            labels.title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 16.dp, top = 8.dp),
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Box {
+                            var showModeMenu by remember { mutableStateOf(false) }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.clickable { showModeMenu = true }.padding(4.dp)
+                            ) {
+                                Text(
+                                    if (isLocalMode) modeLabels.local else modeLabels.global,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Icon(
+                                    Icons.Default.ArrowDropDown,
+                                    contentDescription = modeLabels.selectMode,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            SharedDropdownMenu(expanded = showModeMenu, onDismissRequest = { showModeMenu = false }) {
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(modeLabels.global, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                modeLabels.globalDescription,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    onClick = { onLocalModeChange(false); showModeMenu = false },
+                                    trailingIcon = { if (!isLocalMode) Icon(Icons.Default.Check, contentDescription = null) }
+                                )
+                                HorizontalDivider()
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(modeLabels.local, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                modeLabels.localDescription,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    },
+                                    onClick = { onLocalModeChange(true); showModeMenu = false },
+                                    trailingIcon = { if (isLocalMode) Icon(Icons.Default.Check, contentDescription = null) }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     TabRow(selectedTabIndex = selectedTabIndex, containerColor = Color.Transparent, divider = {}) {
                         Tab(selectedTabIndex == 0, { selectedTabIndex = 0 }) {
                             Text(labels.solidColors, modifier = Modifier.padding(12.dp))

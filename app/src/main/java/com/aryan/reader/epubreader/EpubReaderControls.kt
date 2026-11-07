@@ -1,8 +1,6 @@
 package com.aryan.reader.epubreader
 
 import com.aryan.reader.shared.readerTtsChunkLabel
-import android.os.Build
-import androidx.annotation.RequiresApi
 import androidx.annotation.StringRes
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.animation.AnimatedContent
@@ -52,10 +50,7 @@ import androidx.compose.material.icons.automirrored.filled.NavigateBefore
 import androidx.compose.material.icons.automirrored.filled.NavigateNext
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.GraphicEq
@@ -66,8 +61,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Pause
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -76,14 +69,11 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
-import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -95,7 +85,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -109,9 +98,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -130,9 +118,27 @@ import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.SearchTopBar
 import com.aryan.reader.TooltipIconButton
 import com.aryan.reader.areReaderAiFeaturesEnabled
+import com.aryan.reader.androidSharedStringResolver
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateOf
+import com.aryan.reader.shared.ReaderHiddenToolsDefaultsVersion
+import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.ui.LocalSharedStringResolver
+import com.aryan.reader.shared.ui.SharedMobileEpubBottomBar
+import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
+import com.aryan.reader.shared.ui.SharedMobileEpubToolbarTools
+import com.aryan.reader.shared.ui.SharedMobileEpubTopBar
+import com.aryan.reader.shared.ui.SharedReaderBarEdge
+import com.aryan.reader.shared.ui.SharedReaderBarVisibility
+import com.aryan.reader.shared.ui.SharedReaderToolbarPlacement
+import com.aryan.reader.shared.ui.sharedEpubToolbarTools
 import com.aryan.reader.loadNativeVoice
-import com.aryan.reader.readerSliderStepPage
-import com.aryan.reader.shared.ui.ReaderMinimalSlider
+import com.aryan.reader.paginatedreader.EpubPageSpread
+import com.aryan.reader.shared.ui.SharedMobileAutoScrollControls
+import com.aryan.reader.shared.ui.SharedMobileAutoScrollLabels
+import com.aryan.reader.shared.ui.SharedMobileEpubJumpHistoryBar
+import com.aryan.reader.shared.ui.SharedMobileEpubScrubBubble
+import com.aryan.reader.shared.ui.SharedMobileEpubSlider
 import com.aryan.reader.tts.GEMINI_TTS_SPEAKERS
 import com.aryan.reader.tts.isFishReferenceId
 import com.aryan.reader.tts.loadTtsSpeaker
@@ -170,18 +176,14 @@ val ReaderTool.titleRes: Int
         ReaderTool.BOOK_REPLACEMENTS -> R.string.menu_book_word_replacements
     }
 
-internal val epubToolbarTools = setOf(
-    ReaderTool.DICTIONARY,
-    ReaderTool.THEME,
-    ReaderTool.BRIGHTNESS,
-    ReaderTool.SLIDER,
-    ReaderTool.TOC,
-    ReaderTool.FORMAT,
-    ReaderTool.SEARCH,
-    ReaderTool.AI_FEATURES,
-    ReaderTool.TTS_CONTROLS,
-    ReaderTool.SCREEN_ORIENTATION
-)
+/**
+ * The tools a bar can host - Android benchmark `epubToolbarTools`, now the shared module's own set.
+ *
+ * This used to be a second copy of the same ten tools; keeping an alias means every Android call
+ * site (the customize sheet, the tests, the bar adapters below) keeps compiling while a tool can
+ * only ever be listed once.
+ */
+internal val epubToolbarTools: Set<ReaderTool> = SharedMobileEpubToolbarTools
 
 internal typealias EpubOverflowMenuSection = com.aryan.reader.shared.EpubOverflowMenuSection
 
@@ -212,6 +214,47 @@ internal fun defaultReaderBottomTools(): Set<String> {
     return ReaderTool.entries.filter { it.category == "Bottom Bar" }.map { it.name }.toSet()
 }
 
+/**
+ * Android's reader preferences are flat `SharedPreferences` keyed by tool *name*
+ * (`ReaderTool.name`), while [ReaderToolbarPreferences] - the model the shared bars render from - is
+ * keyed by id. This is the only conversion between the two spellings, so a name/id mismatch cannot
+ * hide inside a composable.
+ *
+ * `hiddenToolsDefaultsVersion` is pinned to the current version on purpose: Android's own preference
+ * layer has already applied its migrations by the time the reader composes, and re-running shared's
+ * upgrade would re-hide tools the reader deliberately restored.
+ */
+internal fun epubReaderToolbarPreferences(
+    hiddenTools: Set<String>,
+    toolOrder: List<ReaderTool>,
+    bottomTools: Set<String>,
+): ReaderToolbarPreferences = ReaderToolbarPreferences(
+    hiddenToolIds = hiddenTools.mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id },
+    toolOrder = toolOrder,
+    bottomToolIds = bottomTools.mapNotNullTo(mutableSetOf()) { ReaderTool.fromId(it)?.id },
+    hiddenToolsDefaultsVersion = ReaderHiddenToolsDefaultsVersion,
+).sanitized()
+
+/**
+ * Android's chrome read-aloud entry is a boolean session flag plus one toggle callback; the shared
+ * bar renders a three-state engine. Android has no *paused* chrome state (pause/resume lives in the
+ * TTS overlay), so the projection is IDLE/SPEAKING only - which is exactly what makes the shared
+ * button draw Android's stop-X and primary tint for the same reason Android's own bar did.
+ */
+internal fun epubChromeReadAloudState(isTtsActive: Boolean): SharedMobileEpubLocalTtsState =
+    if (isTtsActive) SharedMobileEpubLocalTtsState.SPEAKING else SharedMobileEpubLocalTtsState.IDLE
+
+/**
+ * Android adapter over the shared EPUB top bar.
+ *
+ * The bar itself - the back/title row, the tool buttons with their tooltips and accessibility
+ * labels, the narration entry, the overflow menu and its sections - lives once in
+ * [SharedMobileEpubTopBar]. This keeps Android's public parameter list (the reader already owns all
+ * of this state) and does the three things only Android can: convert the reader's flat, name-keyed
+ * preferences into [ReaderToolbarPreferences], hand over its own [SearchTopBar] through the bar's
+ * search slot, and install [androidSharedStringResolver] so every shared label renders the app's
+ * translation instead of the English fallback.
+ */
 @Composable
 fun EpubReaderTopBar(
     isVisible: Boolean,
@@ -268,571 +311,165 @@ fun EpubReaderTopBar(
     toolOrder: List<ReaderTool>,
     bottomTools: Set<String>,
     onCustomizeTools: () -> Unit,
+    /**
+     * Chrome-stable status-bar height the bar paints inside its own surface. The reader computes
+     * it (and keeps it stable while transient bars show/hide); the shared bar must not apply it as
+     * outer padding or the strip above the toolbar stays reader-coloured.
+     */
+    topInset: Dp = 0.dp,
+    /**
+     * Top inset of the layer hosting this bar. The reader insets its chrome layer by the status-bar
+     * height so controls clear the system bar, which would leave the bar's surface starting below
+     * the screen edge; the bar lifts itself by the same amount so the surface reaches the edge and
+     * [topInset] paints the strip. Hosts that already place bars at the edge pass 0.dp.
+     */
+    hostTopInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
     onToggleReflow: (() -> Unit)? = null,
     onDeleteReflow: (() -> Unit)? = null,
     onExportAnnotations: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
-    com.aryan.reader.shared.ui.SharedReaderBarVisibility(
+    val context = LocalContext.current
+    // The popup's own state: Android has always owned it inside the bar (there is no screen-level
+    // menu flag to mirror), so the adapter keeps it local and hands the shared bar both halves.
+    var showMore by remember { mutableStateOf(false) }
+    val toolbarPreferences = remember(hiddenTools, toolOrder, bottomTools) {
+        epubReaderToolbarPreferences(
+            hiddenTools = hiddenTools,
+            toolOrder = toolOrder,
+            bottomTools = bottomTools,
+        )
+    }
+    val topTools = remember(toolbarPreferences) {
+        sharedEpubToolbarTools(
+            toolOrder = toolbarPreferences.toolOrder,
+            toolbarTools = epubToolbarTools,
+            hiddenToolNamesOrIds = toolbarPreferences.hiddenToolIds,
+            bottomToolNamesOrIds = toolbarPreferences.bottomToolIds,
+            placement = SharedReaderToolbarPlacement.TOP,
+        )
+    }
+    val aiAvailable = areReaderAiFeaturesEnabled(context)
+    SharedReaderBarVisibility(
         visible = isVisible,
-        edge = com.aryan.reader.shared.ui.SharedReaderBarEdge.TOP,
+        edge = SharedReaderBarEdge.TOP,
         motionPolicy = readerMotionPolicy,
-        modifier = modifier
+        // The host layer insets the chrome so its controls clear the status bar; undoing that
+        // inset here lets the bar's own surface start at the screen edge (topInset then paints
+        // the strip behind the status bar).
+        modifier = modifier.offset(y = -hostTopInset)
     ) {
-        com.aryan.reader.shared.ui.SharedReaderToolbarSurface(height = 55.dp) {
-            com.aryan.reader.shared.ui.SharedEpubTopToolbarRow {
-                if (searchState.isSearchActive) {
+        CompositionLocalProvider(
+            LocalSharedStringResolver provides androidSharedStringResolver(context)
+        ) {
+            SharedMobileEpubTopBar(
+                title = bookTitle,
+                isBookmarked = isBookmarked,
+                topTools = topTools,
+                topInset = topInset,
+                showMore = showMore,
+                onShowMoreChange = { showMore = it },
+                onBack = onNavigateBack,
+                onTheme = onOpenThemeSettings,
+                onFormat = onToggleFormat,
+                onSearch = onToggleSearch,
+                onBookmark = onToggleBookmark,
+                onVisualOptions = onOpenVisualOptions,
+                onBrightness = onOpenBrightness,
+                onOpenToc = onOpenDrawer,
+                onOpenSlider = onOpenSlider,
+                onFileInfo = onOpenFileInfo,
+                onCustomizeTools = onCustomizeTools,
+                onScreenOrientation = onOpenScreenOrientation,
+                onTtsSettings = onOpenTtsSettings,
+                onTtsReplacements = onOpenTtsReplacements,
+                onBookReplacements = onOpenBookReplacements,
+                onOpenDictionarySettings = onOpenDictionarySettings,
+                onOpenAiHub = onOpenAiHub,
+                aiAvailable = aiAvailable,
+                onExportAnnotations = onExportAnnotations,
+                onToggleReflow = onToggleReflow,
+                onDeleteReflow = onDeleteReflow,
+                onToggleVolumeScroll = onToggleVolumeScroll,
+                volumeScrollEnabled = volumeScrollEnabled,
+                // Android's hidden-tools rows keep their own localized titles and sheet routing.
+                hiddenToolItem = { tool, dismiss ->
+                    HiddenEpubToolMenuItem(
+                        tool = tool,
+                        isSliderActive = isSliderActive,
+                        showMoreMenu = dismiss,
+                        onOpenDictionarySettings = onOpenDictionarySettings,
+                        onOpenThemeSettings = onOpenThemeSettings,
+                        onOpenBrightness = onOpenBrightness,
+                        onOpenSlider = onOpenSlider,
+                        onOpenDrawer = onOpenDrawer,
+                        onToggleFormat = onToggleFormat,
+                        onToggleSearch = onToggleSearch,
+                        onOpenAiHub = onOpenAiHub,
+                        onToggleTts = onToggleTts,
+                        onOpenScreenOrientation = onOpenScreenOrientation,
+                    )
+                },
+                readingMode = if (currentRenderMode == RenderMode.PAGINATED) {
+                    com.aryan.reader.shared.reader.ReaderReadingMode.PAGINATED
+                } else {
+                    com.aryan.reader.shared.reader.ReaderReadingMode.VERTICAL
+                },
+                rightToLeftPagination = isRightToLeftPagination,
+                useNativeVerticalRenderer = useNativeVerticalRenderer,
+                tapToNavigateEnabled = tapToNavigateEnabled,
+                pageTurnAnimationEnabled = isPageTurnAnimationEnabled,
+                onReadingModeChange = { mode ->
+                    onChangeRenderMode(
+                        if (mode == com.aryan.reader.shared.reader.ReaderReadingMode.PAGINATED) {
+                            RenderMode.PAGINATED
+                        } else {
+                            RenderMode.VERTICAL_SCROLL
+                        }
+                    )
+                },
+                onUseNativeVerticalRendererChange = onUseNativeVerticalRendererChange,
+                onRightToLeftPaginationChange = onSetRightToLeftPagination,
+                onTapToNavigateChange = onToggleTapToNavigate,
+                onPageTurnAnimationChange = onTogglePageTurnAnimation,
+                toolbarPreferences = toolbarPreferences,
+                localTtsState = epubChromeReadAloudState(isTtsActive),
+                onLocalTtsToggle = onToggleTts,
+                onLocalTtsStop = onToggleTts,
+                // The reader's chrome entry is the local engine's; cloud TTS is reached through the
+                // overflow sheet (the shared bar's cloud path is the iOS reader's).
+                cloudTtsAvailable = false,
+                keepScreenOn = isKeepScreenOn,
+                onKeepScreenOnChange = onToggleKeepScreenOn,
+                // Android starts auto-scroll through the overflow row's callback; it has no separate
+                // "currently scrolling" chrome state to render.
+                autoScroll = false,
+                onAutoScrollChange = { onStartAutoScroll() },
+                hasMediaOverlayNarration = hasMediaOverlayNarration,
+                isMediaOverlayActive = isMediaOverlayActive,
+                onToggleMediaOverlay = onToggleMediaOverlay,
+                isSliderActive = isSliderActive,
+                isSearchActive = searchState.isSearchActive,
+                searchContent = {
                     SearchTopBar(
                         searchState = searchState,
                         focusRequester = searchFocusRequester,
                         onCloseSearch = onCloseSearch
                     )
-                } else {
-                    TooltipIconButton(
-                        text = stringResource(R.string.tooltip_back),
-                        description = stringResource(R.string.tooltip_back_desc),
-                        onClick = onNavigateBack
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = bookTitle.take(40) + if (bookTitle.length > 40) "..." else "",
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    com.aryan.reader.shared.ui.sharedEpubToolbarTools(
-                        toolOrder = toolOrder,
-                        toolbarTools = epubToolbarTools,
-                        hiddenToolNamesOrIds = hiddenTools,
-                        bottomToolNamesOrIds = bottomTools,
-                        placement = com.aryan.reader.shared.ui.SharedReaderToolbarPlacement.TOP,
-                    )
-                        .forEach { tool ->
-                            when (tool) {
-                                ReaderTool.DICTIONARY -> TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_dictionary),
-                                    description = stringResource(R.string.tooltip_dictionary_desc),
-                                    onClick = onOpenDictionarySettings
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.dictionary),
-                                        contentDescription = stringResource(R.string.content_desc_dictionary_settings)
-                                    )
-                                }
-                                ReaderTool.THEME -> TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_theme),
-                                    description = stringResource(R.string.tooltip_theme_desc),
-                                    onClick = onOpenThemeSettings
-                                ) {
-                                    Icon(painter = painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc))
-                                }
-                                ReaderTool.BRIGHTNESS -> TooltipIconButton(
-                                    text = stringResource(R.string.reader_brightness_title),
-                                    description = stringResource(R.string.reader_brightness_system_desc),
-                                    onClick = onOpenBrightness
-                                ) {
-                                    Icon(painter = painterResource(id = R.drawable.contrast), contentDescription = stringResource(R.string.reader_brightness_title))
-                                }
-                                ReaderTool.SLIDER -> TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_slider),
-                                    description = stringResource(R.string.tooltip_slider_desc),
-                                    onClick = onOpenSlider
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.slider),
-                                        contentDescription = stringResource(R.string.content_desc_navigate_slider),
-                                        tint = if (isSliderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                ReaderTool.TOC -> TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_toc),
-                                    description = stringResource(R.string.tooltip_toc_desc),
-                                    onClick = onOpenDrawer
-                                ) {
-                                    Icon(Icons.Default.Menu, contentDescription = stringResource(R.string.content_desc_chapters_menu))
-                                }
-                                ReaderTool.FORMAT -> TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_format),
-                                    description = stringResource(R.string.tooltip_format_desc),
-                                    onClick = onToggleFormat
-                                ) {
-                                    Icon(painter = painterResource(id = R.drawable.format_size), contentDescription = stringResource(R.string.content_desc_text_formatting))
-                                }
-                                ReaderTool.SEARCH -> TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_search),
-                                    description = stringResource(R.string.tooltip_search_desc),
-                                    onClick = onToggleSearch
-                                ) {
-                                    Icon(Icons.Default.Search, contentDescription = stringResource(R.string.tooltip_search))
-                                }
-                                ReaderTool.AI_FEATURES -> if (areReaderAiFeaturesEnabled(LocalContext.current)) {
-                                    TooltipIconButton(
-                                        text = stringResource(R.string.tooltip_ai),
-                                        description = stringResource(R.string.tooltip_ai_desc),
-                                        onClick = onOpenAiHub
-                                    ) {
-                                        Icon(painter = painterResource(id = R.drawable.ai), contentDescription = stringResource(R.string.ai_features_title))
-                                    }
-                                }
-                                ReaderTool.TTS_CONTROLS -> TooltipIconButton(
-                                    text = if (isTtsActive) stringResource(R.string.tooltip_tts_stop) else stringResource(R.string.tooltip_tts_start),
-                                    description = if (isTtsActive) stringResource(R.string.tooltip_tts_stop_desc) else stringResource(R.string.tooltip_tts_start_desc),
-                                    onClick = onToggleTts
-                                ) {
-                                    Icon(
-                                        painter = if (isTtsActive) painterResource(id = R.drawable.close) else painterResource(id = R.drawable.text_to_speech),
-                                        contentDescription = if (isTtsActive) stringResource(R.string.content_desc_stop_tts) else stringResource(R.string.content_desc_start_tts),
-                                        tint = if (isTtsActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                ReaderTool.SCREEN_ORIENTATION -> TooltipIconButton(
-                                    text = stringResource(R.string.menu_screen_orientation),
-                                    description = stringResource(R.string.visual_options_screen_orientation_desc),
-                                    onClick = onOpenScreenOrientation
-                                ) {
-                                    Icon(
-                                        Icons.Default.ScreenRotation,
-                                        contentDescription = stringResource(R.string.menu_screen_orientation),
-                                        tint = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                                else -> Unit
-                            }
-                        }
-                    if (hasMediaOverlayNarration) {
-                        // The icon's description is the *action*, following the read-aloud button
-                        // above: a screen reader has to say what pressing this does, and one name
-                        // for both states leaves the button reading identically whether narration is
-                        // running or not. The tooltip keeps the feature name as its label.
-                        val narrationActionDescription = stringResource(
-                            if (isMediaOverlayActive) {
-                                R.string.content_desc_media_overlay_stop
-                            } else {
-                                R.string.content_desc_media_overlay_start
-                            }
-                        )
-                        TooltipIconButton(
-                            text = stringResource(R.string.media_overlay_title),
-                            description = narrationActionDescription,
-                            onClick = onToggleMediaOverlay
-                        ) {
-                            Icon(
-                                painter = painterResource(id = R.drawable.volume_up),
-                                contentDescription = narrationActionDescription,
-                                tint = if (isMediaOverlayActive) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                }
-                            )
-                        }
-                    }
-                    Box {
-                        val overflowMenuState = com.aryan.reader.shared.ui.rememberSharedReaderOverflowMenuState()
-                        var showMoreMenu by overflowMenuState.menuExpanded
-                        var showHiddenToolsExpanded by overflowMenuState.hiddenToolsExpanded
-                        var showReadingModeExpanded by overflowMenuState.readingModeExpanded
-                        var showTtsSettingsExpanded by overflowMenuState.ttsSettingsExpanded
-                        TooltipIconButton(
-                            text = stringResource(R.string.tooltip_more_options),
-                            description = stringResource(R.string.tooltip_more_options_desc),
-                            onClick = overflowMenuState::open
-                        ) {
-                            Icon(Icons.Default.MoreVert, contentDescription = stringResource(R.string.content_desc_more_options))
-                        }
-
-                        com.aryan.reader.shared.ui.SharedReaderOverflowMenu(
-                            state = overflowMenuState,
-                        ) {
-                            val hiddenToolbarTools = toolOrder.filter { it in epubToolbarTools && hiddenTools.contains(it.name) }
-                            val showTtsVoiceSettings = !hiddenTools.contains(ReaderTool.TTS_SETTINGS.name)
-                            val showTtsReplacements = !hiddenTools.contains(ReaderTool.TTS_REPLACEMENTS.name)
-                            com.aryan.reader.shared.ui.SharedReaderOverflowSectionList(
-                                sections = epubOverflowMenuSections(
-                                    hiddenTools = hiddenTools,
-                                    hasHiddenToolbarTools = hiddenToolbarTools.isNotEmpty(),
-                                    hasToggleReflow = onToggleReflow != null,
-                                    hasDeleteReflow = onDeleteReflow != null,
-                                    hasExportAnnotations = onExportAnnotations != null,
-                                ),
-                            ) { section ->
-                                when (section) {
-                                    EpubOverflowMenuSection.CUSTOMIZE_TOOLBAR -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.title_customize_toolbar)) },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                onCustomizeTools()
-                                            },
-                                            leadingIcon = {
-                                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(20.dp))
-                                            }
-                                        )
-                                    }
-                                    EpubOverflowMenuSection.HIDDEN_TOOLS -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.toolbar_hidden_tools_menu)) },
-                                            onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
-                                            trailingIcon = {
-                                                Icon(
-                                                    Icons.Default.ArrowDropDown,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.rotate(if (showHiddenToolsExpanded) 180f else 0f)
-                                                )
-                                            }
-                                        )
-                                        if (showHiddenToolsExpanded) {
-                                            hiddenToolbarTools.forEach { tool ->
-                                                HiddenEpubToolMenuItem(
-                                                    tool = tool,
-                                                    isSliderActive = isSliderActive,
-                                                    showMoreMenu = {
-                                                        showHiddenToolsExpanded = false
-                                                        showMoreMenu = false
-                                                    },
-                                                    onOpenDictionarySettings = onOpenDictionarySettings,
-                                                    onOpenThemeSettings = onOpenThemeSettings,
-                                                    onOpenBrightness = onOpenBrightness,
-                                                    onOpenSlider = onOpenSlider,
-                                                    onOpenDrawer = onOpenDrawer,
-                                                    onToggleFormat = onToggleFormat,
-                                                    onToggleSearch = onToggleSearch,
-                                                    onOpenAiHub = onOpenAiHub,
-                                                    onToggleTts = onToggleTts,
-                                                    onOpenScreenOrientation = onOpenScreenOrientation
-                                                )
-                                            }
-                                        }
-                                    }
-                                    EpubOverflowMenuSection.FILE_INFO -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.file_information)) },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                onOpenFileInfo()
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.Info,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        )
-                                    }
-                                    EpubOverflowMenuSection.VIEW_ORIGINAL_PDF -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_view_original_pdf)) },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                onToggleReflow?.invoke()
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    painter = painterResource(id = R.drawable.picture_as_pdf),
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        )
-                                    }
-                                    EpubOverflowMenuSection.DELETE_TEXT_VIEW -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_delete_text_view)) },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                onDeleteReflow?.invoke()
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    imageVector = Icons.Default.Delete,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.error
-                                                )
-                                            },
-                                            colors = androidx.compose.material3.MenuDefaults.itemColors(
-                                                textColor = MaterialTheme.colorScheme.error
-                                            )
-                                        )
-                                    }
-                                    EpubOverflowMenuSection.READING_MODE -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_change_reading_mode)) },
-                                            onClick = { showReadingModeExpanded = !showReadingModeExpanded },
-                                            trailingIcon = {
-                                                Icon(
-                                                    Icons.Default.ArrowDropDown,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.rotate(if (showReadingModeExpanded) 180f else 0f)
-                                                )
-                                            }
-                                        )
-                                        if (showReadingModeExpanded) {
-                                            DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.menu_reading_mode_vertical_webview)) },
-                                                enabled = !isTtsActive,
-                                                onClick = {
-                                                    onUseNativeVerticalRendererChange(false)
-                                                    showMoreMenu = false
-                                                    onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
-                                                },
-                                                trailingIcon = {
-                                                    if (currentRenderMode == RenderMode.VERTICAL_SCROLL && !useNativeVerticalRenderer) Icon(
-                                                        Icons.Default.Check,
-                                                        contentDescription = stringResource(R.string.content_desc_selected)
-                                                    )
-                                                })
-                                            DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.menu_reading_mode_vertical_native)) },
-                                                enabled = !isTtsActive,
-                                                onClick = {
-                                                    onUseNativeVerticalRendererChange(true)
-                                                    showMoreMenu = false
-                                                    onChangeRenderMode(RenderMode.VERTICAL_SCROLL)
-                                                },
-                                                trailingIcon = {
-                                                    if (currentRenderMode == RenderMode.VERTICAL_SCROLL && useNativeVerticalRenderer) Icon(
-                                                        Icons.Default.Check,
-                                                        contentDescription = stringResource(R.string.content_desc_selected)
-                                                    )
-                                                })
-                                            DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.menu_reading_mode_paginated)) },
-                                                enabled = !isTtsActive,
-                                                onClick = {
-                                                    onSetRightToLeftPagination(false)
-                                                    showMoreMenu = false
-                                                    onChangeRenderMode(RenderMode.PAGINATED)
-                                                },
-                                                trailingIcon = {
-                                                    if (currentRenderMode == RenderMode.PAGINATED && !isRightToLeftPagination) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = stringResource(R.string.content_desc_selected)
-                                                        )
-                                                    }
-                                                })
-                                            DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.menu_right_to_left_pagination)) },
-                                                enabled = !isTtsActive,
-                                                onClick = {
-                                                    onSetRightToLeftPagination(true)
-                                                    showMoreMenu = false
-                                                    onChangeRenderMode(RenderMode.PAGINATED)
-                                                },
-                                                trailingIcon = {
-                                                    if (currentRenderMode == RenderMode.PAGINATED && isRightToLeftPagination) {
-                                                        Icon(
-                                                            Icons.Default.Check,
-                                                            contentDescription = stringResource(R.string.content_desc_selected)
-                                                        )
-                                                    }
-                                                })
-                                        }
-                                    }
-                                    EpubOverflowMenuSection.BOOKMARK -> {
-                                        DropdownMenuItem(text = {
-                                            Text(
-                                                if (isBookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(
-                                                    R.string.menu_bookmark_this_page
-                                                )
-                                            )
-                                        }, onClick = {
-                                            showMoreMenu = false
-                                            onToggleBookmark()
-                                        })
-                                    }
-                                    EpubOverflowMenuSection.TAP_TO_TURN -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_tap_to_turn_pages)) },
-                                            enabled = currentRenderMode == RenderMode.PAGINATED,
-                                            onClick = {
-                                                onToggleTapToNavigate(!tapToNavigateEnabled)
-                                                showMoreMenu = false
-                                            },
-                                            trailingIcon = {
-                                                if (tapToNavigateEnabled) Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = stringResource(R.string.content_desc_enabled)
-                                                )
-                                            })
-                                    }
-                                    EpubOverflowMenuSection.VOLUME_SCROLL -> {
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    if (currentRenderMode == RenderMode.VERTICAL_SCROLL) stringResource(
-                                                        R.string.menu_volume_button_scrolling
-                                                    )
-                                                    else stringResource(R.string.menu_volume_button_page_turn)
-                                                )
-                                            },
-                                            enabled = true,
-                                            onClick = {
-                                                onToggleVolumeScroll(!volumeScrollEnabled)
-                                                showMoreMenu = false
-                                            },
-                                            trailingIcon = {
-                                                if (volumeScrollEnabled) Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = stringResource(R.string.content_desc_enabled)
-                                                )
-                                            })
-                                    }
-                                    EpubOverflowMenuSection.PAGE_TURN_ANIM -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_realistic_page_turns)) },
-                                            enabled = currentRenderMode == RenderMode.PAGINATED,
-                                            onClick = {
-                                                onTogglePageTurnAnimation(!isPageTurnAnimationEnabled)
-                                                showMoreMenu = false
-                                            },
-                                            trailingIcon = {
-                                                if (isPageTurnAnimationEnabled) Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = stringResource(R.string.content_desc_enabled)
-                                                )
-                                            })
-                                    }
-                                    EpubOverflowMenuSection.KEEP_SCREEN_ON -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_keep_screen_on)) },
-                                            onClick = {
-                                                onToggleKeepScreenOn(!isKeepScreenOn)
-                                                showMoreMenu = false
-                                            },
-                                            trailingIcon = {
-                                                if (isKeepScreenOn) Icon(
-                                                    Icons.Default.Check,
-                                                    contentDescription = stringResource(R.string.content_desc_enabled)
-                                                )
-                                            })
-                                    }
-                                    EpubOverflowMenuSection.VISUAL_OPTIONS -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_visual_options)) },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                onOpenVisualOptions()
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    Icons.Default.Visibility,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            })
-                                    }
-                                    EpubOverflowMenuSection.AUTO_SCROLL -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_auto_scroll)) },
-                                            enabled = !isTtsActive && currentRenderMode == RenderMode.VERTICAL_SCROLL,
-                                            onClick = {
-                                                showMoreMenu = false
-                                                onStartAutoScroll()
-                                            })
-                                    }
-                                    EpubOverflowMenuSection.BOOK_REPLACEMENTS -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_book_word_replacements)) },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                onOpenBookReplacements()
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    painter = painterResource(id = R.drawable.text_fields),
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        )
-                                    }
-                                    EpubOverflowMenuSection.TTS_SETTINGS -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.menu_tts_settings)) },
-                                            onClick = { showTtsSettingsExpanded = !showTtsSettingsExpanded },
-                                            leadingIcon = {
-                                                Icon(
-                                                    Icons.Default.GraphicEq,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            },
-                                            trailingIcon = {
-                                                Icon(
-                                                    Icons.Default.ArrowDropDown,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.rotate(if (showTtsSettingsExpanded) 180f else 0f)
-                                                )
-                                            }
-                                        )
-                                        if (showTtsSettingsExpanded) {
-                                            if (showTtsVoiceSettings) {
-                                                DropdownMenuItem(
-                                                    text = { Text(stringResource(R.string.menu_tts_voice_settings)) },
-                                                    enabled = !isTtsActive,
-                                                    onClick = {
-                                                        showMoreMenu = false
-                                                        onOpenTtsSettings()
-                                                    },
-                                                    leadingIcon = {
-                                                        Icon(
-                                                            Icons.Default.GraphicEq,
-                                                            contentDescription = null,
-                                                            modifier = Modifier.size(20.dp)
-                                                        )
-                                                    }
-                                                )
-                                            }
-                                            if (showTtsReplacements) {
-                                                DropdownMenuItem(
-                                                    text = { Text(stringResource(R.string.menu_tts_word_replacements)) },
-                                                    onClick = {
-                                                        showMoreMenu = false
-                                                        onOpenTtsReplacements()
-                                                    },
-                                                    leadingIcon = {
-                                                        Icon(
-                                                            Icons.Default.GraphicEq,
-                                                            contentDescription = null,
-                                                            modifier = Modifier.size(20.dp)
-                                                        )
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-                                    EpubOverflowMenuSection.EXPORT_ANNOTATIONS -> {
-                                        DropdownMenuItem(
-                                            text = { Text(stringResource(R.string.action_export_annotations)) },
-                                            onClick = {
-                                                showMoreMenu = false
-                                                onExportAnnotations?.invoke()
-                                            },
-                                            leadingIcon = {
-                                                Icon(
-                                                    Icons.Default.Share,
-                                                    contentDescription = null,
-                                                    modifier = Modifier.size(20.dp)
-                                                )
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+                },
+            )
         }
     }
 }
 
+/**
+ * Android adapter over the shared jump-history bar.
+ *
+ * Layout, sizes and icons live once in [SharedMobileEpubJumpHistoryBar]; Android keeps only the
+ * host-owned visibility animation (`AnimatedVisibility` + [ReaderMotionPolicy]). Both hosts now
+ * share Android's accessibility labels, so nothing Android renders changes.
+ */
 @Composable
 fun EpubJumpHistoryBar(
     modifier: Modifier = Modifier,
@@ -859,81 +496,31 @@ fun EpubJumpHistoryBar(
         },
         modifier = modifier
     ) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 3.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(40.dp)
-                    .padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                TextButton(
-                    onClick = onBack,
-                    enabled = backLabel != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = stringResource(R.string.content_desc_jump_back),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        text = backLabel.orEmpty(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                TextButton(
-                    onClick = onClear,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = stringResource(R.string.action_clear),
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.action_clear), maxLines = 1)
-                }
-
-                TextButton(
-                    onClick = onForward,
-                    enabled = forwardLabel != null,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text(
-                        text = forwardLabel.orEmpty(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = stringResource(R.string.content_desc_jump_forward),
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-        }
+        SharedMobileEpubJumpHistoryBar(
+            backLabel = backLabel,
+            forwardLabel = forwardLabel,
+            onBack = onBack,
+            onForward = onForward,
+            onClear = onClear
+        )
     }
 }
 
-@androidx.annotation.OptIn(UnstableApi::class)
+/**
+ * Android adapter over the shared EPUB bottom bar.
+ *
+ * Same contract as [EpubReaderTopBar]: the shared widget owns the row, its order, the tooltips and
+ * the read-aloud entry, and Android supplies what only it has - the flat preferences converted by
+ * [epubReaderToolbarPreferences], the AI availability gate and the string resolver.
+ *
+ * The reader's tool row never contains the bookmark or visual-options tools (both are
+ * overflow-category tools, and only tools in [epubToolbarTools] can be placed in a bar), so the two
+ * callbacks the shared bar takes for them are unreachable here.
+ */
 @Composable
 fun EpubReaderBottomBar(
     isVisible: Boolean,
-    currentRenderMode: RenderMode,
     isTtsSessionActive: Boolean,
-    ttsState: TtsState,
-    isProUser: Boolean,
-    currentTtsMode: com.aryan.reader.tts.TtsPlaybackManager.TtsMode,
     isSliderActive: Boolean,
     onOpenSlider: () -> Unit,
     onOpenDrawer: () -> Unit,
@@ -948,170 +535,104 @@ fun EpubReaderBottomBar(
     hiddenTools: Set<String>,
     toolOrder: List<ReaderTool>,
     bottomTools: Set<String>,
+    /** Navigation-bar height painted by the bar's own surface; 0.dp when the bars are hidden. */
+    bottomInset: Dp = 0.dp,
     modifier: Modifier = Modifier,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
-    com.aryan.reader.shared.ui.SharedReaderBarVisibility(
+    val context = LocalContext.current
+    val toolbarPreferences = remember(hiddenTools, toolOrder, bottomTools) {
+        epubReaderToolbarPreferences(
+            hiddenTools = hiddenTools,
+            toolOrder = toolOrder,
+            bottomTools = bottomTools,
+        )
+    }
+    val tools = remember(toolbarPreferences) {
+        sharedEpubToolbarTools(
+            toolOrder = toolbarPreferences.toolOrder,
+            toolbarTools = epubToolbarTools,
+            hiddenToolNamesOrIds = toolbarPreferences.hiddenToolIds,
+            bottomToolNamesOrIds = toolbarPreferences.bottomToolIds,
+            placement = SharedReaderToolbarPlacement.BOTTOM,
+        )
+    }
+    SharedReaderBarVisibility(
         visible = isVisible,
-        edge = com.aryan.reader.shared.ui.SharedReaderBarEdge.BOTTOM,
+        edge = SharedReaderBarEdge.BOTTOM,
         motionPolicy = readerMotionPolicy,
         modifier = modifier
     ) {
-        com.aryan.reader.shared.ui.SharedReaderToolbarSurface(height = 45.dp) {
-            com.aryan.reader.shared.ui.SharedEpubBottomToolbarRow {
-                com.aryan.reader.shared.ui.sharedEpubToolbarTools(
-                    toolOrder = toolOrder,
-                    toolbarTools = epubToolbarTools,
-                    hiddenToolNamesOrIds = hiddenTools,
-                    bottomToolNamesOrIds = bottomTools,
-                    placement = com.aryan.reader.shared.ui.SharedReaderToolbarPlacement.BOTTOM,
-                )
-                    .forEach { tool ->
-                        when (tool) {
-                            ReaderTool.DICTIONARY -> TooltipIconButton(
-                                text = stringResource(R.string.tooltip_dictionary),
-                                description = stringResource(R.string.tooltip_dictionary_desc),
-                                onClick = onOpenDictionarySettings
-                            ) {
-                                Icon(painter = painterResource(id = R.drawable.dictionary), contentDescription = stringResource(R.string.content_desc_dictionary_settings))
-                            }
-                            ReaderTool.THEME -> TooltipIconButton(
-                                text = stringResource(R.string.tooltip_theme),
-                                description = stringResource(R.string.tooltip_theme_desc),
-                                onClick = onOpenThemeSettings
-                            ) {
-                                Icon(painter = painterResource(id = R.drawable.palette), contentDescription = stringResource(R.string.tooltip_theme_desc))
-                            }
-                            ReaderTool.BRIGHTNESS -> TooltipIconButton(
-                                text = stringResource(R.string.reader_brightness_title),
-                                description = stringResource(R.string.reader_brightness_system_desc),
-                                onClick = onOpenBrightness
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.contrast),
-                                    contentDescription = stringResource(R.string.reader_brightness_title)
-                                )
-                            }
-                            ReaderTool.SLIDER -> TooltipIconButton(
-                                text = stringResource(R.string.tooltip_slider),
-                                description = stringResource(R.string.tooltip_slider_desc),
-                                onClick = onOpenSlider
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.slider),
-                                    contentDescription = stringResource(R.string.content_desc_navigate_slider),
-                                    tint = if (isSliderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            ReaderTool.TOC -> TooltipIconButton(
-                                text = stringResource(R.string.tooltip_toc),
-                                description = stringResource(R.string.tooltip_toc_desc),
-                                onClick = onOpenDrawer
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Menu,
-                                    contentDescription = stringResource(R.string.content_desc_chapters_menu)
-                                )
-                            }
-                            ReaderTool.FORMAT -> TooltipIconButton(
-                                text = stringResource(R.string.tooltip_format),
-                                description = stringResource(R.string.tooltip_format_desc),
-                                onClick = onToggleFormat
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.format_size),
-                                    contentDescription = stringResource(R.string.content_desc_text_formatting)
-                                )
-                            }
-                            ReaderTool.SEARCH -> TooltipIconButton(
-                                text = stringResource(R.string.tooltip_search),
-                                description = stringResource(R.string.tooltip_search_desc),
-                                onClick = onToggleSearch
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Search,
-                                    contentDescription = stringResource(R.string.tooltip_search)
-                                )
-                            }
-                            ReaderTool.AI_FEATURES -> if (areReaderAiFeaturesEnabled(LocalContext.current)) {
-                                TooltipIconButton(
-                                    text = stringResource(R.string.tooltip_ai),
-                                    description = stringResource(R.string.tooltip_ai_desc),
-                                    onClick = onOpenAiHub
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ai),
-                                        contentDescription = stringResource(R.string.ai_features_title)
-                                    )
-                                }
-                            }
-                            ReaderTool.TTS_CONTROLS -> TooltipIconButton(
-                                text = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop)
-                                else stringResource(R.string.tooltip_tts_start),
-                                description = if (isTtsSessionActive) stringResource(R.string.tooltip_tts_stop_desc)
-                                else stringResource(R.string.tooltip_tts_start_desc),
-                                onClick = onToggleTts
-                            ) {
-                                Icon(
-                                    painter = if (isTtsSessionActive) painterResource(id = R.drawable.close) else painterResource(
-                                        id = R.drawable.text_to_speech
-                                    ),
-                                    contentDescription = if (isTtsSessionActive) stringResource(R.string.content_desc_stop_tts) else stringResource(
-                                        R.string.content_desc_start_tts
-                                    ),
-                                    tint = if (isTtsSessionActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            ReaderTool.SCREEN_ORIENTATION -> TooltipIconButton(
-                                text = stringResource(R.string.menu_screen_orientation),
-                                description = stringResource(R.string.visual_options_screen_orientation_desc),
-                                onClick = onOpenScreenOrientation
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ScreenRotation,
-                                    contentDescription = stringResource(R.string.menu_screen_orientation)
-                                )
-                            }
-                            else -> Unit
-                        }
-                    }
-            }
+        CompositionLocalProvider(
+            LocalSharedStringResolver provides androidSharedStringResolver(context)
+        ) {
+            SharedMobileEpubBottomBar(
+                tools = tools,
+                isBookmarked = false,
+                onBookmark = {},
+                onVisualOptions = {},
+                onToc = onOpenDrawer,
+                onFormat = onToggleFormat,
+                onSearch = onToggleSearch,
+                onTheme = onOpenThemeSettings,
+                onOpenSlider = onOpenSlider,
+                onDictionary = onOpenDictionarySettings,
+                onBrightness = onOpenBrightness,
+                onScreenOrientation = onOpenScreenOrientation,
+                onOpenAiHub = onOpenAiHub,
+                aiAvailable = areReaderAiFeaturesEnabled(context),
+                localTtsState = epubChromeReadAloudState(isTtsSessionActive),
+                onLocalTtsToggle = onToggleTts,
+                onLocalTtsStop = onToggleTts,
+                bottomInset = bottomInset,
+                isSliderActive = isSliderActive,
+            )
         }
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+/**
+ * Android adapter over the shared page slider.
+ *
+ * The bar, steppers, insets, slider geometry and accessibility labels (`desktop_previous_page` /
+ * `desktop_next_page`) live once in [SharedMobileEpubSlider]; Android keeps only the host-owned
+ * visibility animation (`AnimatedVisibility` + [ReaderMotionPolicy]) and translates between its own
+ * 1-based spread-step space and the shared widget's 0-based book-page space.
+ *
+ * The conversion is identity unless a two-page spread is in play. That matters beyond paginated
+ * mode: native vertical reading and per-chapter scroll each carry their own page total in
+ * [totalPages], and the shared `EpubPageSpread.spreadToBookPage` helper *clamps* to the book
+ * paginator's count, so feeding it the wrong total there would pin the thumb to page 0.
+ *
+ * [sliderCurrentPage] is the committed step, never the live scrub position: the wrapper feeds scrub
+ * updates out through [onScrub] only, so the shared widget keeps its own thumb state and the two
+ * cannot fight (see the caller's `scrubStep`).
+ */
 @Composable
 fun EpubReaderPageSlider(
     isVisible: Boolean,
     totalPages: Int,
     sliderCurrentPage: Float,
-    sliderStartPage: Int,
+    isTwoPageSpread: Boolean,
+    totalBookPageCount: Int,
     onScrub: (Float) -> Unit,
     onJumpToPage: (Int) -> Unit,
+    onScrubFinished: () -> Unit,
     modifier: Modifier = Modifier,
     activeColor: Color = Color.Unspecified,
     inactiveColor: Color = Color.Unspecified,
     contentColor: Color = Color.Unspecified,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
-    val effectiveActiveColor = if (activeColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        activeColor
+    val current = epubSliderBookPage(
+        totalPages = totalPages,
+        sliderCurrentPage = sliderCurrentPage,
+        isTwoPageSpread = isTwoPageSpread,
+        totalBookPageCount = totalBookPageCount,
+    )
+    val stepForBookPage = { bookPage: Int ->
+        epubSliderStepForBookPage(bookPage, isTwoPageSpread, totalBookPageCount)
     }
-    val effectiveInactiveColor = if (inactiveColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.surfaceVariant
-    } else {
-        inactiveColor
-    }
-    val effectiveContentColor = if (contentColor == Color.Unspecified) {
-        MaterialTheme.colorScheme.onSurface
-    } else {
-        contentColor
-    }
-    val maxPage = totalPages.coerceAtLeast(1)
-    val currentPage = sliderCurrentPage.roundToInt().coerceIn(1, maxPage)
 
     AnimatedVisibility(
         visible = isVisible,
@@ -1127,80 +648,48 @@ fun EpubReaderPageSlider(
         },
         modifier = modifier
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.navigationBars.only(WindowInsetsSides.Horizontal))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                IconButton(
-                    onClick = {
-                        onJumpToPage(
-                            readerSliderStepPage(
-                                currentPage = currentPage,
-                                delta = -1,
-                                minPage = 1,
-                                maxPage = maxPage
-                            )
-                        )
-                    },
-                    enabled = currentPage > 1,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateBefore,
-                        contentDescription = stringResource(R.string.desktop_previous_page),
-                        tint = effectiveContentColor.copy(alpha = if (currentPage > 1) 0.9f else 0.32f)
-                    )
+        SharedMobileEpubSlider(
+            pageIndex = current.pageIndex,
+            pageCount = current.pageCount,
+            isTwoPageSpread = isTwoPageSpread,
+            activeColor = if (activeColor == Color.Unspecified) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                activeColor
+            },
+            inactiveColor = if (inactiveColor == Color.Unspecified) {
+                MaterialTheme.colorScheme.surfaceVariant
+            } else {
+                inactiveColor
+            },
+            contentColor = if (contentColor == Color.Unspecified) {
+                MaterialTheme.colorScheme.onSurface
+            } else {
+                contentColor
+            },
+            onPageSelected = { bookPage -> onJumpToPage(stepForBookPage(bookPage)) },
+            onScrubPositionChange = { bookPage ->
+                if (bookPage == null) {
+                    onScrubFinished()
+                } else {
+                    onScrub(stepForBookPage(bookPage).toFloat())
                 }
-
-                ReaderMinimalSlider(
-                    value = sliderCurrentPage.coerceIn(1f, maxPage.toFloat()),
-                    onValueChange = onScrub,
-                    valueRange = 1f..maxPage.toFloat(),
-                    enabled = maxPage > 1,
-                    activeColor = effectiveActiveColor,
-                    inactiveColor = effectiveInactiveColor,
-                    thumbColor = effectiveActiveColor,
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(32.dp)
-                )
-
-                IconButton(
-                    onClick = {
-                        onJumpToPage(
-                            readerSliderStepPage(
-                                currentPage = currentPage,
-                                delta = 1,
-                                minPage = 1,
-                                maxPage = maxPage
-                            )
-                        )
-                    },
-                    enabled = currentPage < maxPage,
-                    modifier = Modifier.size(40.dp)
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.NavigateNext,
-                        contentDescription = stringResource(R.string.desktop_next_page),
-                        tint = effectiveContentColor.copy(alpha = if (currentPage < maxPage) 0.9f else 0.32f)
-                    )
-                }
-            }
-        }
+            },
+        )
     }
 }
 
 // --- Helpers moved from Screen ---
 
+/**
+ * Android adapter over the shared scrub readout.
+ *
+ * The bubble's surface, icon and type scale live once in
+ * [SharedMobileEpubScrubBubble]; only the localized `page_of_format` label stays
+ * here. The full-screen, touch-swallowing Box stays Android-side because the
+ * shared bubble is deliberately unpositioned, and the shared
+ * `SharedReaderIcons.Slider` is byte-identical to `R.drawable.slider`.
+ */
 @Composable
 fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
     Box(
@@ -1209,63 +698,23 @@ fun PageScrubbingAnimation(currentPage: Int, totalPages: Int) {
             .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {},
         contentAlignment = Alignment.Center
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .background(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
-                    shape = RoundedCornerShape(16.dp)
-                )
-                .padding(horizontal = 24.dp, vertical = 16.dp)
-        ) {
-            Icon(
-                painter = painterResource(id = R.drawable.slider),
-                contentDescription = null,
-                modifier = Modifier.size(48.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = stringResource(R.string.page_of_format, currentPage, totalPages),
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-        }
-    }
-}
-
-@Composable
-fun SpeedDropdown(
-    label: String,
-    currentValue: Float,
-    options: List<Float>,
-    onValueChange: (Float) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        Text(
-            text = "$label: ${currentValue}x",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier
-                .clickable { expanded = true }
-                .padding(4.dp)
+        SharedMobileEpubScrubBubble(
+            label = stringResource(R.string.page_of_format, currentPage, totalPages)
         )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            options.forEach { opt ->
-                DropdownMenuItem(
-                    text = { Text("${opt}x") },
-                    onClick = {
-                        onValueChange(opt)
-                        expanded = false
-                    }
-                )
-            }
-        }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Android adapter over the shared auto-scroll surface.
+ *
+ * Layout, sizes, icons, colours and animation live once in
+ * [SharedMobileAutoScrollControls]; only the localized labels stay here. The
+ * Android reader composes without a `LocalSharedStringResolver`, so a shared
+ * `readerString` lookup would render English inside an otherwise translated
+ * reader — hence the explicit [SharedMobileAutoScrollLabels] table, and hence
+ * the Android-shaped callback names (`onPlayPauseToggle`, `onLocalModeToggle`)
+ * this wrapper keeps for its two call sites (EpubReaderScreen, PdfViewerScreen).
+ */
 @Composable
 fun AutoScrollControls(
     isPlaying: Boolean,
@@ -1290,354 +739,49 @@ fun AutoScrollControls(
     onScrollToTop: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
 ) {
-    val backgroundAlpha = 0.6f
-
-    Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = backgroundAlpha),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f)),
+    SharedMobileAutoScrollControls(
+        labels = SharedMobileAutoScrollLabels(
+            expand = stringResource(R.string.content_desc_expand),
+            collapse = stringResource(R.string.content_desc_collapse),
+            pause = stringResource(R.string.tooltip_tts_pause),
+            play = stringResource(R.string.content_desc_start_playback),
+            globalSpeed = stringResource(R.string.auto_scroll_global_speed),
+            localSpeed = stringResource(R.string.auto_scroll_local_speed),
+            selectMode = stringResource(R.string.content_desc_select_mode),
+            appliesToAllFiles = stringResource(R.string.auto_scroll_applies_all_files),
+            savedForThisFile = stringResource(R.string.auto_scroll_saved_for_file),
+            scrollToTop = stringResource(R.string.action_scroll_to_top),
+            enableMusicianMode = stringResource(R.string.content_desc_enable_musician_mode),
+            disableMusicianMode = stringResource(R.string.content_desc_disable_musician_mode),
+            swapControls = stringResource(R.string.content_desc_swap_controls),
+            close = stringResource(R.string.action_close),
+            min = stringResource(R.string.label_min),
+            max = stringResource(R.string.label_max),
+            slower = stringResource(R.string.content_desc_slower),
+            faster = stringResource(R.string.content_desc_faster)
+        ),
+        readerMotionPolicy = readerMotionPolicy,
+        isPlaying = isPlaying,
+        isTempPaused = isTempPaused,
+        speed = speed,
+        minSpeed = minSpeed,
+        maxSpeed = maxSpeed,
+        isLocalMode = isLocalMode,
+        isMusicianMode = isMusicianMode,
+        useSlider = useSlider,
+        isCollapsed = isCollapsed,
+        onPlayPause = onPlayPauseToggle,
+        onSpeedChange = onSpeedChange,
+        onMinSpeedChange = onMinSpeedChange,
+        onMaxSpeedChange = onMaxSpeedChange,
+        onScrollToTop = onScrollToTop,
+        onMusicianModeToggle = onMusicianModeToggle,
+        onInputModeToggle = onInputModeToggle,
+        onCollapseChange = onCollapseChange,
+        onLocalModeChange = onLocalModeToggle,
+        onClose = onClose,
         modifier = modifier
-            .widthIn(max = 400.dp)
-            .then(if (readerMotionPolicy.reduceMotion) Modifier else Modifier.animateContentSize())
-    ) {
-        AnimatedContent(
-            targetState = isCollapsed,
-            transitionSpec = {
-                if (readerMotionPolicy.reduceMotion) {
-                    androidx.compose.animation.EnterTransition.None togetherWith
-                        androidx.compose.animation.ExitTransition.None
-                } else {
-                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
-                }
-            },
-            label = "AutoScrollUnified"
-        ) { collapsed ->
-            if (collapsed) {
-                Row(
-                    modifier = Modifier
-                        .padding(horizontal = 6.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    IconButton(
-                        onClick = { onCollapseChange(false) },
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ChevronLeft,
-                            contentDescription = stringResource(R.string.content_desc_expand),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Box(modifier = Modifier.size(36.dp), contentAlignment = Alignment.Center) {
-                        FilledIconButton(
-                            onClick = onPlayPauseToggle,
-                            modifier = Modifier.size(36.dp),
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                contentColor = MaterialTheme.colorScheme.primary
-                            )
-                        ) {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = if (isPlaying) stringResource(R.string.tooltip_tts_pause) else stringResource(R.string.content_desc_start_playback),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-                        if (isTempPaused && isPlaying) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(36.dp),
-                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.5f),
-                                strokeWidth = 2.dp
-                            )
-                        }
-                    }
-                }
-            } else {
-                Column(
-                    modifier = Modifier.padding(16.dp)
-                ) {
-                    // Top Row: Label & Tools
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box {
-                            var showModeMenu by remember { mutableStateOf(false) }
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .clickable { showModeMenu = true }
-                                    .padding(4.dp)
-                            ) {
-                                Text(
-                                    text = if (isLocalMode) stringResource(R.string.auto_scroll_local_speed) else stringResource(R.string.auto_scroll_global_speed),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ArrowDropDown,
-                                    contentDescription = stringResource(R.string.content_desc_select_mode),
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-
-                            DropdownMenu(
-                                expanded = showModeMenu,
-                                onDismissRequest = { showModeMenu = false }
-                            ) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(stringResource(R.string.auto_scroll_global_speed), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                            Text(stringResource(R.string.auto_scroll_applies_all_files), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        onLocalModeToggle(false)
-                                        showModeMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (!isLocalMode) Icon(Icons.Default.Check, contentDescription = null)
-                                    }
-                                )
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(stringResource(R.string.auto_scroll_local_speed), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Bold)
-                                            Text(stringResource(R.string.auto_scroll_saved_for_file), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        }
-                                    },
-                                    onClick = {
-                                        onLocalModeToggle(true)
-                                        showModeMenu = false
-                                    },
-                                    trailingIcon = {
-                                        if (isLocalMode) Icon(Icons.Default.Check, contentDescription = null)
-                                    }
-                                )
-                            }
-                        }
-
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            if (onScrollToTop != null) {
-                                IconButton(
-                                    onClick = onScrollToTop,
-                                    modifier = Modifier.size(48.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowUpward,
-                                        contentDescription = stringResource(R.string.action_scroll_to_top),
-                                        modifier = Modifier.size(18.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            IconButton(
-                                onClick = onMusicianModeToggle,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    painter = painterResource(id = R.drawable.music_note),
-                                    contentDescription = if (isMusicianMode) stringResource(R.string.content_desc_disable_musician_mode) else stringResource(R.string.content_desc_enable_musician_mode),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = if (isMusicianMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = onInputModeToggle,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.SwapHoriz,
-                                    contentDescription = stringResource(R.string.content_desc_swap_controls),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = { onCollapseChange(true) },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ChevronRight,
-                                    contentDescription = stringResource(R.string.content_desc_collapse),
-                                    modifier = Modifier.size(18.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = onClose,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.action_close),
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    // Bottom Row: Controls
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        // Play/Pause
-                        Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                            FilledIconButton(
-                                onClick = onPlayPauseToggle,
-                                modifier = Modifier.size(48.dp),
-                                colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                    contentDescription = if (isPlaying) stringResource(R.string.tooltip_tts_pause) else stringResource(R.string.content_desc_start_playback),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                            if (isTempPaused && isPlaying) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(48.dp),
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                                    strokeWidth = 3.dp
-                                )
-                            }
-                        }
-
-                        // Speed Controls
-                        Box(
-                            modifier = Modifier.weight(1f),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                val speedOptions = listOf(0.1f, 0.5f, 1f, 1.5f, 2f, 3f, 4f, 5f, 6f, 7f, 8f, 9f, 10f)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    SpeedDropdown(
-                                        label = stringResource(R.string.label_min),
-                                        currentValue = minSpeed,
-                                        options = speedOptions,
-                                        onValueChange = onMinSpeedChange
-                                    )
-                                    SpeedDropdown(
-                                        label = stringResource(R.string.label_max),
-                                        currentValue = maxSpeed,
-                                        options = speedOptions,
-                                        onValueChange = onMaxSpeedChange
-                                    )
-                                }
-                                Spacer(Modifier.height(4.dp))
-
-                                val safeMax = maxSpeed.coerceAtLeast(minSpeed + 0.1f)
-
-                                if (useSlider) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                    ) {
-                                        Text(
-                                            text = "%.1fx".format(speed),
-                                            style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                                            modifier = Modifier.width(45.dp),
-                                            textAlign = TextAlign.End
-                                        )
-                                        val steps = ((safeMax - minSpeed) / 0.1f).roundToInt() - 1
-
-                                        Slider(
-                                            value = speed,
-                                            onValueChange = { onSpeedChange((it * 10f).roundToInt() / 10f) },
-                                            valueRange = minSpeed..safeMax,
-                                            steps = if (steps > 0) steps else 0,
-                                            modifier = Modifier.weight(1f),
-                                            thumb = {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(20.dp)
-                                                        .background(MaterialTheme.colorScheme.primary, CircleShape)
-                                                )
-                                            },
-                                            track = { sliderState ->
-                                                val fraction = (sliderState.value - sliderState.valueRange.start) /
-                                                        (sliderState.valueRange.endInclusive - sliderState.valueRange.start)
-                                                Box(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(4.dp)
-                                                        .background(
-                                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
-                                                            RoundedCornerShape(2.dp)
-                                                        ),
-                                                    contentAlignment = Alignment.CenterStart
-                                                ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxWidth(fraction)
-                                                            .height(4.dp)
-                                                            .background(
-                                                                MaterialTheme.colorScheme.primary,
-                                                                RoundedCornerShape(2.dp)
-                                                            )
-                                                    )
-                                                }
-                                            }
-                                        )
-                                    }
-                                } else {
-                                    Surface(
-                                        shape = RoundedCornerShape(50),
-                                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                        modifier = Modifier.height(48.dp).fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.fillMaxSize(),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.SpaceBetween
-                                        ) {
-                                            IconButton(
-                                                onClick = { onSpeedChange((speed - 0.1f).coerceAtLeast(minSpeed)) },
-                                                modifier = Modifier.size(48.dp)
-                                            ) {
-                                                Icon(Icons.Default.Remove, stringResource(R.string.content_desc_slower))
-                                            }
-                                            Text(
-                                                text = "%.1fx".format(speed),
-                                                style = MaterialTheme.typography.titleMedium.copy(fontFeatureSettings = "tnum"),
-                                                textAlign = TextAlign.Center
-                                            )
-                                            IconButton(
-                                                onClick = { onSpeedChange((speed + 0.1f).coerceAtMost(safeMax)) },
-                                                modifier = Modifier.size(48.dp)
-                                            ) {
-                                                Icon(Icons.Default.Add, stringResource(R.string.content_desc_faster))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

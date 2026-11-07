@@ -60,7 +60,10 @@ interface TagDao {
     suspend fun insertTags(tags: List<TagEntity>)
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertBookTagCrossRef(crossRef: BookTagCrossRef)
+    suspend fun insertBookTagCrossRefs(crossRefs: List<BookTagCrossRef>)
+
+    @Query("SELECT id FROM tags WHERE id = :tagId")
+    suspend fun getTagId(tagId: String): String?
 
     @Query("SELECT * FROM tags ORDER BY name ASC")
     fun getAllTags(): Flow<List<TagEntity>>

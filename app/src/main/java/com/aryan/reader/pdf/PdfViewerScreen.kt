@@ -355,7 +355,9 @@ import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.reader.MobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.MobilePdfReaderBackState
 import com.aryan.reader.shared.reader.selectMobilePdfReaderBackAction
+import com.aryan.reader.shared.reader.mobilePdfSystemBarBackdrops
 import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.mobileReaderSystemBarIconFlags
 import com.aryan.reader.shared.reader.shouldPadPdfVerticalContentBelowStatusBar
 import com.aryan.reader.shared.reader.MobileReaderSystemBarsVisibility
 import com.aryan.reader.shared.reader.MobilePdfDocumentPresentation
@@ -1126,6 +1128,12 @@ private fun PdfViewerScreenContent(
     val currentPdfUri by rememberUpdatedState(effectivePdfUri)
     val currentVisibleAllAnnotations by rememberUpdatedState(visibleAllAnnotations)
     val currentRichTextController by rememberUpdatedState(richTextController)
+    // The persistence instance (and with it, its mutex and last-saved hashes)
+    // must survive the lifetime of a document: re-creating it on each
+    // recomposition reset the hashes and let concurrent saves interleave.
+    // Keep the callbacks out of the remember keys and delegate to the latest.
+    val currentOnBookmarksChanged by rememberUpdatedState(onBookmarksChanged)
+    val currentOnSavePosition by rememberUpdatedState(onSavePosition)
 
     val diagPaneContext = "pane=${surfaceState.paneBookId ?: "solo"} session=${surfaceState.paneSessionId} " +
         "focused=$isPaneFocused ownsGlobals=$ownsPaneGlobals"
@@ -1148,15 +1156,13 @@ private fun PdfViewerScreenContent(
         annotationRepository,
         textBoxRepository,
         highlightRepository,
-        onBookmarksChanged,
-        onSavePosition
     ) {
         PdfReaderPersistence(
             annotationRepository = annotationRepository,
             textBoxRepository = textBoxRepository,
             highlightRepository = highlightRepository,
-            onBookmarksChanged = onBookmarksChanged,
-            onSavePosition = onSavePosition,
+            onBookmarksChanged = { json -> currentOnBookmarksChanged(json) },
+            onSavePosition = { uri, page, total -> currentOnSavePosition(uri, page, total) },
             onSidecarsCommitted = viewModel::onPdfSidecarsCommitted
         )
     }
@@ -1685,7 +1691,10 @@ private fun PdfViewerScreenContent(
                 redoStack.clear()
                 redoStack.addAll(remappedRedoStack)
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
-                onBookmarksChanged(result.bookmarksJson)
+                surfaceState.bookmarkCache[activeBookId] = bookmarks
+                surfaceState.bookmarkDirtyBookIds.add(activeBookId)
+                // Explicit user edit (page insert remapped bookmarks).
+                viewModel.saveBookmarksUserEdit(activeBookId, result.bookmarksJson, effectivePdfUri)
 
                 showBanner("Page added at ${targetIndex + 1}")
                 Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
@@ -1826,7 +1835,10 @@ private fun PdfViewerScreenContent(
                 redoStack.clear()
                 redoStack.addAll(remappedRedoStack)
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
-                onBookmarksChanged(result.bookmarksJson)
+                surfaceState.bookmarkCache[activeBookId] = bookmarks
+                surfaceState.bookmarkDirtyBookIds.add(activeBookId)
+                // Explicit user edit (page delete remapped bookmarks).
+                viewModel.saveBookmarksUserEdit(activeBookId, result.bookmarksJson, effectivePdfUri)
 
                 showBanner("Page deleted")
 
@@ -2058,7 +2070,12 @@ private fun PdfViewerScreenContent(
             virtualPages = result.layout
             allAnnotations = result.annotations
             bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
-            onBookmarksChanged(result.bookmarksJson)
+            activeBookId?.let {
+                surfaceState.bookmarkCache[it] = bookmarks
+                surfaceState.bookmarkDirtyBookIds.add(it)
+                // Explicit user edit (auto page-expand remapped bookmarks).
+                viewModel.saveBookmarksUserEdit(it, result.bookmarksJson, effectivePdfUri)
+            } ?: onBookmarksChanged(result.bookmarksJson)
             Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
                 "ui.autoPage.expand.done bookId=$activeBookId mutation=$pageLayoutMutationVersion " +
                     "result=${virtualPages.pdfLayoutDebugSummary()}"
@@ -2104,7 +2121,12 @@ private fun PdfViewerScreenContent(
                 virtualPages = result.layout
                 allAnnotations = result.annotations
                 bookmarks = loadPdfBookmarksFromJson(result.bookmarksJson)
-                onBookmarksChanged(result.bookmarksJson)
+                activeBookId?.let {
+                    surfaceState.bookmarkCache[it] = bookmarks
+                    surfaceState.bookmarkDirtyBookIds.add(it)
+                    // Explicit user edit (auto page-prune remapped bookmarks).
+                    viewModel.saveBookmarksUserEdit(it, result.bookmarksJson, effectivePdfUri)
+                } ?: onBookmarksChanged(result.bookmarksJson)
                 Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
                     "ui.autoPage.prune.done bookId=$activeBookId mutation=$pageLayoutMutationVersion " +
                         "result=${virtualPages.pdfLayoutDebugSummary()}"
@@ -2259,7 +2281,32 @@ private fun PdfViewerScreenContent(
         }
     }
 
+    // Late snapshot fill (#556): openBook loads `initialBookmarksJson` asynchronously,
+    // so the open effect above may run with null first. Fill once the real value
+    // arrives, but never wipe user edits or non-empty local state.
+    LaunchedEffect(effectiveInitialBookmarksJson, currentBookId) {
+        val activeId = currentBookId ?: return@LaunchedEffect
+        if (activeId in surfaceState.bookmarkDirtyBookIds) return@LaunchedEffect
+        val snapshotBookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
+        if (snapshotBookmarks.isEmpty()) return@LaunchedEffect
+        val cachedBookmarks = surfaceState.bookmarkCache[activeId]
+        if (com.aryan.reader.shared.shouldApplyAnnotationSnapshot(
+                hasLocalEdits = false,
+                localCount = cachedBookmarks?.size ?: bookmarks.size,
+                snapshotJson = effectiveInitialBookmarksJson,
+                snapshotCount = snapshotBookmarks.size,
+            ) && bookmarks.isEmpty()
+        ) {
+            bookmarks = snapshotBookmarks
+            surfaceState.bookmarkCache[activeId] = snapshotBookmarks
+        }
+    }
+
     val onToggleBookmark: (Int) -> Unit = { pageIndex ->
+        // Snapshot the book id at invocation: text extraction below is async and
+        // a tab switch mid-extraction must not attribute the edit to the new book.
+        val toggleBookId = currentBookId
+        val toggleUri = effectivePdfUri
         coroutineScope.launch {
             Timber.d("onToggleBookmark triggered for page index: $pageIndex")
 
@@ -2267,7 +2314,17 @@ private fun PdfViewerScreenContent(
                 Timber.d("Bookmark exists. Removing...")
                 val updatedBookmarks = bookmarks.filterNot { it.pageIndex == pageIndex }.toSet()
                 bookmarks = updatedBookmarks
-                onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+                toggleBookId?.let {
+                    surfaceState.bookmarkCache[it] = updatedBookmarks
+                    surfaceState.bookmarkDirtyBookIds.add(it)
+                    // Explicit user edit: bypasses the stale-snapshot wipe guard
+                    // so delete-all persists (autosave path stays protected).
+                    viewModel.saveBookmarksUserEdit(
+                        it,
+                        serializePdfBookmarksToJson(updatedBookmarks),
+                        toggleUri
+                    )
+                } ?: onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
             } else {
                 Timber.d("Creating new bookmark. Attempting text extraction...")
                 var extractedText = ""
@@ -2338,7 +2395,15 @@ private fun PdfViewerScreenContent(
                     pageIndex = pageIndex, title = finalTitle, totalPages = totalPages
                 )
                 bookmarks = updatedBookmarks
-                onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+                toggleBookId?.let {
+                    surfaceState.bookmarkCache[it] = updatedBookmarks
+                    surfaceState.bookmarkDirtyBookIds.add(it)
+                    viewModel.saveBookmarksUserEdit(
+                        it,
+                        serializePdfBookmarksToJson(updatedBookmarks),
+                        toggleUri
+                    )
+                } ?: onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
             }
         }
     }
@@ -3435,6 +3500,18 @@ private fun PdfViewerScreenContent(
     }
 
     LaunchedEffect(effectivePdfUri, pdfiumCore, documentPassword) {
+        // No core means Pdfium's native libraries failed to load on this install (broken or
+        // partial split APK, or a linker namespace that refuses the platform fallback — see
+        // docs/crashlytics-triage.md#90). Opening a document with it would throw out of
+        // composition, so surface the error the failed open would have produced instead.
+        val documentCore = pdfiumCore
+        if (documentCore == null) {
+            Timber.tag("PdfTabSync").w("UI: Pdfium unavailable, cannot open $effectivePdfUri")
+            isLoadingDocument = false
+            isDocumentReady = false
+            errorMessage = context.getString(R.string.error_pdf_engine_unavailable)
+            return@LaunchedEffect
+        }
         Timber.tag("PdfTabSync").i("UI: LaunchedEffect triggered by URI change: $effectivePdfUri")
         Timber.tag(PDF_RENAME_TRACE_TAG).i(
             "pdfScreen.openEffect.start uri=$effectivePdfUri selectedBookId=$selectedBookIdForPane " +
@@ -3450,7 +3527,9 @@ private fun PdfViewerScreenContent(
 
         Timber.tag("PdfTabSync").d("UI: Loading State -> activeTabBookId: $activeTabBookId, isLoading: $isLoadingDocument")
 
-        bookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
+        // Bookmarks are restored after the book id resolves below: an unconditional
+        // reset here from a stale snapshot wipes tab state that the DB has not
+        // caught up with yet (#556). See the guarded restore after openBookPlan.
 
         isLoadingDocument = true
         isDocumentReady = false
@@ -3515,6 +3594,30 @@ private fun PdfViewerScreenContent(
             erasedAnnotationsFromStroke.clear()
             drawingState.onDrawCancel()
             currentBookId = openBookPlan.bookId
+        }
+        // Guarded bookmark restore (#556): user-edited books are authoritative
+        // from the per-tab cache; fresh books fill from a non-empty snapshot; an
+        // empty snapshot never wipes non-empty local state.
+        run {
+            val activeBookmarkBookId = currentBookId!!
+            val cachedBookmarks = surfaceState.bookmarkCache[activeBookmarkBookId]
+            val hasLocalBookmarkEdits = activeBookmarkBookId in surfaceState.bookmarkDirtyBookIds
+            val snapshotBookmarks = loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)
+            val restored = if (hasLocalBookmarkEdits && cachedBookmarks != null) {
+                cachedBookmarks
+            } else if (com.aryan.reader.shared.shouldApplyAnnotationSnapshot(
+                    hasLocalEdits = hasLocalBookmarkEdits,
+                    localCount = cachedBookmarks?.size ?: bookmarks.size,
+                    snapshotJson = effectiveInitialBookmarksJson,
+                    snapshotCount = snapshotBookmarks.size,
+                )
+            ) {
+                snapshotBookmarks
+            } else {
+                cachedBookmarks ?: bookmarks
+            }
+            bookmarks = restored
+            surfaceState.bookmarkCache[activeBookmarkBookId] = restored
         }
         Timber.tag(PDF_BLANK_PAGE_PERSISTENCE_TAG).i(
             "ui.open.activeId uri=$effectivePdfUri currentBookId=$currentBookId"
@@ -3588,7 +3691,7 @@ private fun PdfViewerScreenContent(
                 Timber.tag("PdfTabSync").v("UI: Opening document for $effectivePdfUri")
 
                 val selectedDocumentType = effectiveFileType
-                val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, pdfiumCore)
+                val doc = DocumentFactory.loadDocument(context, effectivePdfUri, selectedDocumentType, documentPassword, documentCore)
                 val loadedPasswordProtectedPdf = selectedDocumentType == FileType.PDF &&
                     (documentPassword != null || isPdfLikelyEncryptedForPrint(context, effectivePdfUri))
 
@@ -3905,6 +4008,8 @@ private fun PdfViewerScreenContent(
         if (isBackgroundIndexing && backgroundIndexingProgress > 0f) return@LaunchedEffect
         val selectedDocumentType = effectiveFileType
         if (selectedDocumentType != FileType.PDF && selectedDocumentType != FileType.PPTX) return@LaunchedEffect
+        // Nothing can open without a core, so there is no document to index.
+        val indexingCore = pdfiumCore ?: return@LaunchedEffect
 
         withContext(Dispatchers.IO) {
             val storedLang = pdfTextRepository.getBookLanguage(currentBookId!!)
@@ -3941,7 +4046,7 @@ private fun PdfViewerScreenContent(
                     val openedBgPfd = bgPfd
                     if (openedBgPfd == null) return@withContext
                     bgDoc = PdfiumEngineProvider.withPdfium {
-                        pdfiumCore.newDocument(openedBgPfd, documentPassword)
+                        indexingCore.newDocument(openedBgPfd, documentPassword)
                     }
 
                     for (pageIndex in pagesToIndex) {
@@ -3970,7 +4075,7 @@ private fun PdfViewerScreenContent(
                         uri = effectivePdfUri,
                         type = selectedDocumentType,
                         password = null,
-                        pdfiumCore = pdfiumCore
+                        pdfiumCore = indexingCore
                     )
                     genericDoc = openedGenericDoc
 
@@ -4198,6 +4303,26 @@ private fun PdfViewerScreenContent(
         } else {
             searchHighlightTarget = null
         }
+    }
+
+    // Library inside-files deep-link: the book already opened at the hit's
+    // page (initialPage). Seed jump history with the saved page so Back
+    // returns to it, and pre-load the library query in the PDF search UI
+    // (highlight-all + prev/next). Page-level hits need no auto-step.
+    val libraryPdfSearch = uiState.librarySearchDeepLink?.takeIf { it.bookId == currentBookId }
+    LaunchedEffect(libraryPdfSearch?.hit, currentBookId, isDocumentReady, totalDisplayPages) {
+        val deepLink = libraryPdfSearch ?: return@LaunchedEffect
+        if (!isDocumentReady || totalDisplayPages <= 0) return@LaunchedEffect
+        val targetDisplay = (deepLink.hit.pageIndex ?: deepLink.hit.chapterIndex)
+            ?.let { pdfPageToDisplayPage(it) }
+        val originDisplay = deepLink.pdfOriginPage?.let { pdfPageToDisplayPage(it) }
+        if (originDisplay != null && targetDisplay != null && originDisplay != targetDisplay) {
+            jumpHistory = jumpHistory.record(originDisplay, targetDisplay, totalDisplayPages)
+        }
+        searchState.onQueryChange(deepLink.query)
+        searchState.isSearchActive = true
+        searchState.showSearchResultsPanel = false
+        viewModel.consumeLibrarySearchDeepLink()
     }
 
     // A split workspace delegates back to the focused pane first so its
@@ -4546,6 +4671,26 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
     val canShowPdfTabs = surfaceState.canShowPdfTabs
     var currentThemeId by surfaceState.currentThemeId
     var customThemes by surfaceState.customThemes
+    var isPdfThemeLocal by androidx.compose.runtime.remember(bookId) {
+        androidx.compose.runtime.mutableStateOf(loadPdfThemeIsLocal(context, bookId))
+    }
+    androidx.compose.runtime.LaunchedEffect(bookId) {
+        val local = loadPdfThemeIsLocal(context, bookId)
+        isPdfThemeLocal = local
+        if (local) {
+            loadPdfLocalThemeId(context, bookId)?.let { currentThemeId = it }
+            loadPdfLocalTextureTransparency(context, bookId)?.let { globalTextureTransparency = it }
+            loadPdfLocalReverseColorMode(context, bookId)?.let {
+                reverseColorMode = com.aryan.reader.shared.pdf.PdfReverseColorMode.fromId(it)
+            }
+            loadPdfLocalExcludeImages(context, bookId)?.let { excludeImages = it }
+        } else {
+            currentThemeId = loadPdfThemeId(context)
+            globalTextureTransparency = com.aryan.reader.loadGlobalTextureTransparency(context)
+            reverseColorMode = com.aryan.reader.loadPdfReverseColorMode(context)
+            excludeImages = com.aryan.reader.loadExcludeImages(context)
+        }
+    }
     var documentPassword by surfaceState.documentPassword
     val effectiveReaderBookTitle = surfaceState.effectiveReaderBookTitle
     var flatTableOfContents by surfaceState.flatTableOfContents
@@ -4656,12 +4801,20 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                             val updatedBookmark = bookmarkToRename.copy(title = newTitle)
                             val updatedBookmarks = (bookmarks - bookmarkToRename) + updatedBookmark
                             bookmarks = updatedBookmarks
+                            currentBookId?.let {
+                                surfaceState.bookmarkCache[it] = updatedBookmarks
+                                surfaceState.bookmarkDirtyBookIds.add(it)
+                            }
                             persistBookmarksNow(updatedBookmarks)
                         }
                     },
                     onDeleteBookmark = { bookmarkToDelete ->
                         val updatedBookmarks = bookmarks - bookmarkToDelete
                         bookmarks = updatedBookmarks
+                        currentBookId?.let {
+                            surfaceState.bookmarkCache[it] = updatedBookmarks
+                            surfaceState.bookmarkDirtyBookIds.add(it)
+                        }
                         persistBookmarksNow(updatedBookmarks)
                     },
                     onDeleteHighlight = { highlightToDelete ->
@@ -4980,6 +5133,8 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                                     coroutineScope.launch {
                                         sheetState.hide()
                                         showNewTabSheet = false
+                                        currentBookId?.let { tabStateMap[it] = currentPage }
+                                        saveAllData(true).join()
                                         viewModel.switchTab(file.bookId)
                                     }
                                 }
@@ -5289,11 +5444,19 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             reverseColorMode = reverseColorMode,
             onExcludeImagesChange = {
                 excludeImages = it
-                com.aryan.reader.saveExcludeImages(context, it)
+                if (isPdfThemeLocal) {
+                    savePdfLocalExcludeImages(context, bookId, it)
+                } else {
+                    com.aryan.reader.saveExcludeImages(context, it)
+                }
             },
             onReverseColorModeChange = {
                 reverseColorMode = it
-                com.aryan.reader.savePdfReverseColorMode(context, it)
+                if (isPdfThemeLocal) {
+                    savePdfLocalReverseColorMode(context, bookId, it.id)
+                } else {
+                    com.aryan.reader.savePdfReverseColorMode(context, it)
+                }
             },
             showReverseColorOption = true,
             showExcludeImagesOption = true,
@@ -5301,11 +5464,19 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             globalTextureTransparency = globalTextureTransparency,
             onGlobalTextureTransparencyChange = {
                 globalTextureTransparency = it
-                saveGlobalTextureTransparency(context, it)
+                if (isPdfThemeLocal) {
+                    savePdfLocalTextureTransparency(context, bookId, it)
+                } else {
+                    saveGlobalTextureTransparency(context, it)
+                }
             },
             onThemeSelected = {
                 currentThemeId = it
-                savePdfThemeId(context, it)
+                if (isPdfThemeLocal) {
+                    savePdfLocalThemeId(context, bookId, it)
+                } else {
+                    savePdfThemeId(context, it)
+                }
                 showThemePanel = false
             },
             onDismiss = { showThemePanel = false },
@@ -5313,7 +5484,48 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
             onCustomThemesUpdated = {
                 customThemes = it
                 saveCustomThemes(context, it)
-            }
+            },
+            isLocalMode = isPdfThemeLocal,
+            onLocalModeChange = {
+                if (it != isPdfThemeLocal) {
+                    if (it) {
+                        if (loadPdfLocalThemeId(context, bookId) == null) {
+                            savePdfLocalThemeId(context, bookId, currentThemeId)
+                        } else {
+                            currentThemeId = loadPdfLocalThemeId(context, bookId) ?: currentThemeId
+                        }
+                        if (loadPdfLocalTextureTransparency(context, bookId) == null) {
+                            savePdfLocalTextureTransparency(context, bookId, globalTextureTransparency)
+                        } else {
+                            globalTextureTransparency = loadPdfLocalTextureTransparency(context, bookId) ?: globalTextureTransparency
+                        }
+                        if (loadPdfLocalReverseColorMode(context, bookId) == null) {
+                            savePdfLocalReverseColorMode(context, bookId, reverseColorMode.id)
+                        } else {
+                            reverseColorMode = com.aryan.reader.shared.pdf.PdfReverseColorMode.fromId(
+                                loadPdfLocalReverseColorMode(context, bookId)
+                            )
+                        }
+                        if (loadPdfLocalExcludeImages(context, bookId) == null) {
+                            savePdfLocalExcludeImages(context, bookId, excludeImages)
+                        } else {
+                            excludeImages = loadPdfLocalExcludeImages(context, bookId) ?: excludeImages
+                        }
+                    } else {
+                        currentThemeId = loadPdfThemeId(context)
+                        globalTextureTransparency = com.aryan.reader.loadGlobalTextureTransparency(context)
+                        reverseColorMode = com.aryan.reader.loadPdfReverseColorMode(context)
+                        excludeImages = com.aryan.reader.loadExcludeImages(context)
+                    }
+                    isPdfThemeLocal = it
+                    savePdfThemeIsLocal(context, bookId, it)
+                }
+            },
+            localLabel = stringResource(R.string.theme_local),
+            globalLabel = stringResource(R.string.theme_global),
+            localDescription = stringResource(R.string.auto_scroll_saved_for_file),
+            globalDescription = stringResource(R.string.auto_scroll_applies_all_files),
+            selectModeLabel = stringResource(R.string.content_desc_select_mode)
         )
     }
 
@@ -5569,6 +5781,7 @@ private fun PdfViewerDocumentSetup(
     var pendingRestorePage by setup.pendingRestorePage
     var showBars by setup.showBars
     var isTopToolbarEnabled by setup.isTopToolbarEnabled
+    var isBottomToolbarEnabled by setup.isBottomToolbarEnabled
     var showInsufficientCreditsDialog by setup.showInsufficientCreditsDialog
     var showTopTabStrip by setup.showTopTabStrip
     var systemUiMode by setup.systemUiMode
@@ -5668,18 +5881,35 @@ private fun PdfViewerDocumentSetup(
 
     LaunchedEffect(bookId) {
         showBars = false
+    }
+
+    // Per view: a paginated camera and a vertical scroll camera are not the same quantity, and
+    // applying one as the other is what put a scroll-locked document on its first page.
+    LaunchedEffect(bookId, displayMode) {
         val savedIsScrollLocked = loadPdfScrollLocked(context, bookId)
-        val savedLockedState = loadPdfLockedState(context, bookId)
-        val activeCamera = activePdfCameraAfterLockPreferenceLoad(
-            isScrollLocked = savedIsScrollLocked,
-            lockedState = savedLockedState
-        )
+        val savedLockedState = loadPdfLockedState(context, bookId, displayMode.name)
+            ?: if (displayMode == DisplayMode.PAGINATION) {
+                // Cameras saved before they were kept per view were always the paginated camera.
+                loadLegacyPdfLockedState(context, bookId)
+            } else {
+                null
+            }
+        // The vertical reader restores its own camera from `lockedState`; priming the paginated
+        // camera with a scroll offset only gave the lock saver a wrong value to write back.
+        val activeCamera = if (displayMode == DisplayMode.PAGINATION) {
+            activePdfCameraAfterLockPreferenceLoad(
+                isScrollLocked = savedIsScrollLocked,
+                lockedState = savedLockedState
+            )
+        } else {
+            1f to Offset.Zero
+        }
         isScrollLocked = savedIsScrollLocked
         lockedState = savedLockedState
         currentActiveScale = activeCamera.first
         currentActiveOffset = activeCamera.second
         pdfSplitZoomDiag(
-            "cam.restoreLock bookId=$bookId locked=$savedIsScrollLocked " +
+            "cam.restoreLock bookId=$bookId view=${displayMode.name} locked=$savedIsScrollLocked " +
                 "scale=${activeCamera.first.diagF()} offset=(${activeCamera.second.x.diagF()},${activeCamera.second.y.diagF()})"
         )
     }
@@ -5755,7 +5985,12 @@ private fun PdfViewerDocumentSetup(
     val onOcrStateChange: (Boolean) -> Unit = {}
 
     var showZoomIndicator by remember { mutableStateOf(false) }
-    var bookmarks by remember(effectivePdfUri) { mutableStateOf(loadPdfBookmarksFromJson(effectiveInitialBookmarksJson)) }
+    // Restore cached bookmarks for the selected book when returning to a tab;
+    // otherwise a stale snapshot would wipe good in-memory state (#556).
+    var bookmarks by remember(effectivePdfUri) {
+        val cachedForSelected = (selectedBookIdForPane ?: paneBookId)?.let { surfaceState.bookmarkCache[it] }
+        mutableStateOf(cachedForSelected ?: loadPdfBookmarksFromJson(effectiveInitialBookmarksJson))
+    }
 
     var showPenPlayground by rememberSaveable { mutableStateOf(false) }
     var isEditMode by rememberSaveable { mutableStateOf(false) }
@@ -5929,6 +6164,7 @@ private fun PdfViewerDocumentSetup(
     val window = (view.context as? Activity)?.window
     val showStandardBars = showBars && !isEditMode
     val showTopBar = showStandardBars && isTopToolbarEnabled
+    val showBottomBar = showStandardBars && isBottomToolbarEnabled
     var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
     var showBrightnessSheet by remember { mutableStateOf(false) }
     if (ownsPaneGlobals) {
@@ -5940,12 +6176,44 @@ private fun PdfViewerDocumentSetup(
         saveReaderBrightnessSettings(context, settings)
     }
 
+    val initialIsAppearanceLightStatusBars = remember(window, view) {
+        window?.let { WindowCompat.getInsetsController(it, view).isAppearanceLightStatusBars } == true
+    }
+    val initialIsAppearanceLightNavigationBars = remember(window, view) {
+        window?.let { WindowCompat.getInsetsController(it, view).isAppearanceLightNavigationBars } == true
+    }
+
     DisposableEffect(window, view, isSplitPane, ownsPaneGlobals) {
         onDispose {
             if (ownsPaneGlobals) window?.let {
-                WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars())
+                val insetsController = WindowCompat.getInsetsController(it, view)
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+                insetsController.isAppearanceLightStatusBars = initialIsAppearanceLightStatusBars
+                insetsController.isAppearanceLightNavigationBars = initialIsAppearanceLightNavigationBars
             }
         }
+    }
+
+    // The transparent system bars need icons that contrast with what actually paints their
+    // strip. The reader bars use the app-theme surface, which can disagree with the device
+    // theme (dark app bar in dark mode over a light reader theme, for example), so the old
+    // system-driven appearance left black icons on dark chrome. Bars without chrome keep the
+    // host's default appearance because the strip then shows the document.
+    val systemBarIconFlags = mobileReaderSystemBarIconFlags(
+        backdrops = mobilePdfSystemBarBackdrops(
+            topBarVisible = showTopBar,
+            bottomBarVisible = showBottomBar,
+        ),
+        chromeBackground = MaterialTheme.colorScheme.surface,
+        contentBackground = MaterialTheme.colorScheme.surface,
+    )
+    LaunchedEffect(window, view, ownsPaneGlobals, systemBarIconFlags) {
+        if (!ownsPaneGlobals || window == null) return@LaunchedEffect
+        val insetsController = WindowCompat.getInsetsController(window, view)
+        insetsController.isAppearanceLightStatusBars =
+            systemBarIconFlags.lightStatusBarAppearance ?: initialIsAppearanceLightStatusBars
+        insetsController.isAppearanceLightNavigationBars =
+            systemBarIconFlags.lightNavigationBarAppearance ?: initialIsAppearanceLightNavigationBars
     }
 
     LaunchedEffect(systemUiMode, showStandardBars, isSplitPane, ownsPaneGlobals) {
@@ -6077,14 +6345,24 @@ private fun PdfViewerDocumentSetup(
 
     LaunchedEffect(displayMode) { saveDisplayMode(context, displayMode) }
 
-    LaunchedEffect(bookId, currentActiveScale, currentActiveOffset, isScrollLocked) {
+    // Persists the camera panning is locked at, once it settles. Both readers report into
+    // currentActiveScale/Offset while the lock is on, so this is the camera actually on screen -
+    // the vertical reader only mirrors it when it owns the lock, and paginated pages report theirs.
+    LaunchedEffect(bookId, currentActiveScale, currentActiveOffset, isScrollLocked, displayMode) {
         if (isScrollLocked) {
             val requestedCamera = currentActiveScale to currentActiveOffset
             delay(500)
-            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | Scale=${requestedCamera.first} | X=${requestedCamera.second.x} | Y=${requestedCamera.second.y}")
+            Timber.tag("PdfLockDiagnostic").d("SAVING: BookId=$bookId | View=${displayMode.name} | Scale=${requestedCamera.first} | X=${requestedCamera.second.x} | Y=${requestedCamera.second.y}")
 
             lockedState = Triple(requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
-            savePdfLockedState(context, bookId, requestedCamera.first, requestedCamera.second.x, requestedCamera.second.y)
+            savePdfLockedState(
+                context,
+                bookId,
+                requestedCamera.first,
+                requestedCamera.second.x,
+                requestedCamera.second.y,
+                displayMode.name
+            )
         }
     }
 
@@ -6187,7 +6465,7 @@ private fun PdfViewerDocumentSetup(
     var selectedTextBoxId by rememberSaveable { mutableStateOf<String?>(null) }
     val userHighlights = remember { mutableStateListOf<PdfUserHighlight>() }
     val drawingState = remember { PdfDrawingState() }
-    val pdfiumCore = remember { PdfiumCoreProvider.core }
+    val pdfiumCore = remember { PdfiumCoreProvider.coreOrNull }
     val verticalReaderState = rememberVerticalPdfReaderState()
     var virtualPages by remember { mutableStateOf<List<VirtualPage>>(emptyList()) }
     var loadedPageLayoutBookId by remember { mutableStateOf<String?>(null) }
@@ -6554,7 +6832,17 @@ private fun PdfViewerDocumentSetup(
     surfaceState.showZoomIndicator = pdfViewerMutableValue({ showZoomIndicator }, { showZoomIndicator = it })
     surfaceState.bookmarks = pdfViewerMutableValue({ bookmarks }, { bookmarks = it })
     surfaceState.persistBookmarksNow = { updatedBookmarks ->
-        onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+        // Drawer rename/delete are explicit user edits: bypass the wipe guard.
+        val editingBookId = currentBookId
+        if (editingBookId != null) {
+            viewModel.saveBookmarksUserEdit(
+                editingBookId,
+                serializePdfBookmarksToJson(updatedBookmarks),
+                effectivePdfUri
+            )
+        } else {
+            onBookmarksChanged(serializePdfBookmarksToJson(updatedBookmarks))
+        }
     }
     surfaceState.showPenPlayground = pdfViewerMutableValue({ showPenPlayground }, { showPenPlayground = it })
     surfaceState.isEditMode = pdfViewerMutableValue({ isEditMode }, { isEditMode = it })
@@ -6852,6 +7140,14 @@ private class PdfViewerSurfaceState {
     lateinit var onNoteRequested: (String?) -> Unit
     lateinit var bookmarks: PdfViewerMutableValue<Set<PdfBookmark>>
     lateinit var persistBookmarksNow: (Set<PdfBookmark>) -> Unit
+    // Per-book bookmark cache: tab switches reuse one composition, so a stale
+    // `initialBookmarksJson` snapshot must not wipe good in-memory state (#556).
+    // User edits seed the cache and mark the book dirty; snapshot restores only
+    // fill books without local edits (see shared shouldApplyAnnotationSnapshot).
+    val bookmarkCache: androidx.compose.runtime.snapshots.SnapshotStateMap<String, Set<PdfBookmark>> =
+        androidx.compose.runtime.mutableStateMapOf()
+    val bookmarkDirtyBookIds: androidx.compose.runtime.snapshots.SnapshotStateSet<String> =
+        androidx.compose.runtime.mutableStateSetOf()
     lateinit var searchHighlightTarget: PdfViewerMutableValue<SearchResult?>
     lateinit var isOcrModelDownloading: PdfViewerMutableValue<Boolean>
     lateinit var allAnnotationsProvider: () -> Map<Int, List<PdfAnnotation>>
@@ -7076,7 +7372,8 @@ private class PdfViewerSurfaceState {
     lateinit var annotationSession: PdfViewerMutableValue<SharedPdfAnnotationSessionState>
     lateinit var richTextRepository: PdfRichTextRepository
     lateinit var pfdState: PdfViewerMutableValue<ParcelFileDescriptor?>
-    lateinit var pdfiumCore: io.legere.pdfiumandroid.suspend.PdfiumCoreKt
+    /** Null when Pdfium's native libraries cannot be loaded on this install. */
+    var pdfiumCore: io.legere.pdfiumandroid.suspend.PdfiumCoreKt? = null
     lateinit var loadedPageLayoutBookId: PdfViewerMutableValue<String?>
     lateinit var pageLayoutMutationVersion: PdfViewerMutableValue<Long>
     lateinit var isDocumentReady: PdfViewerMutableValue<Boolean>
@@ -8124,10 +8421,15 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                 lockedState = lockedState,
                                 showPageGap = showVerticalPageGap,
                                 showPageNumberOverlay = showPageNumberOverlay,
-                                // Vertical mode owns its own camera; nothing in this branch reads the
-                                // host mirror back, so do not pay two screen-scope state writes per
-                                // frame for it. The pagination branch below still reports.
-                                reportsCameraToHost = false,
+                                // Only while the lock is on: that is when the host needs the vertical
+                                // camera, to persist where a reopen resumes. Unlocked reading has no
+                                // consumer for the mirror, and paying two screen-scope writes a frame
+                                // for it invalidated the screen composition on every drag.
+                                reportsCameraToHost = isScrollLocked,
+                                onZoomAndPanChanged = { newScale, newOffset ->
+                                    currentActiveScale = newScale
+                                    currentActiveOffset = newOffset
+                                },
                                 resetZoomTrigger = resetZoomTrigger,
                                 isBubbleZoomModeActive = isBubbleZoomModeActive,
                                 onDetectBubbles = { sourcePageIndex, bitmap ->
@@ -8519,7 +8821,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var virtualPages by surfaceState.virtualPages
         var searchHighlightMode by surfaceState.searchHighlightMode
         var showAllTextHighlights by surfaceState.showAllTextHighlights
-        var lockedState by surfaceState.lockedState
         var isAutoScrollPlaying by surfaceState.isAutoScrollPlaying
         var showDictionaryUpsellDialog by surfaceState.showDictionaryUpsellDialog
         val undoStack = surfaceState.undoStack
@@ -8776,11 +9077,9 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
             val nextLocked = !isScrollLocked
             isScrollLocked = nextLocked
             savePdfScrollLocked(context, bookId, nextLocked)
-            if (nextLocked) {
-                currentPageScale = currentActiveScale
-                savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-            }
+            // The camera is recorded by the debounced lock saver once the locked view has reported
+            // it. Saving here captured the host mirror a frame before the vertical reader started
+            // reporting, so locking itself moved the document to page one.
         }
     }
     val showPdfSlider = {
@@ -9398,7 +9697,6 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
         var currentActiveScale by surfaceState.currentActiveScale
         var currentActiveOffset by surfaceState.currentActiveOffset
         var currentPageScale by surfaceState.currentPageScale
-        var lockedState by surfaceState.lockedState
         var displayMode by surfaceState.displayMode
         val verticalReaderState = surfaceState.verticalReaderState
         val currentPaginationDisplayPage = surfaceState.currentPaginationDisplayPage
@@ -9417,11 +9715,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                 val nextLocked = !isScrollLocked
                 isScrollLocked = nextLocked
                 savePdfScrollLocked(context, bookId, nextLocked)
-                if (nextLocked) {
-                    currentPageScale = currentActiveScale
-                    savePdfLockedState(context, bookId, currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                    lockedState = Triple(currentActiveScale, currentActiveOffset.x, currentActiveOffset.y)
-                }
+                // See the reader's toggle: the debounced lock saver records the camera once the
+                // locked view reports it, and locking must not move the document.
             }
         }
         val showPdfSlider = {
@@ -10061,6 +10356,7 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                         onUndo = {
                             if (undoStack.isNotEmpty()) {
                                 val action = undoStack.removeAt(undoStack.lastIndex)
+                                val annotationsBeforeUndo = allAnnotations
                                 when (action) {
                                     is HistoryAction.Add -> {
                                         val pageIndex = action.pageIndex
@@ -10120,11 +10416,21 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                         redoStack.add(action)
                                     }
                                 }
+                                // Undo is a real edit, so the undone strokes leave
+                                // the sidecar right now, and any the sidecar still
+                                // carries get a tombstone: without one the next
+                                // merge restores them on reopen.
+                                surfaceState.persistInkAnnotationsNow(
+                                    allAnnotations,
+                                    removedPdfAnnotations(annotationsBeforeUndo, allAnnotations),
+                                    "undo",
+                                )
                             }
                         },
                         onRedo = {
                             if (redoStack.isNotEmpty()) {
                                 val action = redoStack.removeAt(redoStack.lastIndex)
+                                val annotationsBeforeRedo = allAnnotations
                                 when (action) {
                                     is HistoryAction.Add -> {
                                         val pageIndex = action.pageIndex
@@ -10186,6 +10492,13 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
                                         undoStack.add(action)
                                     }
                                 }
+                                // A redo restores strokes, except when it redoes a
+                                // removal: those have to leave the file too.
+                                surfaceState.persistInkAnnotationsNow(
+                                    allAnnotations,
+                                    removedPdfAnnotations(annotationsBeforeRedo, allAnnotations),
+                                    "redo",
+                                )
                             }
                         },
                         onClose = {

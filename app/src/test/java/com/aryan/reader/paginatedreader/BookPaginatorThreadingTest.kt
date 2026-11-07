@@ -32,6 +32,38 @@ class BookPaginatorThreadingTest {
     }
 
     @Test
+    fun `pagination is pinned off the caller's dispatcher`() {
+        // Pagination lays out every block and, for a table with an overrunning row, re-lays out
+        // cell text in a split search. The TTS/media-overlay entry points are launched from
+        // `rememberCoroutineScope()`, so an unpinned path put whole-chapter layout inside a
+        // Choreographer frame (that is where docs/crashlytics-triage.md#97 lost its allocation).
+        val source = sourceFile("com/aryan/reader/paginatedreader/BookPaginator.kt").readText()
+
+        val ensureBody = source.substringAfter("private suspend fun ensureChapterPaginated")
+            .substringBefore("private suspend fun getCachedBlocksForChapter")
+        assertTrue(
+            "ensureChapterPaginated must pin pagination with withContext(Dispatchers.IO)",
+            ensureBody.contains("withContext(Dispatchers.IO)")
+        )
+        assertTrue(
+            "paginateChapter must run inside the pinned block",
+            ensureBody.indexOf("withContext(Dispatchers.IO)") < ensureBody.indexOf("paginateChapter(chapterIndex)")
+        )
+
+        val ttsBody = source.substringAfter("suspend fun getTtsChunksForChapter")
+            .substringBefore("private fun enqueueBookProcessingWork")
+        assertTrue(
+            "getTtsChunksForChapter must pin its whole body with withContext(Dispatchers.IO)",
+            ttsBody.contains("withContext(Dispatchers.IO)")
+        )
+        assertTrue(
+            "the chunking pass must run inside the pinned block",
+            ttsBody.indexOf("withContext(Dispatchers.IO)") <
+                ttsBody.indexOf("splitTextIntoChunksWithSourceOffsets(blockText)")
+        )
+    }
+
+    @Test
     fun `trace preview truncates before escaping to stay allocation bounded`() {
         // getBlocksForChapter logs a preview of the full chapter HTML. Escaping first copies
         // multi-MB inputs several times for a 220-char preview and OOMs (see

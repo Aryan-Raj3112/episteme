@@ -24,7 +24,7 @@ class PdfZoomTilesTest {
 
     @Test
     fun renderDimensionsAreMemoryBounded() {
-        val tiles = planPdfZoomTiles(0.75f, 10f, PdfPageBounds(0f, 0f, 1f, 1f))
+        val tiles = planPdfZoomTiles(0.75f, PDF_MAX_ZOOM_SCALE, PdfPageBounds(0f, 0f, 1f, 1f))
         assertTrue(tiles.size <= PDF_ZOOM_TILE_MAX_VISIBLE_COUNT)
         assertTrue(tiles.all {
             it.fullWidthPx <= PDF_ZOOM_TILE_MAX_RENDERED_SIDE_PX &&
@@ -35,12 +35,14 @@ class PdfZoomTilesTest {
     }
 
     @Test
-    fun rasterQualityUsesStableBucketsAndClampsAtOneThousandPercent() {
+    fun rasterQualityUsesStableBucketsAndClampsAtFiveThousandPercent() {
         assertEquals(1f, pdfZoomRenderScale(1f))
         assertEquals(4f, pdfZoomRenderScale(3.1f))
         assertEquals(6f, pdfZoomRenderScale(4.01f))
         assertEquals(10f, pdfZoomRenderScale(9f))
-        assertEquals(10f, pdfZoomRenderScale(100f))
+        assertEquals(14f, pdfZoomRenderScale(12f))
+        assertEquals(50f, pdfZoomRenderScale(45f))
+        assertEquals(50f, pdfZoomRenderScale(100f))
     }
 
     @Test

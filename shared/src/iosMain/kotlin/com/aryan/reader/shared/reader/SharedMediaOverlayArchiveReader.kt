@@ -60,3 +60,17 @@ internal class SharedMediaOverlayArchiveReader private constructor(
         }
     }
 }
+
+/**
+ * The SMIL reader the iOS composable seam hands the shared reader.
+ *
+ * Lazy per read rather than resolved once, because the reader screen composes before the loader
+ * registers the archive on its background dispatcher. A reader resolved eagerly at composition
+ * cached a null for the whole first open, hiding the narration icon until the book was closed and
+ * reopened. Each read borrows whatever the store holds then, which is the cached instance once
+ * loaded. Null only for a blank path, where no archive can ever be reached.
+ */
+internal fun iosMediaOverlaySmilReaderFor(bookPath: String): ((String) -> String?)? {
+    if (bookPath.isBlank()) return null
+    return { entryPath -> SharedMediaOverlayArchiveReader.at(bookPath)?.readTextOrNull(entryPath) }
+}

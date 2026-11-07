@@ -142,6 +142,7 @@ import coil.request.ImageRequest.Builder
 import com.aryan.reader.R
 import com.aryan.reader.loadReaderTextureBitmap
 import com.aryan.reader.countWords
+import com.aryan.reader.shouldOfferSmartDictionaryUpsell
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.plainTextCharacterCount
 import com.aryan.reader.epubreader.HighlightColor
@@ -1178,7 +1179,7 @@ fun NativeVerticalReaderScreen(
                             },
                             onSelectAll = null,
                             onDictionary = {
-                                if (isProUser || countWords(sel.text) <= 1) {
+                                if (!shouldOfferSmartDictionaryUpsell(isProUser, isOss, countWords(sel.text))) {
                                     onWordSelectedForAiDefinition(sel.text)
                                 } else {
                                     onShowDictionaryUpsellDialog()

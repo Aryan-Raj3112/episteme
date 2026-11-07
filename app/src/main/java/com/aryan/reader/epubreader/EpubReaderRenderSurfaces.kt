@@ -398,7 +398,8 @@ internal fun EpubReaderRenderSurfaces(
     onTranslateLookupFn: (String)->Unit,
     onDictionaryLookupFn: (String)->Unit,
     onUpdateHighlightPaletteFn: (Int, Int) -> Unit,
-    runRecapFn: (Int, Int) -> Unit
+    runRecapFn: (Int, Int) -> Unit,
+    onBookmarksUserEdited: () -> Unit = {},
 ) {
     var addBookmarkRequest by addBookmarkRequestState
     var bookReplacementPreferences by bookReplacementPreferencesState
@@ -423,6 +424,7 @@ internal fun EpubReaderRenderSurfaces(
     var isChapterReadyForBookmarkCheck by isChapterReadyForBookmarkCheckState
     var isMusicianMode by isMusicianModeState
     var isPagerInitialized by isPagerInitializedState
+    val webViewProviderAvailable = remember { isWebViewProviderAvailable() }
     var isRecapLoading by isRecapLoadingState
     var isRequestingRecapCfi by isRequestingRecapCfiState
     var isSavingAndExiting by isSavingAndExitingState
@@ -704,6 +706,23 @@ internal fun EpubReaderRenderSurfaces(
                                     },
                                     onHighlightDeleted = { cfi ->
                                         userHighlights.find { it.cfi == cfi }?.let { userHighlights.remove(it) }
+                                    },
+                                )
+                            } else if (!webViewProviderAvailable) {
+                                // No usable WebView provider on this device: the scroll
+                                // surface cannot render, so offer the natively rendered
+                                // pagination mode (same handoff as the in-reader V->P
+                                // switch).
+                                SharedMobileReaderRecoveryGate(
+                                    message = stringResource(R.string.error_webview_unavailable),
+                                    recovering = false,
+                                    isError = true,
+                                    actionLabel = stringResource(R.string.action_use_paginated_mode),
+                                    onAction = {
+                                        navigation.chapterToLoadOnSwitch = currentChapterIndex
+                                        isPagerInitialized = false
+                                        currentRenderMode = RenderMode.PAGINATED
+                                        onRenderModeChange(RenderMode.PAGINATED)
                                     },
                                 )
                             } else {
@@ -1733,6 +1752,7 @@ internal fun EpubReaderRenderSurfaces(
                                                     chapterIndex = currentChapterIndex
                                                 )
                                                 bookmarks = bookmarks + newBookmark
+                                                onBookmarksUserEdited()
                                                 Timber.d("Vertical add: Created bookmark: $newBookmark"
                                                 )
                                             },

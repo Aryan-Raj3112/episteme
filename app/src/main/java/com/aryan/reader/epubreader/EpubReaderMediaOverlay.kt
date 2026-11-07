@@ -9,6 +9,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import com.aryan.reader.R
 import com.aryan.reader.epub.EpubChapter
+import com.aryan.reader.mediaoverlay.AndroidMediaOverlayNarrationProgressStore
 import com.aryan.reader.mediaoverlay.AndroidSharedMediaOverlayPlayback
 import com.aryan.reader.paginatedreader.ContentBlock
 import com.aryan.reader.paginatedreader.resolveSharedMediaOverlayFragmentsInBlocks
@@ -263,6 +264,11 @@ internal fun rememberEpubMediaOverlaySession(
         archiveFile?.let(engine::attachBook)
         onDispose { }
     }
+    // Where narration stopped for this book. Remembered with the book, because the store's own
+    // identity is irrelevant to the session — only which book's position it will answer for.
+    val narrationProgressStore = remember(context, bookId) {
+        AndroidMediaOverlayNarrationProgressStore(context.applicationContext)
+    }
     val cache = remember(overlayIndex, smilReader, bookId) {
         smilReader?.takeIf { overlayIndex.hasOverlays }
             ?.let { readSmil -> SharedMediaOverlayDocumentCache(overlayIndex, readSmil) }
@@ -310,7 +316,8 @@ internal fun rememberEpubMediaOverlaySession(
                 totalDurationMs = totalDurationMs,
                 overlayIndex = overlayIndex,
                 spineItemIndexByChapter = chapterSpineItems,
-                spineItemsInReadingOrder = readingOrder
+                spineItemsInReadingOrder = readingOrder,
+                narrationProgressStore = narrationProgressStore
             )
         }
     }

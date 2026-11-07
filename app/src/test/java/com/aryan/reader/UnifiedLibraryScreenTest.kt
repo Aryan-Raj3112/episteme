@@ -6,7 +6,9 @@ import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.audiobookResumePosition
 import com.aryan.reader.audiobook.formatSleepTimerLabel
 import com.aryan.reader.audiobook.BookTtsListeningProgressEntity
+import com.aryan.reader.audiobook.shouldRestartListenForVoiceChange
 import com.aryan.reader.audiobook.toSharedTtsPlaybackSnapshot
+import com.aryan.reader.shared.SharedListenAudioSource
 import com.aryan.reader.shared.SharedTtsListenSavedProgress
 import com.aryan.reader.shared.toSharedBookTtsListenState
 import com.aryan.reader.tts.TtsPlaybackManager
@@ -104,6 +106,38 @@ class UnifiedLibraryScreenTest {
         assertFalse(shouldAutoStartTtsAudiobook("book-1", active))
         assertTrue(shouldAutoStartTtsAudiobook("book-2", active))
         assertTrue(shouldAutoStartTtsAudiobook("book-1", active.copy(playbackSource = "READER")))
+    }
+
+    @Test
+    fun voiceChangeRestartsOnlyPausedLiveTtsSessions() {
+        fun restart(
+            source: SharedListenAudioSource = SharedListenAudioSource.TTS,
+            playbackSource: String? = "AUDIOBOOK_TTS",
+            activeBookId: String? = "book-1",
+            finished: Boolean = false,
+            playing: Boolean = false,
+            loading: Boolean = false,
+        ) = shouldRestartListenForVoiceChange(
+            listenSource = source,
+            playbackSource = playbackSource,
+            activeBookId = activeBookId,
+            requestedBookId = "book-1",
+            sessionFinished = finished,
+            isPlaying = playing,
+            isLoading = loading,
+        )
+
+        // Paused live session: the pick needs a restart to be heard.
+        assertTrue(restart())
+        // Speaking, loading, finished, idle, other book, other surface,
+        // and narration mode never restart.
+        assertFalse(restart(playing = true))
+        assertFalse(restart(loading = true))
+        assertFalse(restart(finished = true))
+        assertFalse(restart(playbackSource = null))
+        assertFalse(restart(activeBookId = "book-2"))
+        assertFalse(restart(playbackSource = "READER"))
+        assertFalse(restart(source = SharedListenAudioSource.MEDIA_OVERLAY))
     }
 
     @Test

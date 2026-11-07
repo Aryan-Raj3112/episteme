@@ -337,42 +337,6 @@ fun SharedMobileTopBanner(
     }
 }
 
-@Composable
-fun SharedMobileTopAppBar(
-    modifier: Modifier = Modifier,
-    title: @Composable () -> Unit,
-    navigationIcon: @Composable () -> Unit = {},
-    actions: @Composable RowScope.() -> Unit = {},
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shadowElevation = 2.dp,
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .statusBarsPadding()
-                .height(56.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            navigationIcon()
-            Box(
-                modifier = Modifier.weight(1f).padding(start = 12.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                ProvideTextStyle(MaterialTheme.typography.titleLarge) { title() }
-            }
-            Row(
-                horizontalArrangement = Arrangement.End,
-                verticalAlignment = Alignment.CenterVertically,
-                content = actions,
-            )
-        }
-    }
-}
-
 data class SharedMobileContextualActionLabels(
     val selectedCount: String,
     val clearSelection: String,
@@ -547,55 +511,6 @@ internal fun SharedMobileCompactSelectionActions(
                 text = { Text(labels.clear) },
                 leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
                 onClick = { showMore = false; onClear() },
-            )
-        }
-    }
-}
-
-@Composable
-fun SharedMobileLibrarySearchTopBar(
-    value: TextFieldValue,
-    onValueChange: (TextFieldValue) -> Unit,
-    showClear: Boolean,
-    onClose: () -> Unit,
-    onClear: () -> Unit,
-    placeholder: String,
-    closeContentDescription: String,
-    clearContentDescription: String,
-    focusRequester: FocusRequester,
-    textFieldModifier: Modifier = Modifier,
-) {
-    Surface(shadowElevation = 4.dp, modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().statusBarsPadding().height(64.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onClose) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = closeContentDescription)
-            }
-            OutlinedTextField(
-                value = value,
-                onValueChange = onValueChange,
-                placeholder = { Text(placeholder) },
-                modifier = textFieldModifier
-                    .weight(1f)
-                    .padding(vertical = 4.dp)
-                    .focusRequester(focusRequester),
-                singleLine = true,
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    disabledContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                ),
-                trailingIcon = {
-                    if (showClear) {
-                        IconButton(onClick = onClear) {
-                            Icon(Icons.Default.Close, contentDescription = clearContentDescription)
-                        }
-                    }
-                },
             )
         }
     }
@@ -1913,69 +1828,12 @@ internal fun SharedMobileShelfRow(
     }
 }
 
-@Composable
-fun SharedMobileEmptyLibrary(
-    title: String,
-    message: String,
-    actionLabel: String?,
-    onAction: () -> Unit,
-    secondaryActionLabel: String? = null,
-    onSecondaryAction: () -> Unit = {},
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.FileOpen,
-            contentDescription = readerString("content_desc_no_files_icon", "No files"),
-            modifier = Modifier.size(80.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(24.dp))
-        Text(
-            text = title,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        if (actionLabel != null) {
-            Spacer(Modifier.height(32.dp))
-            FilledTonalButton(
-                onClick = onAction,
-                shape = MaterialTheme.shapes.medium,
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
-                Spacer(Modifier.size(ButtonDefaults.IconSpacing))
-                Text(actionLabel)
-            }
-        }
-        if (secondaryActionLabel != null) {
-            Spacer(Modifier.height(16.dp))
-            OutlinedButton(onClick = onSecondaryAction) {
-                Text(secondaryActionLabel)
-            }
-        }
-    }
-}
-
 internal fun sharedMobileFileTypeColor(type: FileType): Color {
     return when (type) {
         FileType.PDF -> Color(0xFFE53935)
         FileType.EPUB, FileType.MOBI, FileType.FB2 -> Color(0xFF1E88E5)
         FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT -> Color(0xFF8E24AA)
-        FileType.DOCX, FileType.ODT, FileType.FODT -> Color(0xFF3949AB)
+        FileType.DOCX, FileType.DOC, FileType.ODT, FileType.FODT -> Color(0xFF3949AB)
         FileType.MD, FileType.TXT, FileType.HTML -> Color(0xFF00897B)
         FileType.PPTX -> Color(0xFFF4511E)
         FileType.AUDIOBOOK -> Color(0xFF6D4C41)

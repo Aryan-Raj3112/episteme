@@ -6,9 +6,11 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -32,6 +34,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DrawerDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,6 +49,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.UserData
 
@@ -96,9 +100,24 @@ fun SharedMobileAppDrawerContent(
     showFolderSyncControls: Boolean = showSyncControls,
     // Wallet/spendable-balance badge next to Pro status. Defaults stay true.
     showCreditsBalance: Boolean = true,
+    /**
+     * Space above the sheet, for hosts whose display keeps a strip above the drawer (the
+     * foldable iPhone lays its destinations out there). The sheet's own top system inset is
+     * replaced rather than added to, so the first row sits at the top of the sheet instead
+     * of a second, empty band below it. Zero on every other host, which keeps the framework
+     * insets untouched.
+     */
+    topInset: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
-    ModalDrawerSheet(modifier = modifier) {
+    ModalDrawerSheet(
+        modifier = modifier.padding(top = topInset),
+        windowInsets = if (topInset > 0.dp) {
+            DrawerDefaults.windowInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom)
+        } else {
+            DrawerDefaults.windowInsets
+        },
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
             val currentUser = account.currentUser
             val isProUser = account.isProUser

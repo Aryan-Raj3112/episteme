@@ -4,7 +4,7 @@ import kotlin.math.abs
 import kotlin.math.pow
 
 const val PDF_MIN_ZOOM_SCALE = 1f
-const val PDF_MAX_ZOOM_SCALE = 10f
+const val PDF_MAX_ZOOM_SCALE = 50f
 const val PDF_DOUBLE_TAP_ZOOM_SCALE = 2.5f
 const val PDF_ZOOM_RENDER_SETTLE_MILLIS = 120L
 

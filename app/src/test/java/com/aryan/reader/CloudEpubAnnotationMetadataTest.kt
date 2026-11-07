@@ -61,6 +61,26 @@ class CloudEpubAnnotationMetadataTest {
         assertFalse(annotationJsonEquivalentForNoop("""[{"id":"h1"}]""", "[]"))
     }
 
+    @Test
+    fun `bookmark save guard never wipes persisted bookmarks with empty snapshots`() {
+        // Shared BookmarkPersistencePolicy backs this guard: stale tab-switch
+        // snapshots (null/""/"[]") are noops, real deletions still persist.
+        assertTrue(annotationJsonEquivalentForNoop(null, "[]"))
+        assertTrue(annotationJsonEquivalentForNoop("[]", "[]"))
+        assertFalse(
+            annotationJsonEquivalentForNoop(
+                """[{"pageIndex":5,"title":"Page 6","totalPages":10}]""",
+                "[]"
+            )
+        )
+        assertFalse(
+            annotationJsonEquivalentForNoop(
+                null,
+                """[{"pageIndex":5,"title":"Page 6","totalPages":10}]"""
+            )
+        )
+    }
+
     private fun localBook(
         type: FileType = FileType.EPUB,
         highlightsJson: String? = null,

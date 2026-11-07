@@ -58,6 +58,7 @@ import com.aryan.reader.shared.ReaderSearchFocusDelayMillis
 import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
+import com.aryan.reader.shared.fillCssColor
 import com.aryan.reader.shared.readerWordStartMatchOffsets
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
@@ -89,12 +90,20 @@ internal fun SharedMobileEpubSearchOverlay(
     onShowResultsChange: (Boolean) -> Unit,
     onResultClick: (SharedMobileEpubSearchResult) -> Unit,
     onDismiss: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /**
+     * Library deep-links open search with the query pre-loaded; popping the
+     * keyboard unprompted on open is wrong, so hosts pass false there.
+     * Manual opens keep the default. Keyed on Unit: a consumed deep-link
+     * flipping the flag later does not refocus a composed field.
+     */
+    autoFocus: Boolean = true,
 ) {
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusManager = LocalFocusManager.current
     LaunchedEffect(Unit) {
+        if (!autoFocus) return@LaunchedEffect
         delay(ReaderSearchFocusDelayMillis)
         focusRequester.requestFocus()
     }
@@ -226,8 +235,17 @@ internal fun SharedMobileEpubSearchNavigation(current: Int, total: Int, onPrevio
     }
 }
 
+/**
+ * EPUB/PDF-style jump history bar (back / clear / forward).
+ *
+ * Public because Android's `EpubJumpHistoryBar` delegates here; the host keeps the visibility
+ * animation (`AnimatedVisibility` + its own motion policy) and passes its labels in. The
+ * accessibility labels are Android's (`content_desc_jump_back`/`content_desc_jump_forward` for the
+ * arrows, `action_clear` for the clear icon) rather than the older `reader_jump_*`/
+ * `desktop_clear_jump_history` pair, per the standing rule that Android is the benchmark.
+ */
 @Composable
-internal fun SharedMobileEpubJumpHistoryBar(
+fun SharedMobileEpubJumpHistoryBar(
     backLabel: String?,
     forwardLabel: String?,
     onBack: () -> Unit,
@@ -247,7 +265,7 @@ internal fun SharedMobileEpubJumpHistoryBar(
             TextButton(onClick = onBack, enabled = backLabel != null, modifier = Modifier.weight(1f)) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = readerString("reader_jump_back", "Jump back"),
+                    contentDescription = readerString("content_desc_jump_back", "Jump Back"),
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(4.dp))
@@ -256,10 +274,7 @@ internal fun SharedMobileEpubJumpHistoryBar(
             TextButton(onClick = onClear, modifier = Modifier.weight(1f)) {
                 Icon(
                     Icons.Default.Close,
-                    contentDescription = readerString(
-                        "desktop_clear_jump_history",
-                        "Clear jump history",
-                    ),
+                    contentDescription = readerString("action_clear", "Clear"),
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(4.dp))
@@ -270,7 +285,7 @@ internal fun SharedMobileEpubJumpHistoryBar(
                 Spacer(Modifier.width(4.dp))
                 Icon(
                         Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = readerString("reader_jump_forward", "Jump forward"),
+                        contentDescription = readerString("content_desc_jump_forward", "Jump Forward"),
                         modifier = Modifier.size(16.dp),
                     )
             }
@@ -441,6 +456,12 @@ internal fun sharedMobileEpubHighlightsApplyScript(highlights: List<UserHighligh
             append(",\"colorId\":").append(JsonPrimitive(highlight.color.id))
             append(",\"style\":").append(JsonPrimitive(highlight.style.id))
             highlight.colorArgb?.let { append(",\"colorArgb\":").append(it.toLong()) }
+            // The tone every other surface fills with, alpha included, and sent for every highlight
+            // whether or not it carries an ARGB. Without it the WebView derives the colour from
+            // colorArgb and emits `#RRGGBB`, which has no alpha: a highlight created from the
+            // stylesheet looked tinted, and the same highlight turned opaque the moment it was
+            // recoloured. readerUserHighlightPaintColor prefers this value when it is present.
+            append(",\"fillCss\":").append(JsonPrimitive(highlight.fillCssColor()))
             append(",\"chapterIndex\":").append(highlight.chapterIndex)
             append(",\"locator\":{")
             val locator = highlight.locator

@@ -70,6 +70,8 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.paginatedreader.SemanticImage
 import com.aryan.reader.shared.HighlightStyle
+import com.aryan.reader.shared.sharedNativeFontSizeSp
+import com.aryan.reader.shared.sharedPaginationBaseLineHeightSp
 import com.aryan.reader.shared.ReaderHighlightPalette
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
@@ -287,8 +289,10 @@ internal fun SharedNativePaginatedPage(
                         color = renderPlan.foreground,
                         textAlign = fallbackTextAlign,
                         style = MaterialTheme.typography.bodyLarge.copy(
-                            fontSize = settings.fontSize.sp,
-                            lineHeight = (settings.fontSize * settings.lineSpacing).sp,
+                            fontSize = settings.sharedNativeFontSizeSp().sp,
+                            // Native pagination leading, Android benchmark parity: same conversion
+                            // the measured paginator applies, so drawn lines match measured lines.
+                            lineHeight = settings.sharedPaginationBaseLineHeightSp().sp,
                             fontFamily = readerFontFamily,
                             fontWeight = settings.fontWeight.takeIf { it > 0 }?.let(::FontWeight),
                             letterSpacing = settings.letterSpacing.em

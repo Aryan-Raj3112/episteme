@@ -10,6 +10,29 @@ package com.aryan.reader.shared.pdf
  *
  * Coordinates are PDF page space (y-up), matching [FPDFAnnot_AddInkStroke]
  * inputs after the normalized→page transform.
+ *
+ * ## Opacity
+ *
+ * A content stream has no opacity of its own, and this API cannot hand PDFium a
+ * `/Resources` dictionary. `FPDFAnnot_SetAP` builds the appearance's resources from
+ * the annotation dictionary: when the annotation has `/CA < 1` it installs
+ * `/Resources /ExtGState /GS` whose `CA`/`ca` both come from `/CA`, and otherwise it
+ * installs no resources at all — and Apple's PDFKit drops the colour operators of an
+ * appearance stream without `/Resources` and paints a black `/InkList` fallback. The
+ * exporters therefore write `/C` + `/CA` from [sharedPdfInkAnnotationDictColorArgb]
+ * (which keeps `/CA` strictly below 1) before installing this stream; the annotation
+ * dictionary is frozen afterwards, because `FPDFAnnot_SetColor` refuses to update an
+ * annotation that already has an appearance.
+ *
+ * So a translucent stroke is expressed by referencing that graphics state with
+ * `/GS gs` — and only when [colorArgb]'s alpha is below 255, because the name must
+ * resolve. Callers install the appearance for the exact colour
+ * [sharedPdfInkExportColorArgb] produced; the dictionary colour differs from it by at
+ * most one alpha step.
+ *
+ * Blend mode is out of reach: `FPDFAnnot_SetAP` always writes `/BM /Normal`. Multiply
+ * over white paper is numerically identical to source-over at the same alpha, which is
+ * what the on-screen highlighter renders on a page background.
  */
 fun sharedPdfInkAppearanceContent(
     pagePoints: List<PdfPagePoint>,
@@ -18,12 +41,17 @@ fun sharedPdfInkAppearanceContent(
 ): String {
     if (pagePoints.isEmpty() || strokeWidthPdfUnits <= 0f) return ""
 
+    val alpha = (colorArgb ushr 24) and 0xFF
     val red = ((colorArgb ushr 16) and 0xFF) / 255f
     val green = ((colorArgb ushr 8) and 0xFF) / 255f
     val blue = (colorArgb and 0xFF) / 255f
 
     return buildString {
         append("q\n")
+        // Translucent strokes reference the ExtGState PDFium attaches for /CA < 1.
+        if (alpha < 255) {
+            append("/GS gs\n")
+        }
         append(pdfFixed(red))
         append(' ')
         append(pdfFixed(green))

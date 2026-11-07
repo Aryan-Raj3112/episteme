@@ -7,20 +7,13 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.zip.ZipFile
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sin
 
-const val SHARED_PPTX_PARSER_VERSION = 6
-private const val EMU_PER_POINT = 12_700f
-private const val DEFAULT_SLIDE_WIDTH_EMU = 12_192_000
-private const val DEFAULT_SLIDE_HEIGHT_EMU = 6_858_000
-private const val DEFAULT_TEXT_SIZE_PT = 18f
-private const val DEFAULT_TEXT_MARGIN_PT = 91_440f / EMU_PER_POINT
+const val SHARED_PPTX_PARSER_VERSION = 7
+private const val DEFAULT_TEXT_MARGIN_PT = 91_440f / SharedPptxOoXml.EMU_PER_POINT
 private const val DEFAULT_LINE_SPACING_MULTIPLE = 1.0f
-private const val MAX_NUMBERING_LEVELS = 9
 
 private data class SharedPptxRelationships(
     val byId: Map<String, SharedPptxRelationship>
@@ -64,7 +57,7 @@ private data class SharedPptxTextDefaults(
     }
 
     fun forPlaceholder(key: SharedPptxPlaceholderKey?): Map<Int, SharedPptxParagraphStyle> {
-        return when (key?.type?.placeholderFamily()) {
+        return when (key?.type?.let(SharedPptxOoXml::placeholderFamily)) {
             "title" -> title
             "body", null -> if (key != null) body else other
             "subtitle" -> other.ifEmpty { body }
@@ -235,14 +228,14 @@ private data class SharedPptxGroupTransform(
             val ext = xfrm.childrenByLocalTag("ext").firstOrNull()
             val chOff = xfrm.childrenByLocalTag("chOff").firstOrNull()
             val chExt = xfrm.childrenByLocalTag("chExt").firstOrNull() ?: return IDENTITY
-            val childWidth = chExt.xmlFloat("cx")?.emuToPoint()?.takeIf { it != 0f } ?: return IDENTITY
-            val childHeight = chExt.xmlFloat("cy")?.emuToPoint()?.takeIf { it != 0f } ?: return IDENTITY
-            val scaleX = (ext?.xmlFloat("cx")?.emuToPoint() ?: childWidth) / childWidth
-            val scaleY = (ext?.xmlFloat("cy")?.emuToPoint() ?: childHeight) / childHeight
-            val childX = chOff?.xmlFloat("x")?.emuToPoint() ?: 0f
-            val childY = chOff?.xmlFloat("y")?.emuToPoint() ?: 0f
-            val offX = off?.xmlFloat("x")?.emuToPoint() ?: 0f
-            val offY = off?.xmlFloat("y")?.emuToPoint() ?: 0f
+            val childWidth = chExt.xmlFloat("cx")?.let(SharedPptxOoXml::emuToPoint)?.takeIf { it != 0f } ?: return IDENTITY
+            val childHeight = chExt.xmlFloat("cy")?.let(SharedPptxOoXml::emuToPoint)?.takeIf { it != 0f } ?: return IDENTITY
+            val scaleX = (ext?.xmlFloat("cx")?.let(SharedPptxOoXml::emuToPoint) ?: childWidth) / childWidth
+            val scaleY = (ext?.xmlFloat("cy")?.let(SharedPptxOoXml::emuToPoint) ?: childHeight) / childHeight
+            val childX = chOff?.xmlFloat("x")?.let(SharedPptxOoXml::emuToPoint) ?: 0f
+            val childY = chOff?.xmlFloat("y")?.let(SharedPptxOoXml::emuToPoint) ?: 0f
+            val offX = off?.xmlFloat("x")?.let(SharedPptxOoXml::emuToPoint) ?: 0f
+            val offY = off?.xmlFloat("y")?.let(SharedPptxOoXml::emuToPoint) ?: 0f
             return SharedPptxGroupTransform(
                 scaleX = scaleX,
                 scaleY = scaleY,
@@ -256,22 +249,57 @@ private data class SharedPptxGroupTransform(
 
 object SharedPptxDeckCache {
     private const val MAX_ENTRIES = 4
-    private val cache = LinkedHashMap<String, SharedPptxDeck>()
+    private const val MAX_TOTAL_IMAGE_BYTES = 64L * 1024L * 1024L
+
+    private data class Entry(
+        val deck: SharedPptxDeck,
+        val length: Long,
+        val lastModified: Long,
+        val imageBytes: Long,
+    )
+
+    private val cache = LinkedHashMap<String, Entry>()
+    private val fastIndex = mutableMapOf<String, String>()
 
     fun load(file: File): SharedPptxDeck {
-        val key = "${file.contentHash()}:${file.length()}:$SHARED_PPTX_PARSER_VERSION"
+        val length = file.length()
+        val lastModified = file.lastModified()
+        val identity = runCatching { file.canonicalPath }.getOrElse { file.absolutePath }
+        // Cheap stat-only fast path: avoids re-hashing large decks on every open.
+        val fastKey = "$identity:$length:$lastModified:$SHARED_PPTX_PARSER_VERSION"
         synchronized(cache) {
-            cache[key]?.let { cached ->
+            fastIndex[fastKey]?.let { key ->
+                cache[key]?.let { entry ->
+                    if (entry.length == length && entry.lastModified == lastModified) {
+                        cache.remove(key)
+                        cache[key] = entry
+                        return entry.deck
+                    }
+                }
+            }
+        }
+        val key = "${file.contentHash()}:$length:$SHARED_PPTX_PARSER_VERSION"
+        synchronized(cache) {
+            cache[key]?.let { entry ->
                 cache.remove(key)
-                cache[key] = cached
-                return cached
+                cache[key] = entry
+                fastIndex[fastKey] = key
+                return entry.deck
             }
         }
         val parsed = SharedPptxDocumentParser.parse(file)
         synchronized(cache) {
-            cache[key] = parsed
-            while (cache.size > MAX_ENTRIES) {
-                cache.remove(cache.keys.firstOrNull() ?: break)
+            val imageBytes = parsed.slides.sumOf { slide ->
+                slide.elements.sumOf { element ->
+                    (element as? SharedPptxImageElement)?.bytes?.size?.toLong() ?: 0L
+                }
+            }
+            cache[key] = Entry(parsed, length, lastModified, imageBytes)
+            fastIndex[fastKey] = key
+            while (cache.size > MAX_ENTRIES || cache.values.sumOf { it.imageBytes } > MAX_TOTAL_IMAGE_BYTES) {
+                val oldest = cache.keys.firstOrNull() ?: break
+                cache.remove(oldest)
+                fastIndex.entries.removeAll { it.value == oldest }
             }
         }
         return parsed
@@ -281,24 +309,25 @@ object SharedPptxDeckCache {
 object SharedPptxDocumentParser {
     fun parse(file: File): SharedPptxDeck {
         ZipFile(file).use { zip ->
-            val presentation = zip.xml("ppt/presentation.xml")
+            val caches = ParseCaches(zip)
+            val presentation = caches.xml("ppt/presentation.xml")
                 ?: error("ppt/presentation.xml not found in SharedPptx archive.")
-            val presentationRels = zip.relationshipsFor("ppt/presentation.xml")
-            val width = (presentation.firstByLocalTag("sldSz")?.xmlFloat("cx") ?: DEFAULT_SLIDE_WIDTH_EMU.toFloat()).emuToPointInt()
-            val height = (presentation.firstByLocalTag("sldSz")?.xmlFloat("cy") ?: DEFAULT_SLIDE_HEIGHT_EMU.toFloat()).emuToPointInt()
+            val presentationRels = caches.relationshipsFor("ppt/presentation.xml")
+            val width = (presentation.firstByLocalTag("sldSz")?.xmlFloat("cx") ?: SharedPptxOoXml.DEFAULT_SLIDE_WIDTH_EMU.toFloat()).let(SharedPptxOoXml::emuToPointInt)
+            val height = (presentation.firstByLocalTag("sldSz")?.xmlFloat("cy") ?: SharedPptxOoXml.DEFAULT_SLIDE_HEIGHT_EMU.toFloat()).let(SharedPptxOoXml::emuToPointInt)
             val slidePaths = presentation.allByLocalTag("sldId")
                 .mapNotNull { slideId -> slideId.xmlAttr("r:id") }
                 .mapNotNull { relId -> presentationRels.byId[relId]?.resolvedTarget }
                 .ifEmpty {
                     zip.entries().asSequence()
                         .map { it.name }
-                        .filter { it.matches(Regex("""ppt/slides/slide\d+\.xml""")) }
-                        .sortedWith(naturalSlidePathComparator())
+                        .filter(SharedPptxOoXml::isSlidePart)
+                        .sortedWith(SharedPptxOoXml.slidePathComparator)
                         .toList()
                 }
 
             val slides = slidePaths.mapNotNull { slidePath ->
-                runCatching { parseSlide(zip, presentation, slidePath, width, height) }
+                runCatching { parseSlide(caches, presentation, slidePath, width, height) }
                     .getOrNull()
             }
 
@@ -322,34 +351,34 @@ object SharedPptxDocumentParser {
     }
 
     private fun parseSlide(
-        zip: ZipFile,
+        caches: ParseCaches,
         presentation: Element,
         slidePath: String,
         width: Int,
         height: Int
     ): SharedPptxSlide {
-        val slideXml = zip.xml(slidePath) ?: error("Missing slide part: $slidePath")
-        val slideRels = zip.relationshipsFor(slidePath)
+        val slideXml = caches.xml(slidePath) ?: error("Missing slide part: $slidePath")
+        val slideRels = caches.relationshipsFor(slidePath)
         val layoutPath = slideRels.byId.values
             .firstOrNull { it.type.endsWith("/slideLayout", ignoreCase = true) }
             ?.resolvedTarget
-        val layoutRels = layoutPath?.let { zip.relationshipsFor(it) }
+        val layoutRels = layoutPath?.let { caches.relationshipsFor(it) }
         val masterPath = layoutRels?.byId?.values
             ?.firstOrNull { it.type.endsWith("/slideMaster", ignoreCase = true) }
             ?.resolvedTarget
-        val masterRels = masterPath?.let { zip.relationshipsFor(it) }
+        val masterRels = masterPath?.let { caches.relationshipsFor(it) }
         val themePath = masterRels?.byId?.values
             ?.firstOrNull { it.type.endsWith("/theme", ignoreCase = true) }
             ?.resolvedTarget
-        val theme = themePath?.let { path -> zip.xml(path)?.let(::parseTheme) } ?: SharedPptxTheme()
+        val theme = themePath?.let { caches.theme(it) } ?: SharedPptxTheme()
         val presentationDefaults = presentation.presentationTextDefaults(theme)
 
         val master = masterPath?.let { path ->
-            zip.xml(path)?.let {
+            caches.xml(path)?.let {
                 parsePart(
-                    zip = zip,
+                    caches = caches,
                     document = it,
-                    relationships = zip.relationshipsFor(path),
+                    relationships = caches.relationshipsFor(path),
                     theme = theme,
                     renderPlaceholderText = false,
                     inheritedTextDefaults = presentationDefaults
@@ -357,11 +386,11 @@ object SharedPptxDocumentParser {
             }
         } ?: ParsedPart()
         val layout = layoutPath?.let { path ->
-            zip.xml(path)?.let {
+            caches.xml(path)?.let {
                 parsePart(
-                    zip = zip,
+                    caches = caches,
                     document = it,
-                    relationships = zip.relationshipsFor(path),
+                    relationships = caches.relationshipsFor(path),
                     theme = theme,
                     renderPlaceholderText = false,
                     inheritedTextDefaults = master.textDefaults
@@ -369,7 +398,7 @@ object SharedPptxDocumentParser {
             }
         } ?: ParsedPart()
         val slide = parsePart(
-            zip = zip,
+            caches = caches,
             document = slideXml,
             relationships = slideRels,
             theme = theme,
@@ -392,7 +421,7 @@ object SharedPptxDocumentParser {
     }
 
     private fun parsePart(
-        zip: ZipFile,
+        caches: ParseCaches,
         document: Element,
         relationships: SharedPptxRelationships,
         theme: SharedPptxTheme,
@@ -403,12 +432,14 @@ object SharedPptxDocumentParser {
         val textDefaults = inheritedTextDefaults.merge(document.textDefaults(partTheme))
         val background = document.firstByLocalTag("bgPr")?.solidFillColor(partTheme)
             ?: document.firstByLocalTag("bgRef")?.schemeColor(partTheme)
-        val tableStyles = zip.tableStyles(partTheme)
+        // Table-style XML is deck-global: inflate/parse once per open, then resolve
+        // per part-theme (color maps differ between master/layout/slide).
+        val tableStyles = caches.tableStyles(partTheme)
         val elements = mutableListOf<SharedPptxElement>()
         val tree = document.firstByLocalTag("spTree") ?: document
         tree.children().forEach { child ->
             parseDrawingElement(
-                zip = zip,
+                caches = caches,
                 element = child,
                 relationships = relationships,
                 theme = partTheme,
@@ -422,7 +453,7 @@ object SharedPptxDocumentParser {
     }
 
     private fun parseDrawingElement(
-        zip: ZipFile,
+        caches: ParseCaches,
         element: Element,
         relationships: SharedPptxRelationships,
         theme: SharedPptxTheme,
@@ -435,12 +466,12 @@ object SharedPptxDocumentParser {
         when (element.localTag()) {
             "sp", "cxnsp" -> parseShape(element, relationships, theme, renderPlaceholderText, textDefaults)
                 ?.let { output += transform.apply(it) }
-            "pic" -> parseImage(zip, element, relationships)
+            "pic" -> parseImage(caches, element, relationships)
                 ?.let { output += transform.apply(it) }
             "grpsp" -> element.children().forEach { child ->
                 val childTransform = transform.then(SharedPptxGroupTransform.fromGroup(element))
                 parseDrawingElement(
-                    zip = zip,
+                    caches = caches,
                     element = child,
                     relationships = relationships,
                     theme = theme,
@@ -479,7 +510,7 @@ object SharedPptxDocumentParser {
             inheritedStyles = textDefaults.forPlaceholder(placeholderKey),
             shapeRunDefaults = shapeRunDefaults
         )
-        val useBackgroundFill = element.xmlAttr("useBgFill").isTruthyXmlFlag()
+        val useBackgroundFill = SharedPptxOoXml.isTruthyFlag(element.xmlAttr("useBgFill"))
         val fillColor = when {
             useBackgroundFill -> null
             spPr?.firstDirectByLocalTag("noFill") != null -> null
@@ -491,7 +522,7 @@ object SharedPptxDocumentParser {
             line?.firstDirectByLocalTag("noFill") != null -> null
             else -> line?.solidFillColor(theme) ?: style?.firstByLocalTag("lnRef")?.solidLikeColor(theme)
         }
-        val lineWidth = line?.xmlFloat("w")?.emuToPoint() ?: 0.75f
+        val lineWidth = line?.xmlFloat("w")?.let(SharedPptxOoXml::emuToPoint) ?: 0.75f
         val hyperlink = element.firstByLocalTag("hlinkClick")
             ?.xmlAttr("r:id")
             ?.let { relationships.byId[it] }
@@ -520,7 +551,7 @@ object SharedPptxDocumentParser {
     }
 
     private fun parseImage(
-        zip: ZipFile,
+        caches: ParseCaches,
         element: Element,
         relationships: SharedPptxRelationships
     ): SharedPptxImageElement? {
@@ -528,15 +559,14 @@ object SharedPptxDocumentParser {
         val relId = blip.xmlAttr("r:embed") ?: blip.xmlAttr("r:link") ?: return null
         val rel = relationships.byId[relId] ?: return null
         val target = rel.resolvedTarget
-        val entry = zip.getEntry(target) ?: return null
-        val bytes = zip.getInputStream(entry).use { it.readBytes() }
+        val bytes = caches.imageBytes(target) ?: return null
         val crop = element.firstByLocalTag("srcRect")?.imageCrop() ?: SharedPptxImageCrop()
         val bounds = element.childrenByLocalTag("spPr").firstOrNull()?.boundsFromTransform()
             ?: element.boundsFromTransform()
         return SharedPptxImageElement(
             bounds = bounds,
             bytes = bytes,
-            contentType = target.imageContentType(),
+            contentType = SharedPptxOoXml.imageContentTypeForTarget(target),
             crop = crop,
             rotationDegrees = element.childrenByLocalTag("spPr").firstOrNull()?.rotationDegreesFromTransform()
                 ?: element.rotationDegreesFromTransform(),
@@ -559,15 +589,15 @@ object SharedPptxDocumentParser {
             ?.trim()
             ?.let { tableStyles[it] }
         val styleOptions = SharedPptxTableStyleOptions(
-            firstRow = tblPr?.xmlAttr("firstRow").isTruthyXmlFlag(),
-            lastRow = tblPr?.xmlAttr("lastRow").isTruthyXmlFlag(),
-            firstColumn = tblPr?.xmlAttr("firstCol").isTruthyXmlFlag(),
-            lastColumn = tblPr?.xmlAttr("lastCol").isTruthyXmlFlag(),
-            bandRow = tblPr?.xmlAttr("bandRow").isTruthyXmlFlag()
+            firstRow = tblPr?.xmlAttr("firstRow").let(SharedPptxOoXml::isTruthyFlag),
+            lastRow = tblPr?.xmlAttr("lastRow").let(SharedPptxOoXml::isTruthyFlag),
+            firstColumn = tblPr?.xmlAttr("firstCol").let(SharedPptxOoXml::isTruthyFlag),
+            lastColumn = tblPr?.xmlAttr("lastCol").let(SharedPptxOoXml::isTruthyFlag),
+            bandRow = tblPr?.xmlAttr("bandRow").let(SharedPptxOoXml::isTruthyFlag)
         )
         val gridWidths = table.firstByLocalTag("tblGrid")
             ?.childrenByLocalTag("gridCol")
-            ?.map { it.xmlFloat("w")?.emuToPoint() }
+            ?.map { it.xmlFloat("w")?.let(SharedPptxOoXml::emuToPoint) }
             .orEmpty()
         val rowElements = table.childrenByLocalTag("tr")
         val rows = rowElements.mapIndexed { rowIndex, row ->
@@ -598,7 +628,7 @@ object SharedPptxDocumentParser {
                 )
             }
             SharedPptxTableRow(
-                heightPoint = row.xmlFloat("h")?.emuToPoint(),
+                heightPoint = row.xmlFloat("h")?.let(SharedPptxOoXml::emuToPoint),
                 cells = cells
             )
         }
@@ -661,8 +691,8 @@ object SharedPptxDocumentParser {
             ?.paragraphStyles(theme)
             .orEmpty()
         val styles = inheritedStyles.mergeStyles(localStyles)
-        val numberCounters = IntArray(MAX_NUMBERING_LEVELS)
-        val numberCounterStarted = BooleanArray(MAX_NUMBERING_LEVELS)
+        val numberCounters = IntArray(SharedPptxOoXml.MAX_NUMBERING_LEVELS)
+        val numberCounterStarted = BooleanArray(SharedPptxOoXml.MAX_NUMBERING_LEVELS)
         return txBody.childrenByLocalTag("p").mapNotNull { paragraph ->
             val pPr = paragraph.childrenByLocalTag("pPr").firstOrNull()
             val endParaRunPr = paragraph.childrenByLocalTag("endParaRPr").firstOrNull()
@@ -746,8 +776,8 @@ object SharedPptxDocumentParser {
     private fun parseTheme(document: Element): SharedPptxTheme {
         val scheme = document.firstByLocalTag("clrScheme") ?: return SharedPptxTheme()
         val colors = scheme.children().mapNotNull { colorNode ->
-            val value = colorNode.firstByLocalTag("srgbClr")?.xmlAttr("val")?.toColorOrNull()
-                ?: colorNode.firstByLocalTag("sysClr")?.xmlAttr("lastClr")?.toColorOrNull()
+            val value = colorNode.firstByLocalTag("srgbClr")?.xmlAttr("val")?.let(SharedPptxOoXml::hexColorOrNull)
+                ?: colorNode.firstByLocalTag("sysClr")?.xmlAttr("lastClr")?.let(SharedPptxOoXml::hexColorOrNull)
             value?.let { colorNode.localTag() to it }
         }.toMap()
         val fontScheme = document.firstByLocalTag("fontScheme")
@@ -789,7 +819,7 @@ object SharedPptxDocumentParser {
     }
 
     private fun ZipFile.relationshipsFor(partPath: String): SharedPptxRelationships {
-        val relsPath = partPath.relationshipsPath()
+        val relsPath = SharedPptxOoXml.relationshipsPathFor(partPath)
         val document = xml(relsPath) ?: return SharedPptxRelationships(emptyMap())
         val rels = document.allByLocalTag("Relationship").mapNotNull { rel ->
             val id = rel.xmlAttr("Id") ?: return@mapNotNull null
@@ -798,7 +828,7 @@ object SharedPptxDocumentParser {
             SharedPptxRelationship(
                 id = id,
                 target = target,
-                resolvedTarget = resolveRelationshipTarget(partPath, target, rel.xmlAttr("TargetMode")),
+                resolvedTarget = SharedPptxOoXml.resolveRelationshipTarget(partPath, target, rel.xmlAttr("TargetMode")),
                 type = type,
                 targetMode = rel.xmlAttr("TargetMode")
             )
@@ -806,8 +836,46 @@ object SharedPptxDocumentParser {
         return SharedPptxRelationships(rels)
     }
 
-    private fun ZipFile.tableStyles(theme: SharedPptxTheme): Map<String, SharedPptxTableStyle> {
-        val document = xml("ppt/tableStyles.xml") ?: return emptyMap()
+    /**
+     * Per-open caches: master/layout/theme/rels/table-style parts are shared across
+     * slides, so inflate + parse each backing entry once instead of O(slides) times.
+     */
+    private class ParseCaches(private val zip: ZipFile) {
+        private val xml = mutableMapOf<String, Element?>()
+        private val rels = mutableMapOf<String, SharedPptxRelationships>()
+        private val themes = mutableMapOf<String, SharedPptxTheme>()
+        private var tableStylesDocument: Element? = null
+        private var tableStylesLoaded = false
+        private val tableStylesByTheme = mutableMapOf<SharedPptxTheme, Map<String, SharedPptxTableStyle>>()
+
+        fun xml(path: String): Element? = xml.getOrPut(path) { zip.xml(path) }
+
+        fun relationshipsFor(partPath: String): SharedPptxRelationships =
+            rels.getOrPut(partPath) { zip.relationshipsFor(partPath) }
+
+        fun theme(path: String): SharedPptxTheme =
+            themes.getOrPut(path) { xml(path)?.let { parseTheme(it) } ?: SharedPptxTheme() }
+
+        fun imageBytes(target: String): ByteArray? {
+            val entry = zip.getEntry(target) ?: return null
+            return zip.getInputStream(entry).use { it.readBytes() }
+        }
+
+        fun tableStyles(theme: SharedPptxTheme): Map<String, SharedPptxTableStyle> =
+            tableStylesByTheme.getOrPut(theme) {
+                if (!tableStylesLoaded) {
+                    tableStylesDocument = zip.xml("ppt/tableStyles.xml")
+                    tableStylesLoaded = true
+                }
+                resolveTableStyles(tableStylesDocument, theme)
+            }
+    }
+
+    private fun resolveTableStyles(
+        document: Element?,
+        theme: SharedPptxTheme
+    ): Map<String, SharedPptxTableStyle> {
+        if (document == null) return emptyMap()
         return document.allByLocalTag("tblStyle").mapNotNull { style ->
             val id = style.xmlAttr("styleId") ?: return@mapNotNull null
             id to SharedPptxTableStyle(
@@ -918,231 +986,7 @@ private fun SharedPptxTextRun.inheritTextStyle(fallback: SharedPptxTextRun?): Sh
     )
 }
 
-private data class SharedPptxTextIndex(
-    val text: String,
-    val charBoxes: List<SharedPptxCharBox>
-)
 
-private object SharedPptxTextIndexer {
-    fun index(elements: List<SharedPptxElement>): SharedPptxTextIndex {
-        val text = StringBuilder()
-        val charBoxes = mutableListOf<SharedPptxCharBox>()
-        elements.forEach { element ->
-            when (element) {
-                is SharedPptxShapeElement -> appendShapeText(element, text, charBoxes)
-                is SharedPptxTableElement -> layoutTableCells(element).forEach { cell ->
-                    appendShapeText(cell.asShape(), text, charBoxes)
-                }
-                is SharedPptxImageElement -> Unit
-            }
-        }
-        val indexedText = text.toString().trimEnd()
-        return SharedPptxTextIndex(indexedText, charBoxes.take(indexedText.length))
-    }
-
-    private fun appendShapeText(
-        shape: SharedPptxShapeElement,
-        text: StringBuilder,
-        charBoxes: MutableList<SharedPptxCharBox>
-    ) {
-        if (!shape.renderText) return
-        val textBounds = shape.textBounds()
-        if (textBounds.width() <= 0f || textBounds.height() <= 0f) return
-        val paragraphs = shape.paragraphs
-            .mapNotNull { paragraph -> paragraph.displayText().takeIf { it.isNotBlank() }?.let { paragraph to it } }
-        if (paragraphs.isEmpty()) return
-
-        val paragraphHeights = paragraphs.map { (paragraph, displayText) ->
-            paragraph.spaceBeforePt + displayText.lineCount() * paragraph.approximateLineHeight(shape) + paragraph.spaceAfterPt
-        }
-        val totalHeight = paragraphHeights.sumOf { it.toDouble() }.toFloat()
-        val effectiveBounds = if (shape.autoFitMode == SharedPptxAutoFitMode.SHAPE && totalHeight > textBounds.height()) {
-            textBounds.copy(bottom = textBounds.top + totalHeight)
-        } else {
-            textBounds
-        }
-        var y = when (shape.verticalAnchor) {
-            SharedPptxVerticalAnchor.TOP -> effectiveBounds.top
-            SharedPptxVerticalAnchor.MIDDLE -> effectiveBounds.top + ((effectiveBounds.height() - totalHeight) / 2f).coerceAtLeast(0f)
-            SharedPptxVerticalAnchor.BOTTOM -> effectiveBounds.bottom - totalHeight.coerceAtMost(effectiveBounds.height())
-        }
-
-        paragraphs.forEachIndexed { index, (paragraph, displayText) ->
-            y += paragraph.spaceBeforePt
-            displayText.lines().forEach { line ->
-                if (shape.autoFitMode != SharedPptxAutoFitMode.SHAPE && y > effectiveBounds.bottom) return@forEach
-                appendLine(line, paragraph, shape, effectiveBounds, y, text, charBoxes)
-                y += paragraph.approximateLineHeight(shape)
-            }
-            y += paragraph.spaceAfterPt
-            if (index < paragraphs.lastIndex && text.lastOrNull() != '\n') {
-                text.append('\n')
-                charBoxes += SharedPptxCharBox('\n', SharedPptxRect(shape.bounds.left, shape.bounds.bottom, shape.bounds.left, shape.bounds.bottom))
-            }
-        }
-    }
-
-    private fun appendLine(
-        line: String,
-        paragraph: SharedPptxParagraph,
-        shape: SharedPptxShapeElement,
-        textBounds: SharedPptxRect,
-        y: Float,
-        text: StringBuilder,
-        charBoxes: MutableList<SharedPptxCharBox>
-    ) {
-        if (line.isEmpty()) {
-            text.append('\n')
-            charBoxes += SharedPptxCharBox('\n', SharedPptxRect(textBounds.left, y, textBounds.left, y))
-            return
-        }
-        val fontSize = scaledTextSize(paragraph.runs.firstOrNull()?.sizePt, shape.fontScale).toFloat()
-        val estimatedWidth = line.sumOf { char ->
-            when {
-                char.isWhitespace() -> 0.33
-                char in "ilI.,;:!|" -> 0.3
-                char in "MW@#%&" -> 0.85
-                else -> 0.55
-            }
-        }.toFloat() * fontSize
-        val maxLineWidth = textBounds.width().coerceAtLeast(0.5f)
-        val minLineWidth = min(line.length * 0.5f, maxLineWidth)
-        val lineWidth = estimatedWidth.coerceIn(minLineWidth, maxLineWidth)
-        val charAdvance = (lineWidth / line.length.coerceAtLeast(1)).coerceAtLeast(0.5f)
-        val startX = when (paragraph.alignment) {
-            SharedPptxTextAlign.START -> textBounds.left
-            SharedPptxTextAlign.CENTER -> textBounds.left + ((textBounds.width() - lineWidth) / 2f).coerceAtLeast(0f)
-            SharedPptxTextAlign.END -> textBounds.right - lineWidth
-        }
-        val bottom = y + paragraph.approximateLineHeight(shape)
-
-        text.append(line)
-        line.forEachIndexed { index, char ->
-            val left = startX + index * charAdvance
-            val right = if (index == line.lastIndex) startX + lineWidth else left + charAdvance
-            charBoxes += SharedPptxCharBox(
-                char = char,
-                bounds = SharedPptxRect(left, y, right, bottom).rotatedBounds(shape.bounds, shape.rotationDegrees)
-            )
-        }
-    }
-
-    private fun String.lineCount(): Int = lines().size.coerceAtLeast(1)
-
-    private fun SharedPptxParagraph.approximateLineHeight(shape: SharedPptxShapeElement): Float {
-        val fontSize = scaledTextSize(runs.firstOrNull()?.sizePt, shape.fontScale).toFloat()
-        return (fontSize * 1.2f * effectiveLineSpacing(shape)).coerceAtLeast(1f)
-    }
-}
-
-private data class LaidOutTableCell(
-    val rect: SharedPptxRect,
-    val cell: SharedPptxTableCell
-)
-
-private fun LaidOutTableCell.asShape(): SharedPptxShapeElement {
-    return SharedPptxShapeElement(
-        bounds = rect,
-        preset = "rect",
-        fillColor = cell.fillColor,
-        gradientFill = null,
-        lineColor = cell.lineColor,
-        lineWidthPoint = 0.75f,
-        paragraphs = cell.paragraphs,
-        hyperlink = null,
-        placeholderKey = null,
-        textInsets = cell.textInsets,
-        verticalAnchor = cell.verticalAnchor
-    )
-}
-
-private fun SharedPptxParagraph.effectiveLineSpacing(shape: SharedPptxShapeElement): Float {
-    val reduced = lineSpacingMultiple * (1f - shape.lineSpacingReduction)
-    return reduced.coerceIn(0.9f, 2.5f)
-}
-
-private fun SharedPptxShapeElement.textBounds(sourceBounds: SharedPptxRect = bounds): SharedPptxRect {
-    return SharedPptxRect(
-        sourceBounds.left + textInsets.left,
-        sourceBounds.top + textInsets.top,
-        sourceBounds.right - textInsets.right,
-        sourceBounds.bottom - textInsets.bottom
-    )
-}
-
-private fun SharedPptxParagraph.displayText(): String {
-    val text = runs.joinToString("") { it.text }
-    val prefix = bullet?.takeIf { it.isNotBlank() }?.let { "$it " }.orEmpty()
-    return prefix + text
-}
-
-private fun SharedPptxRect.rotatedBounds(bounds: SharedPptxRect, rotationDegrees: Float): SharedPptxRect {
-    if (rotationDegrees == 0f) return this
-    val radians = Math.toRadians(rotationDegrees.toDouble())
-    val cosValue = cos(radians).toFloat()
-    val sinValue = sin(radians).toFloat()
-    val cx = bounds.centerX()
-    val cy = bounds.centerY()
-    val points = arrayOf(
-        left to top,
-        right to top,
-        right to bottom,
-        left to bottom
-    ).map { (x, y) ->
-        val dx = x - cx
-        val dy = y - cy
-        SharedPptxPoint(cx + dx * cosValue - dy * sinValue, cy + dx * sinValue + dy * cosValue)
-    }
-    return SharedPptxRect(
-        points.minOf { it.x },
-        points.minOf { it.y },
-        points.maxOf { it.x },
-        points.maxOf { it.y }
-    )
-}
-
-private fun layoutTableCells(table: SharedPptxTableElement): List<LaidOutTableCell> {
-    if (table.rows.isEmpty() || table.bounds.width() <= 0f || table.bounds.height() <= 0f) return emptyList()
-    val explicitHeight = table.rows
-        .mapNotNull { it.heightPoint?.takeIf { h -> h > 0f } }
-        .sumOf { it.toDouble() }
-        .toFloat()
-    val missingRows = table.rows.count { it.heightPoint == null || it.heightPoint <= 0f }
-    val fallbackHeight = if (missingRows > 0) {
-        ((table.bounds.height() - explicitHeight).coerceAtLeast(1f)) / missingRows
-    } else {
-        table.bounds.height() / table.rows.size
-    }
-
-    val cells = mutableListOf<LaidOutTableCell>()
-    var y = table.bounds.top
-    table.rows.forEach { row ->
-        val rowHeight = row.heightPoint?.takeIf { it > 0f } ?: fallbackHeight
-        val explicitWidth = row.cells
-            .mapNotNull { it.widthPoint?.takeIf { w -> w > 0f } }
-            .sumOf { it.toDouble() }
-            .toFloat()
-        val missingCells = row.cells.count { it.widthPoint == null || it.widthPoint <= 0f }
-        val fallbackWidth = if (missingCells > 0) {
-            ((table.bounds.width() - explicitWidth).coerceAtLeast(1f)) / missingCells
-        } else if (row.cells.isNotEmpty()) {
-            table.bounds.width() / row.cells.size
-        } else {
-            table.bounds.width()
-        }
-        var x = table.bounds.left
-        row.cells.forEach { cell ->
-            val cellWidth = cell.widthPoint?.takeIf { it > 0f } ?: fallbackWidth
-            cells += LaidOutTableCell(
-                rect = SharedPptxRect(x, y, x + cellWidth, y + rowHeight),
-                cell = cell
-            )
-            x += cellWidth
-        }
-        y += rowHeight
-    }
-    return cells
-}
 
 private fun Element.textDefaults(theme: SharedPptxTheme): SharedPptxTextDefaults {
     val txStyles = firstByLocalTag("txStyles") ?: return SharedPptxTextDefaults()
@@ -1173,7 +1017,7 @@ private fun Element.paragraphStyle(theme: SharedPptxTheme): SharedPptxParagraphS
     val bullet = when {
         firstDirectByLocalTag("buNone") != null -> null
         autoNumber != null -> null
-        else -> firstDirectByLocalTag("buChar")?.xmlAttr("char")?.normalizeBulletGlyph(bulletTypeface)
+        else -> firstDirectByLocalTag("buChar")?.xmlAttr("char")?.let { SharedPptxOoXml.normalizeBulletGlyph(it, bulletTypeface) }
     }
     return SharedPptxParagraphStyle(
         alignment = when (xmlAttr("algn")) {
@@ -1186,8 +1030,8 @@ private fun Element.paragraphStyle(theme: SharedPptxTheme): SharedPptxParagraphS
         autoNumberType = autoNumber?.xmlAttr("type"),
         autoNumberStartAt = autoNumber?.xmlInt("startAt"),
         bulletExplicit = hasBulletDefinition(),
-        marginLeftPt = xmlFloat("marL")?.emuToPoint(),
-        indentPt = xmlFloat("indent")?.emuToPoint(),
+        marginLeftPt = xmlFloat("marL")?.let(SharedPptxOoXml::emuToPoint),
+        indentPt = xmlFloat("indent")?.let(SharedPptxOoXml::emuToPoint),
         spaceBeforePt = firstDirectByLocalTag("spcBef")?.spacingPoints(),
         spaceAfterPt = firstDirectByLocalTag("spcAft")?.spacingPoints(),
         lineSpacingMultiple = firstDirectByLocalTag("lnSpc")?.spacingMultiple(),
@@ -1199,8 +1043,8 @@ private fun Element.runStyle(theme: SharedPptxTheme): SharedPptxRunStyle {
     return SharedPptxRunStyle(
         sizePt = xmlFloat("sz")?.let { it / 100f },
         color = solidFillColor(theme),
-        bold = xmlAttr("b")?.isTruthyXmlFlag(),
-        italic = xmlAttr("i")?.isTruthyXmlFlag(),
+        bold = xmlAttr("b")?.let(SharedPptxOoXml::isTruthyFlag),
+        italic = xmlAttr("i")?.let(SharedPptxOoXml::isTruthyFlag),
         typeface = typefaceName(theme),
         baseline = xmlFloat("baseline")?.let { it / 100_000f }
     )
@@ -1213,86 +1057,20 @@ private fun SharedPptxParagraphStyle.resolvedBullet(
 ): String? {
     val numberType = autoNumberType
     if (numberType != null) {
-        val index = level.coerceIn(0, MAX_NUMBERING_LEVELS - 1)
+        val index = level.coerceIn(0, SharedPptxOoXml.MAX_NUMBERING_LEVELS - 1)
         if (!counterStarted[index]) {
             counters[index] = (autoNumberStartAt ?: 1).coerceAtLeast(1)
             counterStarted[index] = true
         } else {
             counters[index] += 1
         }
-        for (resetIndex in index + 1 until MAX_NUMBERING_LEVELS) {
+        for (resetIndex in index + 1 until SharedPptxOoXml.MAX_NUMBERING_LEVELS) {
             counterStarted[resetIndex] = false
             counters[resetIndex] = 0
         }
-        return formatAutoNumber(counters[index], numberType)
+        return SharedPptxOoXml.formatAutoNumber(counters[index], numberType)
     }
     return bullet
-}
-
-private fun formatAutoNumber(number: Int, type: String): String {
-    val normalized = type.lowercase(Locale.ROOT)
-    val value = when {
-        normalized.startsWith("alphalc") -> number.toAlphabeticLabel().lowercase(Locale.ROOT)
-        normalized.startsWith("alphauc") -> number.toAlphabeticLabel()
-        normalized.startsWith("romanlc") -> number.toRomanNumeral().lowercase(Locale.ROOT)
-        normalized.startsWith("romanuc") -> number.toRomanNumeral()
-        else -> number.toString()
-    }
-    return when {
-        "parenboth" in normalized -> "($value)"
-        "parenr" in normalized -> "$value)"
-        "period" in normalized -> "$value."
-        else -> value
-    }
-}
-
-private fun Int.toAlphabeticLabel(): String {
-    var value = coerceAtLeast(1)
-    val result = StringBuilder()
-    while (value > 0) {
-        value -= 1
-        result.insert(0, ('A'.code + (value % 26)).toChar())
-        value /= 26
-    }
-    return result.toString()
-}
-
-private fun Int.toRomanNumeral(): String {
-    var value = coerceIn(1, 3999)
-    val numerals = listOf(
-        1000 to "M",
-        900 to "CM",
-        500 to "D",
-        400 to "CD",
-        100 to "C",
-        90 to "XC",
-        50 to "L",
-        40 to "XL",
-        10 to "X",
-        9 to "IX",
-        5 to "V",
-        4 to "IV",
-        1 to "I"
-    )
-    return buildString {
-        numerals.forEach { (amount, numeral) ->
-            while (value >= amount) {
-                append(numeral)
-                value -= amount
-            }
-        }
-    }
-}
-
-private fun String.normalizeBulletGlyph(typeface: String?): String {
-    val family = typeface.orEmpty().lowercase(Locale.ROOT)
-    if ("wingdings" !in family && "symbol" !in family) return this
-    return when (this) {
-        "\u00A7", "\u00D8", "\u00B7", "\uF0B7" -> "\u2022"
-        "\u00FC", "\uF0FC" -> "\u2713"
-        "\u00A8", "\uF0A8" -> "\u25E6"
-        else -> this
-    }
 }
 
 private fun Map<Int, SharedPptxParagraphStyle>.mergeStyles(
@@ -1306,12 +1084,6 @@ private fun Map<Int, SharedPptxParagraphStyle>.mergeStyles(
             put(level, this@mergeStyles[level]?.merge(style) ?: style)
         }
     }
-}
-
-private fun scaledTextSize(sizePt: Float?, fontScale: Float): Int {
-    return ((sizePt ?: DEFAULT_TEXT_SIZE_PT) * fontScale.coerceIn(0.4f, 2f))
-        .roundToInt()
-        .coerceAtLeast(1)
 }
 
 private fun Element.imageCrop(): SharedPptxImageCrop {
@@ -1396,27 +1168,27 @@ private fun Element.gradientFill(theme: SharedPptxTheme): SharedPptxGradientFill
 
 private fun Element.solidLikeColor(theme: SharedPptxTheme): Int? {
     firstByLocalTag("srgbClr")?.let { color ->
-        return color.xmlAttr("val")?.toColorOrNull()?.applyLuminance(color)
+        return color.xmlAttr("val")?.let(SharedPptxOoXml::hexColorOrNull)?.applyLuminance(color)
     }
     firstByLocalTag("schemeClr")?.let { color ->
         val scheme = color.xmlAttr("val") ?: return null
         return theme.color(scheme)?.applyLuminance(color)
     }
     firstByLocalTag("prstClr")?.let { color ->
-        return color.xmlAttr("val")?.presetColorOrNull()?.applyLuminance(color)
+        return color.xmlAttr("val")?.let(SharedPptxOoXml::presetColor)?.applyLuminance(color)
     }
     firstByLocalTag("sysClr")?.let { color ->
-        return color.xmlAttr("lastClr")?.toColorOrNull()?.applyLuminance(color)
+        return color.xmlAttr("lastClr")?.let(SharedPptxOoXml::hexColorOrNull)?.applyLuminance(color)
     }
     return null
 }
 
 private fun Element.textInsets(): SharedPptxTextInsets {
     return SharedPptxTextInsets(
-        left = (xmlFloat("lIns") ?: xmlFloat("marL"))?.emuToPoint() ?: DEFAULT_TEXT_MARGIN_PT,
-        top = (xmlFloat("tIns") ?: xmlFloat("marT"))?.emuToPoint() ?: DEFAULT_TEXT_MARGIN_PT,
-        right = (xmlFloat("rIns") ?: xmlFloat("marR"))?.emuToPoint() ?: DEFAULT_TEXT_MARGIN_PT,
-        bottom = (xmlFloat("bIns") ?: xmlFloat("marB"))?.emuToPoint() ?: DEFAULT_TEXT_MARGIN_PT
+        left = (xmlFloat("lIns") ?: xmlFloat("marL"))?.let(SharedPptxOoXml::emuToPoint) ?: DEFAULT_TEXT_MARGIN_PT,
+        top = (xmlFloat("tIns") ?: xmlFloat("marT"))?.let(SharedPptxOoXml::emuToPoint) ?: DEFAULT_TEXT_MARGIN_PT,
+        right = (xmlFloat("rIns") ?: xmlFloat("marR"))?.let(SharedPptxOoXml::emuToPoint) ?: DEFAULT_TEXT_MARGIN_PT,
+        bottom = (xmlFloat("bIns") ?: xmlFloat("marB"))?.let(SharedPptxOoXml::emuToPoint) ?: DEFAULT_TEXT_MARGIN_PT
     )
 }
 
@@ -1451,15 +1223,15 @@ private fun Element.tableStylePart(theme: SharedPptxTheme): SharedPptxTableCellS
 private fun Element.tableTextRunStyle(theme: SharedPptxTheme): SharedPptxRunStyle {
     return SharedPptxRunStyle(
         color = solidLikeColor(theme),
-        bold = xmlAttr("b")?.isTruthyXmlFlag(),
-        italic = xmlAttr("i")?.isTruthyXmlFlag(),
+        bold = xmlAttr("b")?.let(SharedPptxOoXml::isTruthyFlag),
+        italic = xmlAttr("i")?.let(SharedPptxOoXml::isTruthyFlag),
         typeface = typefaceName(theme)
     )
 }
 
 private fun Element.spacingPoints(): Float? {
     firstByLocalTag("spcPts")?.xmlFloat("val")?.let { return it / 100f }
-    firstByLocalTag("spcPct")?.xmlFloat("val")?.let { return DEFAULT_TEXT_SIZE_PT * (it / 100_000f) }
+    firstByLocalTag("spcPct")?.xmlFloat("val")?.let { return SharedPptxOoXml.DEFAULT_TEXT_SIZE_PT * (it / 100_000f) }
     return null
 }
 
@@ -1507,16 +1279,12 @@ private fun Element.boundsFromTransform(): SharedPptxRect {
     val xfrm = childrenByLocalTag("xfrm").firstOrNull() ?: firstByLocalTag("xfrm")
     val off = xfrm?.childrenByLocalTag("off")?.firstOrNull()
     val ext = xfrm?.childrenByLocalTag("ext")?.firstOrNull()
-    val x = off?.xmlFloat("x")?.emuToPoint() ?: 0f
-    val y = off?.xmlFloat("y")?.emuToPoint() ?: 0f
-    val cx = ext?.xmlFloat("cx")?.emuToPoint() ?: 0f
-    val cy = ext?.xmlFloat("cy")?.emuToPoint() ?: 0f
+    val x = off?.xmlFloat("x")?.let(SharedPptxOoXml::emuToPoint) ?: 0f
+    val y = off?.xmlFloat("y")?.let(SharedPptxOoXml::emuToPoint) ?: 0f
+    val cx = ext?.xmlFloat("cx")?.let(SharedPptxOoXml::emuToPoint) ?: 0f
+    val cy = ext?.xmlFloat("cy")?.let(SharedPptxOoXml::emuToPoint) ?: 0f
     return SharedPptxRect(x, y, x + cx, y + cy)
 }
-
-private fun Float.emuToPoint(): Float = this / EMU_PER_POINT
-
-private fun Float.emuToPointInt(): Int = emuToPoint().roundToInt().coerceAtLeast(1)
 
 private fun Int?.orZero(): Int = this ?: 0
 
@@ -1528,17 +1296,17 @@ private fun Element.rotationDegreesFromTransform(): Float {
 private fun Element.solidFillColor(theme: SharedPptxTheme): Int? {
     val solid = childrenByLocalTag("solidFill").firstOrNull() ?: return null
     solid.firstByLocalTag("srgbClr")?.let { color ->
-        return color.xmlAttr("val")?.toColorOrNull()?.applyLuminance(color)
+        return color.xmlAttr("val")?.let(SharedPptxOoXml::hexColorOrNull)?.applyLuminance(color)
     }
     solid.firstByLocalTag("schemeClr")?.let { color ->
         val scheme = color.xmlAttr("val") ?: return null
         return theme.color(scheme)?.applyLuminance(color)
     }
     solid.firstByLocalTag("prstClr")?.let { color ->
-        return color.xmlAttr("val")?.presetColorOrNull()?.applyLuminance(color)
+        return color.xmlAttr("val")?.let(SharedPptxOoXml::presetColor)?.applyLuminance(color)
     }
     solid.firstByLocalTag("sysClr")?.let { color ->
-        return color.xmlAttr("lastClr")?.toColorOrNull()?.applyLuminance(color)
+        return color.xmlAttr("lastClr")?.let(SharedPptxOoXml::hexColorOrNull)?.applyLuminance(color)
     }
     return null
 }
@@ -1549,7 +1317,7 @@ private fun Element.schemeColor(theme: SharedPptxTheme): Int? {
         return theme.color(scheme)?.applyLuminance(color)
     }
     firstByLocalTag("prstClr")?.let { color ->
-        return color.xmlAttr("val")?.presetColorOrNull()?.applyLuminance(color)
+        return color.xmlAttr("val")?.let(SharedPptxOoXml::presetColor)?.applyLuminance(color)
     }
     return xmlAttr("idx")?.let { theme.color(it) }
 }
@@ -1575,32 +1343,6 @@ private fun Int.applyLuminance(colorElement: Element): Int {
     )
 }
 
-private fun String.toColorOrNull(): Int? {
-    val clean = trim().removePrefix("#")
-    if (clean.length != 6) return null
-    return runCatching { SharedPptxColor.rgb(clean.substring(0, 2).toInt(16), clean.substring(2, 4).toInt(16), clean.substring(4, 6).toInt(16)) }.getOrNull()
-}
-
-private fun String.presetColorOrNull(): Int? {
-    return when (lowercase(Locale.ROOT)) {
-        "black" -> SharedPptxColor.BLACK
-        "white" -> SharedPptxColor.WHITE
-        "red" -> SharedPptxColor.RED
-        "green" -> SharedPptxColor.GREEN
-        "blue" -> SharedPptxColor.BLUE
-        "yellow" -> SharedPptxColor.YELLOW
-        "cyan" -> SharedPptxColor.CYAN
-        "magenta" -> SharedPptxColor.MAGENTA
-        "gray", "grey" -> SharedPptxColor.GRAY
-        "dkgray", "dkgrey" -> SharedPptxColor.DKGRAY
-        "ltgray", "ltgrey" -> SharedPptxColor.LTGRAY
-        "orange" -> SharedPptxColor.rgb(255, 165, 0)
-        "purple" -> SharedPptxColor.rgb(128, 0, 128)
-        "brown" -> SharedPptxColor.rgb(165, 42, 42)
-        else -> null
-    }
-}
-
 private fun File.contentHash(): String {
     return runCatching {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -1615,18 +1357,6 @@ private fun File.contentHash(): String {
         digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }.getOrElse {
         "${canonicalPath}:${lastModified()}"
-    }
-}
-
-private fun String?.isTruthyXmlFlag(): Boolean {
-    return this == "1" || equals("true", ignoreCase = true) || equals("on", ignoreCase = true)
-}
-
-private fun String.placeholderFamily(): String {
-    return when (this.lowercase(Locale.ROOT)) {
-        "ctrtitle" -> "title"
-        "subttl" -> "subtitle"
-        else -> this.lowercase(Locale.ROOT)
     }
 }
 
@@ -1679,7 +1409,7 @@ private fun Element.placeholderKey(): SharedPptxPlaceholderKey {
 
 private fun SharedPptxPlaceholderKey.matches(other: SharedPptxPlaceholderKey): Boolean {
     if (index != null && other.index != null && index == other.index) return true
-    if (type != null && other.type != null && type.placeholderFamily() == other.type.placeholderFamily()) return true
+    if (type != null && other.type != null && SharedPptxOoXml.placeholderFamily(type) == SharedPptxOoXml.placeholderFamily(other.type)) return true
     return index == null && other.index == null && type == null && other.type == null
 }
 
@@ -1698,50 +1428,4 @@ private fun Element.firstByLocalTag(tag: String): Element? {
 private fun Element.allByLocalTag(tag: String): List<Element> {
     val local = tag.lowercase(Locale.ROOT)
     return allElements.filter { it.localTag() == local }
-}
-
-private fun String.relationshipsPath(): String {
-    val dir = substringBeforeLast('/', missingDelimiterValue = "")
-    val name = substringAfterLast('/')
-    return if (dir.isBlank()) "_rels/$name.rels" else "$dir/_rels/$name.rels"
-}
-
-private fun resolveRelationshipTarget(partPath: String, target: String, targetMode: String?): String {
-    if (targetMode.equals("External", ignoreCase = true)) return target
-    val cleanTarget = target.substringBefore('#').removePrefix("/")
-    val base = partPath.substringBeforeLast('/', missingDelimiterValue = "")
-    return normalizePartPath(if (target.startsWith("/")) cleanTarget else "$base/$cleanTarget")
-}
-
-private fun normalizePartPath(path: String): String {
-    val clean = path.removePrefix("/")
-    val parts = ArrayDeque<String>()
-    clean.split('/').forEach { part ->
-        when (part) {
-            "", "." -> Unit
-            ".." -> {
-                if (parts.isNotEmpty()) parts.removeLast()
-            }
-            else -> parts.addLast(part)
-        }
-    }
-    return parts.joinToString("/")
-}
-
-private fun String.imageContentType(): String {
-    return when (substringAfterLast('.', "").lowercase(Locale.ROOT)) {
-        "jpg", "jpeg" -> "image/jpeg"
-        "png" -> "image/png"
-        "gif" -> "image/gif"
-        "webp" -> "image/webp"
-        "bmp" -> "image/bmp"
-        "svg" -> "image/svg+xml"
-        else -> "application/octet-stream"
-    }
-}
-
-private fun naturalSlidePathComparator(): Comparator<String> {
-    return compareBy { path ->
-        Regex("""slide(\d+)\.xml""").find(path)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: Int.MAX_VALUE
-    }
 }
