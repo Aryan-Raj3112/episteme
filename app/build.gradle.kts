@@ -29,6 +29,11 @@ if (localPropertiesFile.exists()) {
     localPropertiesFile.inputStream().use { localProperties.load(it) }
 }
 
+// Pinned so every machine (dev, CI, release pipeline) links the office_oxide crate
+// with the same NDK clang. CI greps this line and installs that NDK before Gradle
+// runs, because the cargo target linker is resolved at configuration time.
+val androidNdkVersion = "28.2.13676358"
+
 fun configuredAppLocaleTags(): Set<String> {
     val localesConfigXml = providers
         .fileContents(layout.projectDirectory.file("src/main/res/xml/locales_config.xml"))
@@ -64,6 +69,7 @@ android {
     namespace = "com.aryan.reader"
     compileSdk = 37
     compileSdkMinor = 0
+    ndkVersion = androidNdkVersion
 
     defaultConfig {
         applicationId = "com.aryan.reader"
@@ -290,6 +296,13 @@ fun registerOfficeOxideLibrary(abi: String, cargoTriple: String): TaskProvider<S
             "toolchains/llvm/prebuilt/${hostNdkPrebuilt()}/bin/${abiToNdkClang(abi)}",
         ).absolutePath
     }.getOrNull()
+    if (cargo != null && ndkLinker == null) {
+        logger.warn(
+            "office_oxide: no Android NDK found for $abi; cargo will fall back to the host " +
+                "'cc' linker and fail. Install the NDK (sdkmanager \"ndk;$androidNdkVersion\") or set " +
+                "ANDROID_NDK_HOME."
+        )
+    }
 
     val cargoBuild = tasks.register<Exec>("buildOfficeOxide$label") {
         group = "build"
