@@ -42,9 +42,15 @@ object EpubAnnotationSerializer {
     fun parseHighlightsJson(rawJson: String?): List<UserHighlight> {
         if (rawJson.isNullOrBlank()) return emptyList()
         val root = runCatching { json.parseToJsonElement(rawJson).jsonArray }.getOrNull() ?: return emptyList()
+        // The id is a highlight's identity everywhere: list keys, edit/delete by id, and the
+        // annotation drawers' Lazy keys. Returned lists must therefore be id-unique. A stored row
+        // without an `id` gets `stableHighlightId(cfi, chapterIndex)` derived for it, so two legacy
+        // rows for the same location collapse onto one id and the drawer threw
+        // "Key ... was already used" while scrolling. First occurrence wins (order is preserved);
+        // the next save writes the collapsed list back, so the store heals itself.
         return root.mapNotNull { element ->
             runCatching { element.jsonObject.asHighlightOrNull() }.getOrNull()
-        }
+        }.distinctBy { it.id }
     }
 
     fun parseHighlightJson(rawJson: String?): UserHighlight? {

@@ -8,6 +8,29 @@ import kotlin.test.assertTrue
 
 class EpubAnnotationSerializerTest {
 
+    /**
+     * A stored row without an `id` gets `stableHighlightId(cfi, chapterIndex)` derived for it, so a
+     * legacy duplicate pair for one location collapses onto a single id. Highlight ids are the
+     * annotation drawer's Lazy keys, so handing both rows out crashed the drawer with
+     * "Key highlight_... was already used" mid-scroll. Parsing must return an id-unique list.
+     */
+    @Test
+    fun `parseHighlightsJson collapses legacy rows that derive the same id`() {
+        // No `id` on either row: both derive the same id from cfi + chapterIndex.
+        val duplicateLocation = """[
+            {"cfi":"desktop:3:120:137","text":"A marked sentence","chapterIndex":3},
+            {"cfi":"desktop:3:120:137","text":"A marked sentence","chapterIndex":3},
+            {"cfi":"desktop:3:200:210","text":"Another sentence","chapterIndex":3}
+        ]"""
+        val parsed = EpubAnnotationSerializer.parseHighlightsJson(duplicateLocation)
+
+        assertEquals(2, parsed.size)
+        assertEquals(parsed.map { it.id }.distinct().size, parsed.size)
+        // First occurrence wins and document order is preserved.
+        assertEquals("A marked sentence", parsed.first().text)
+        assertEquals("Another sentence", parsed.last().text)
+    }
+
     @Test
     fun `highlights json round trips and tolerates legacy missing ids`() {
         val highlights = listOf(
