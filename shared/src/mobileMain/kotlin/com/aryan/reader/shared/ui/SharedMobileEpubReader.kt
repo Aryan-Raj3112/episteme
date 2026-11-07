@@ -189,6 +189,7 @@ import com.aryan.reader.shared.reader.pullToTurnEnabled
 import com.aryan.reader.shared.reader.seamlessChapterTransitionEnabled
 import kotlin.math.abs
 import kotlin.time.TimeSource
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -1754,7 +1755,18 @@ fun SharedMobileEpubReaderScreen(
                 ?.startOffset
                 ?.takeIf { it >= 0 }
             mediaOverlayEngineScope.launch {
-                if (!session.start(chapterIndex, readerOffset)) {
+                // A narration that cannot start is a banner, not a dead reader. Starting resolves the
+                // chapter's blocks and asks the host's store for a saved position, and this coroutine
+                // belongs to the screen: an exception escaping it is a crash on a play press.
+                // Cancellation is the composition saying it is done, so it is passed on unreported.
+                val started = try {
+                    session.start(chapterIndex, readerOffset)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    false
+                }
+                if (!started) {
                     onShowBanner(mediaOverlayUnavailableMessage)
                 }
             }

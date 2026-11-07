@@ -5602,10 +5602,23 @@ fun EpubReaderHost(
                                 // a mini player pointed at another book's audio.
                                 com.aryan.reader.audiobook.ListenOverlayHost.get(context).stop()
                                 scope.launch {
-                                    val started = session.start(
-                                        currentChapterIndex,
-                                        readerOffsetForChapter(currentChapterIndex)
-                                    )
+                                    // A narration that cannot start is a banner, not a dead reader. The
+                                    // start path resolves the chapter's blocks through the paginator and
+                                    // asks the store for a saved position, and this coroutine belongs to
+                                    // the screen: an exception escaping it is a process crash on a play
+                                    // press. Cancellation is the composition saying it is done, so it is
+                                    // passed on rather than reported.
+                                    val started = try {
+                                        session.start(
+                                            currentChapterIndex,
+                                            readerOffsetForChapter(currentChapterIndex)
+                                        )
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        Timber.tag("MediaOverlayDiag").e(e, "Narration could not start")
+                                        false
+                                    }
                                     if (!started) {
                                         viewModel.showBanner(
                                             context.getString(R.string.media_overlay_chapter_unavailable),

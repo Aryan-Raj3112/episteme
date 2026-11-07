@@ -21,6 +21,7 @@ import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackBase
 import com.aryan.reader.shared.reader.SharedMediaOverlayPlaybackRequest
 import com.aryan.reader.shared.reader.playbackIndexOfSourceClip
 import com.google.common.util.concurrent.ListenableFuture
+import timber.log.Timber
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -97,6 +98,10 @@ class AndroidSharedMediaOverlayPlayback(
         }
 
         override fun onPlayerError(error: PlaybackException) {
+            // The state carries only the error's name for the bar; the stack is what says whether the
+            // archive, a clip's bounds or the decode is at fault, and a report of "it stopped" cannot
+            // distinguish them.
+            Timber.tag(TAG).e(error, "Narration playback failed (${error.errorCodeName})")
             publish {
                 it.copy(
                     isPlaying = false,
@@ -223,6 +228,15 @@ class AndroidSharedMediaOverlayPlayback(
             clip.toMediaItem(request, clipIndex, requireNotNull(clip.audioPath))
         }
         val startPlayerIndex = playerIndexOfClip(resolvedStart).takeIf { it >= 0 } ?: 0
+        // One line per load, next to the resume decision that produced it. The failures this feature has
+        // are all disagreements between what was saved, what was requested and what the player was handed,
+        // and every one of them is invisible in a screenshot and obvious here — a resume that starts at
+        // clip 0 is otherwise indistinguishable from a resume that never happened.
+        Timber.tag(TAG).d(
+            "load spine=${request.spineItemIndex} requestedStart=${request.startPlaybackIndex} " +
+                "clipStart=$resolvedStart playerStart=$startPlayerIndex clips=${mediaItems.size} " +
+                "total=${request.clips.size}"
+        )
         publish { it.copy(isLoading = true) }
         suppressPoll = true
         runCatching {
@@ -372,6 +386,9 @@ class AndroidSharedMediaOverlayPlayback(
         clips.playbackIndexOfSourceClip(clipIndex)
 
     private companion object {
+        /** Matches the reader's own narration tag, so one logcat filter shows the whole sequence. */
+        const val TAG = "MediaOverlayDiag"
+
         /** Surfaced when a chapter's every clip is a TTS `par`, so nothing here can narrate it. */
         const val MEDIA_OVERLAY_NO_AUDIO_ERROR = "This chapter has no narration audio"
     }

@@ -79,9 +79,22 @@ class AndroidMediaOverlayNarrationProgressStore(
         dao = AppDatabase.getDatabase(context.applicationContext).mediaOverlayNarrationProgressDao()
     )
 
+    /**
+     * The stored position, or null when the store cannot answer.
+     *
+     * `null` rather than a thrown query in both cases: the position is an optimisation on top of
+     * "start where the reader is", and this read sits on the play press' coroutine, where an escaping
+     * exception is a process crash. A database that is mid-migration, locked or corrupt costs the resume
+     * and logs; it does not cost the play press.
+     */
     override suspend fun load(bookId: String): SharedMediaOverlayNarrationProgress? =
         withContext(Dispatchers.IO) {
-            dao.get(bookId)?.toShared()
+            try {
+                dao.get(bookId)?.toShared()
+            } catch (e: Exception) {
+                Timber.tag(TAG).w(e, "Could not read narration position for book=$bookId")
+                null
+            }
         }
 
     override fun record(progress: SharedMediaOverlayNarrationProgress) {

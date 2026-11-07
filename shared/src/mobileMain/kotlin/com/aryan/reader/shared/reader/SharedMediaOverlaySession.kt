@@ -99,21 +99,9 @@ class SharedMediaOverlaySession(
      *
      * Needed because a content document split at TOC fragments gives several chapters one spine item:
      * the spine item alone cannot say whether a held-over chapter still describes the loaded chapter.
+     * Cleared by [start], because a new run's first clip must not inherit the previous run's chapter.
      */
     private var projectedSpineItemIndex: Int? = null
-
-    /**
-     * The chapter a spine item narrates as, for a position recorded before its first projection.
-     *
-     * Lowest chapter wins where several chapters share the document, which is the same answer Listen's
-     * chapter table gives — so a position recorded at a chapter's first clip and one recorded a clip
-     * later describe the book the same way.
-     */
-    private val firstChapterBySpineItem: Map<Int, Int> = buildMap {
-        spineItemIndexByChapter.entries
-            .sortedBy { it.key }
-            .forEach { (chapter, spine) -> if (spine !in this) put(spine, chapter) }
-    }
 
     init {
         // Running off the end of a chapter continues into the next narrated one. Installed here
@@ -128,9 +116,22 @@ class SharedMediaOverlaySession(
      *
      * Fused because the two were always used together and separating them invited a screen that
      * projected without recording — which reads as "narration follows nowhere".
+     *
+     * @param playbackIndex the position within the loaded clip list, i.e.
+     *   [SharedMediaOverlayPlaybackState.clipIndex] — **not** a document clip index. The two differ
+     *   whenever [sharedMediaOverlayPlaybackPlan] dropped a clip (a `par` with no audio), and a caller
+     *   that projected the position as a document index would paint the band one line early for every
+     *   dropped clip and — worse — resolve the *chapter* from the wrong clip, so the position recorded
+     *   for the next open would name a chapter playback is not in. The plan is the translation, and it
+     *   is only valid for the chapter it was loaded for.
      */
-    suspend fun project(spineItemIndex: Int, clipIndex: Int): SharedMediaOverlayProjection? {
-        val projection = projector.project(spineItemIndex, clipIndex)
+    suspend fun project(spineItemIndex: Int, playbackIndex: Int): SharedMediaOverlayProjection? {
+        // A stale position: the engine is still reporting the chapter the session has already replaced,
+        // so this index describes nothing in the loaded plan. Projecting it anyway is what paints a
+        // band for the wrong line (or freezes the last one) across a chapter change.
+        if (spineItemIndex != currentSpineItemIndex) return null
+        val documentClipIndex = currentPlanEntries.getOrNull(playbackIndex)?.clipIndex ?: return null
+        val projection = projector.project(spineItemIndex, documentClipIndex)
         chapterIndex = projection?.chapterIndex
         projectedSpineItemIndex = spineItemIndex.takeIf { projection?.chapterIndex != null }
         return projection
@@ -161,7 +162,14 @@ class SharedMediaOverlaySession(
         val readerClipIndex = readerOffset
             ?.takeIf { it >= 0 }
             ?.let { projector.clipIndexForReaderPosition(spineItemIndex, it) }
-        val savedProgress = if (resumeSavedNarration) narrationProgressStore?.load(bookId) else null
+        // A store that cannot answer must not take the play press down with it: the position is an
+        // optimisation on top of "start where the reader is", and this runs inside the screen's click
+        // coroutine, where an escaping exception is a fatal one.
+        val savedProgress = if (resumeSavedNarration) {
+            runCatching { narrationProgressStore?.load(bookId) }.getOrNull()
+        } else {
+            null
+        }
         val startClipIndex = sharedMediaOverlayStartClipIndex(
             saved = savedProgress,
             spineItemIndex = spineItemIndex,
@@ -172,6 +180,11 @@ class SharedMediaOverlaySession(
         clipCount = plan.entries.size
         currentPlanEntries = plan.entries
         currentSpineItemIndex = spineItemIndex
+        // The previous run's projection describes the chapter it resolved, which may be another chapter
+        // of this very document (a split content document). Clearing it here is what keeps the first
+        // clip of this run from recording a position labelled with a chapter it is not in.
+        this.chapterIndex = null
+        projectedSpineItemIndex = null
         bandSessionId = nextSharedPlaybackBandSessionId()
         // Reinstalled on every start, not just in init: sessions share engines
         // across surfaces now (reader and Listen narration), so the last
@@ -196,16 +209,19 @@ class SharedMediaOverlaySession(
         // session has already moved on; only the loaded chapter's own clips describe this position.
         if (spineItemIndex != currentSpineItemIndex) return
         val clip = currentPlanEntries.getOrNull(playbackIndex) ?: return
+        // Only a chapter the projection resolved *for this spine item* describes this clip, and the
+        // first clip of a run is reported before that projection lands. Recording a guessed chapter
+        // there would be worse than recording nothing: a content document split at TOC fragments has
+        // several chapters, the guess would name the document's first one, and the resume it produced
+        // would be rejected on the next open as "another chapter" — which is the restart-at-the-top
+        // this whole store exists to prevent. Leaving the previous, accurate row in place is correct:
+        // a resume for a different chapter is rejected anyway.
+        val confirmedChapter = chapterIndex.takeIf { projectedSpineItemIndex == spineItemIndex } ?: return
         store.record(
             SharedMediaOverlayNarrationProgress(
                 bookId = bookId,
                 spineItemIndex = spineItemIndex,
-                // Only a chapter resolved for *this* spine item describes this clip. A projection
-                // left over from the previous chapter would label the clip with the wrong one, and a
-                // position recorded before this chapter's first projection still needs a chapter, so
-                // the mapping answers when the projection has not.
-                chapterIndex = chapterIndex.takeIf { projectedSpineItemIndex == spineItemIndex }
-                    ?: firstChapterBySpineItem[spineItemIndex],
+                chapterIndex = confirmedChapter,
                 clipIndex = clip.clipIndex,
                 updatedAt = currentTimestamp(),
             )

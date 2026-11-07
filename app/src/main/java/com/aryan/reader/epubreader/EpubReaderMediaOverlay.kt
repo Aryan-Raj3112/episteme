@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import timber.log.Timber
 import java.io.File
 
+private const val TAG = "MediaOverlayProjector"
+
 /**
  * EPUB 3 media overlays on the Android reader screen.
  *
@@ -192,7 +194,18 @@ internal class EpubMediaOverlayProjector(
         chapterIndex: Int
     ): Map<Int, SharedPlaybackFragment>? {
         anchorsByChapter[chapterIndex]?.let { return it }
-        val blocks = blocksForChapter(chapterIndex)
+        // A chapter whose blocks cannot be produced has no anchors, which is a statement about this
+        // chapter and not a reason to end the reader. This is the only seam between narration and the
+        // paginator, and both of its callers are narration entry points — `start` on the play press and
+        // `project` on the state change that follows it — where an exception escaping is a process
+        // crash rather than a missing band. The highlight index already treats the same call as
+        // fallible (`rememberChapterHighlightIndexes.awaitChapterBlocks`); this is that treatment
+        // applied where narration resolves an anchor.
+        val blocks = runCatching { blocksForChapter(chapterIndex) }
+            .onFailure { error ->
+                Timber.tag(TAG).w(error, "Media overlay anchors unavailable for chapter $chapterIndex")
+            }
+            .getOrNull()
         if (blocks.isNullOrEmpty()) return null
         val anchors = resolveSharedMediaOverlayFragmentsInBlocks(document, blocks)
         if (anchors.isNotEmpty()) {
