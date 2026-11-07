@@ -42,11 +42,21 @@ jobs:
               set -euo pipefail
               source /etc/profile.d/bsenv.sh
               cd /home/vagrant/build/com.aryan.reader.oss
+
+              # The F-Droid buildserver image ships no Rust toolchain, but the APK
+              # build compiles rust/office-oxide-bridge with cargo (:app:buildOfficeOxide*).
+              # rustup follows rust/office-oxide-bridge/rust-toolchain.toml, so the
+              # pinned channel and its Android targets install on first cargo run.
+              export PATH="$HOME/.cargo/bin:$PATH"
+              if ! command -v cargo >/dev/null 2>&1; then
+                curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs \
+                  | sh -s -- -y --profile minimal --default-toolchain none --no-modify-path
+              fi
+              ( cd rust/office-oxide-bridge && cargo --version )
+
               sed -i -e "/jogamp/d" -e "/https.jitpack/d" settings.gradle.kts
               ./gradlew :app:assembleOssRelease --no-build-cache --max-workers=1 -Pkotlin.daemon.jvmargs=-Xmx4g
-              ./gradlew :app:assembleOssReleaseOffline --no-build-cache --max-workers=1 -Pkotlin.daemon.jvmargs=-Xmx4g
               cp app/build/outputs/renamed-apk/ossRelease/*.apk /release-assets/
-              cp app/build/outputs/renamed-apk/ossReleaseOffline/*.apk /release-assets/
             '
           sudo chown -R "$(id -u):$(id -g)" release-assets
 
