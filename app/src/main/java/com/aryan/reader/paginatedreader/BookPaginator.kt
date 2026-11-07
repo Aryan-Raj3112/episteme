@@ -710,32 +710,43 @@ class BookPaginator(
         }
     }
 
-    private suspend fun ensureChapterPaginated(chapterIndex: Int): List<Page>? {
-        coroutineContext.ensureActive()
-        if (isDisposed()) return null
-        if (chapterIndex !in chapters.indices) {
-            Timber.w("ensureChapterPaginated: Ignoring invalid chapter index $chapterIndex.")
-            return null
-        }
+    /**
+     * Paginates [chapterIndex] unless it is already cached, pinned off the caller's dispatcher.
+     *
+     * Pagination is the heaviest work the reader does: every block is laid out, and a table whose
+     * row overruns its page runs a split search that re-lays out cell text. Callers include
+     * main-thread coroutines (the TTS/media-overlay entry points are launched from
+     * `rememberCoroutineScope()`), so the pin lives here rather than in each of them: a caller's
+     * dispatcher must not be able to put a whole chapter's layout on the main thread. Same contract
+     * as the parse pipeline in [getBlocksForChapter] (see BookPaginatorThreadingTest).
+     */
+    private suspend fun ensureChapterPaginated(chapterIndex: Int): List<Page>? =
+        withContext(Dispatchers.IO) {
+            coroutineContext.ensureActive()
+            if (isDisposed()) return@withContext null
+            if (chapterIndex !in chapters.indices) {
+                Timber.w("ensureChapterPaginated: Ignoring invalid chapter index $chapterIndex.")
+                return@withContext null
+            }
 
-        pageCache[chapterIndex]?.let {
-            Timber.tag(TAG_STABLE_PAGE_NAV)
-                .d("ensure_chapter hit_memory chapter=$chapterIndex pages=${it.size}")
-            return it
-        }
+            pageCache[chapterIndex]?.let {
+                Timber.tag(TAG_STABLE_PAGE_NAV)
+                    .d("ensure_chapter hit_memory chapter=$chapterIndex pages=${it.size}")
+                return@withContext it
+            }
 
-        val lock = chapterPaginationLocks.computeIfAbsent(chapterIndex) { Mutex() }
-        return lock.withLock {
-            pageCache[chapterIndex]?.also {
-                Timber.tag(TAG_STABLE_PAGE_NAV)
-                    .d("ensure_chapter hit_after_wait chapter=$chapterIndex pages=${it.size}")
-            } ?: run {
-                Timber.tag(TAG_STABLE_PAGE_NAV)
-                    .d("ensure_chapter paginate chapter=$chapterIndex finalized=${chapterIndex in finalizedChapterCounts}")
-                paginateChapter(chapterIndex)
+            val lock = chapterPaginationLocks.computeIfAbsent(chapterIndex) { Mutex() }
+            lock.withLock {
+                pageCache[chapterIndex]?.also {
+                    Timber.tag(TAG_STABLE_PAGE_NAV)
+                        .d("ensure_chapter hit_after_wait chapter=$chapterIndex pages=${it.size}")
+                } ?: run {
+                    Timber.tag(TAG_STABLE_PAGE_NAV)
+                        .d("ensure_chapter paginate chapter=$chapterIndex finalized=${chapterIndex in finalizedChapterCounts}")
+                    paginateChapter(chapterIndex)
+                }
             }
         }
-    }
 
     private suspend fun getCachedBlocksForChapter(chapter: EpubChapter, chapterIndex: Int): List<ContentBlock> {
         blockCache[chapterIndex]?.let {
@@ -847,51 +858,60 @@ class BookPaginator(
         targetPage to locator
     }
 
-    suspend fun getTtsChunksForChapter(chapterIndex: Int, startingFromPageInChapter: Int = 0): List<TtsChunk>? {
-        val pages = ensureChapterPaginated(chapterIndex)
-        if (pages.isNullOrEmpty()) {
-            Timber.w("PAGINATOR: Chapter $chapterIndex has no pages or could not be paginated.")
-            return null
-        }
+    /**
+     * Every TTS chunk of [chapterIndex], built off the caller's dispatcher.
+     *
+     * Both halves are heavy - pagination, then splitting every text block into chunks - and the
+     * callers are UI coroutines (`rememberCoroutineScope()` in EpubReaderScreen, viewModelScope
+     * elsewhere), so the whole body is pinned rather than just the pagination it happens to start
+     * with. A chunk list is only ever consumed after this returns, so nothing needs main.
+     */
+    suspend fun getTtsChunksForChapter(chapterIndex: Int, startingFromPageInChapter: Int = 0): List<TtsChunk>? =
+        withContext(Dispatchers.IO) {
+            val pages = ensureChapterPaginated(chapterIndex)
+            if (pages.isNullOrEmpty()) {
+                Timber.w("PAGINATOR: Chapter $chapterIndex has no pages or could not be paginated.")
+                return@withContext null
+            }
 
-        val blocks = pages.drop(startingFromPageInChapter).flatMap { it.content }
+            val blocks = pages.drop(startingFromPageInChapter).flatMap { it.content }
 
-        if (blocks.isEmpty()) {
-            Timber.w("PAGINATOR: Chapter $chapterIndex from page $startingFromPageInChapter has no blocks.")
-            return null
-        }
+            if (blocks.isEmpty()) {
+                Timber.w("PAGINATOR: Chapter $chapterIndex from page $startingFromPageInChapter has no blocks.")
+                return@withContext null
+            }
 
-        val allTtsChunks = mutableListOf<TtsChunk>()
+            val allTtsChunks = mutableListOf<TtsChunk>()
 
-        val textBlocks = getAllTextBlocks(blocks)
+            val textBlocks = getAllTextBlocks(blocks)
 
-        textBlocks.forEach { block ->
-            if (block.cfi != null) {
-                val blockText = block.content.text
-                if (blockText.isNotBlank()) {
-                    // Offsets come from the splitter rather than a search for each chunk's first
-                    // word: a search drifts by the whitespace the split removed, and every stored
-                    // offset then points earlier than the text it names.
-                    val chunkSpans = splitTextIntoChunksWithSourceOffsets(blockText)
+            textBlocks.forEach { block ->
+                if (block.cfi != null) {
+                    val blockText = block.content.text
+                    if (blockText.isNotBlank()) {
+                        // Offsets come from the splitter rather than a search for each chunk's first
+                        // word: a search drifts by the whitespace the split removed, and every stored
+                        // offset then points earlier than the text it names.
+                        val chunkSpans = splitTextIntoChunksWithSourceOffsets(blockText)
 
-                    chunkSpans.forEach { span ->
-                        val chunk = TtsChunk(
-                            text = span.text,
-                            sourceCfi = block.cfi!!,
-                            startOffsetInSource = block.startCharOffsetInSource + span.startOffsetInSource
-                        )
-                        allTtsChunks.add(chunk)
+                        chunkSpans.forEach { span ->
+                            val chunk = TtsChunk(
+                                text = span.text,
+                                sourceCfi = block.cfi!!,
+                                startOffsetInSource = block.startCharOffsetInSource + span.startOffsetInSource
+                            )
+                            allTtsChunks.add(chunk)
+                        }
+                    } else {
+                        Timber.d("PAGINATOR: Skipping blank text block. CFI: ${block.cfi}, startOffset: ${block.startCharOffsetInSource}")
                     }
                 } else {
-                    Timber.d("PAGINATOR: Skipping blank text block. CFI: ${block.cfi}, startOffset: ${block.startCharOffsetInSource}")
+                    Timber.w("PAGINATOR: Skipping text block with null CFI. Text: '${block.content.text.take(70).replace("\n", " ")}...'")
                 }
-            } else {
-                Timber.w("PAGINATOR: Skipping text block with null CFI. Text: '${block.content.text.take(70).replace("\n", " ")}...'")
             }
+            Timber.i("PAGINATOR: Generated ${allTtsChunks.size} TTS chunks for chapter $chapterIndex starting from page $startingFromPageInChapter.")
+            allTtsChunks
         }
-        Timber.i("PAGINATOR: Generated ${allTtsChunks.size} TTS chunks for chapter $chapterIndex starting from page $startingFromPageInChapter.")
-        return allTtsChunks
-    }
 
     private fun enqueueBookProcessingWork() {
         if (isDisposed()) return

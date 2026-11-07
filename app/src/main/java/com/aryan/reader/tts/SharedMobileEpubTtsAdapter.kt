@@ -2,6 +2,7 @@ package com.aryan.reader.tts
 
 import android.content.Context
 import android.os.Bundle
+import com.aryan.reader.shared.tts.createTextToSpeechOrNull
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.runtime.getValue
@@ -205,9 +206,9 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
      */
     fun loadAvailableVoices(onSavedVoiceUnavailable: (String?) -> Unit = {}) {
         if (enumerationEngine != null) return
-        enumerationEngine = TextToSpeech(appContext) { status ->
-            val engine = enumerationEngine ?: return@TextToSpeech
-            if (status != TextToSpeech.SUCCESS) return@TextToSpeech
+        enumerationEngine = createTextToSpeechOrNull(appContext) { status ->
+            val engine = enumerationEngine ?: return@createTextToSpeechOrNull
+            if (status != TextToSpeech.SUCCESS) return@createTextToSpeechOrNull
             availableVoices = engine.selectableVoices()
             val saved = selectedVoiceIdentifier
             if (BuildConfig.IS_OFFLINE && saved != null &&
@@ -224,9 +225,9 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
 
     override fun previewVoice(identifier: String?) {
         previewEngine?.shutdown()
-        previewEngine = TextToSpeech(appContext) { status ->
-            val engine = previewEngine ?: return@TextToSpeech
-            if (status != TextToSpeech.SUCCESS) return@TextToSpeech
+        previewEngine = createTextToSpeechOrNull(appContext) { status ->
+            val engine = previewEngine ?: return@createTextToSpeechOrNull
+            if (status != TextToSpeech.SUCCESS) return@createTextToSpeechOrNull
             availableVoices = engine.selectableVoices()
             identifier?.let { id -> engine.voices?.firstOrNull { it.name == id } }?.let { engine.voice = it }
             engine.setSpeechRate(speechRate)

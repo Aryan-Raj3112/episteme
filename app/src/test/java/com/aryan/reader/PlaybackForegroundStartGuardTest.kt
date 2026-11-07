@@ -1,5 +1,7 @@
 package com.aryan.reader
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.os.Looper
@@ -102,6 +104,45 @@ class PlaybackForegroundStartGuardTest {
         guard.onStartCommand(START_ID) { false }
 
         assertTrue(shadowOf(service).isStoppedBySelf)
+    }
+
+
+    @Test
+    fun `a channel the user turned off is given up instead of promoted`() {
+        val service = newService()
+        service.getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(
+                "test_playback",
+                "Test playback",
+                NotificationManager.IMPORTANCE_NONE,
+            )
+        )
+
+        guard(service).onStartCommand(START_ID) { false }
+
+        // Posting on that channel is rejected by the framework after startForeground() has already
+        // returned, so it cannot be caught and it kills the process: not promoting is the only
+        // defence (docs/crashlytics-triage.md#119).
+        val shadow = shadowOf(service)
+        assertEquals(0, shadow.lastForegroundNotificationId)
+        assertTrue(shadow.isStoppedBySelf)
+        assertEquals(START_ID, shadow.stopSelfId)
+    }
+
+    @Test
+    fun `an existing channel that is not blocked is still promoted`() {
+        val service = newService()
+        service.getSystemService(NotificationManager::class.java).createNotificationChannel(
+            NotificationChannel(
+                "test_playback",
+                "Test playback",
+                NotificationManager.IMPORTANCE_LOW,
+            )
+        )
+
+        guard(service).onStartCommand(START_ID) { false }
+
+        assertEquals(NOTIFICATION_ID, shadowOf(service).lastForegroundNotificationId)
     }
 
     @Test

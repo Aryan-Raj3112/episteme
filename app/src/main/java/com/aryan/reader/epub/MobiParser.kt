@@ -25,6 +25,7 @@ import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import java.io.File
 import java.io.InputStream
 import java.util.UUID
@@ -216,42 +217,6 @@ class MobiParser(private val context: Context) {
                 "kindle:flow:${String.format("%04d", index)}?mime=text/css" to it.path
             }
 
-        val processChapterHtml: (String) -> String = { html ->
-            val doc = Jsoup.parse(html)
-
-            doc.select("link[href]").forEach { link ->
-                val originalHref = link.attr("href")
-                cssFlowMap[originalHref]?.let { newPath ->
-                    link.attr("href", newPath)
-                    Timber.d("Rewrote CSS link from '$originalHref' to '$newPath'")
-                } ?: Timber.w("Could not find mapping for CSS link: $originalHref")
-            }
-
-            doc.select("img").forEach { img ->
-                val src = img.attr("src")
-                if (src.startsWith("kindle:embed:")) {
-                    val embedIndexString = src.substringAfter("embed:").substringBefore("?")
-                    val embedIndex = embedIndexString.toIntOrNull()
-                    if (embedIndex != null) {
-                        // **THE FIX**: Use the sequential map, not a UID map
-                        sequentialImageMap[embedIndex]?.let { newPath ->
-                            img.attr("src", newPath)
-                            Timber.d("Rewrote image src from '$src' to '$newPath' using sequential map")
-                        } ?: Timber.w("No resource found for sequential image index: $embedIndex")
-                    }
-                } else if (img.hasAttr("recindex")) {
-                    val recIndex = img.attr("recindex").toIntOrNull()
-                    if (recIndex != null) {
-                        sequentialImageMap[recIndex]?.let { newPath ->
-                            img.attr("src", newPath)
-                            img.removeAttr("recindex")
-                        } ?: Timber.w("Kotlin: No matching image found for recindex: $recIndex")
-                    }
-                }
-            }
-            doc.outerHtml()
-        }
-
         // --- CHAPTER SPLITTING LOGIC ---
         // Only the chapter list below consumes this, so a metadata-only import skips it entirely.
         val chapterHtmlParts = if (parseContent) {
@@ -277,8 +242,12 @@ class MobiParser(private val context: Context) {
         val epubChapters = if (parseContent) {
             chapterHtmlParts.mapIndexedNotNull { index, (chapterHtml, title) ->
                 try {
-                    val rewrittenHtml = processChapterHtml(chapterHtml)
-                    val doc = Jsoup.parse(rewrittenHtml)
+                    // One DOM per chapter: it is serialized once for the chapter file, and the
+                    // plain text comes from the same tree. The old code re-parsed the string it had
+                    // just serialized, building a second full DOM per chapter for nothing
+                    // (docs/crashlytics-triage.md#116).
+                    val doc = rewriteMobiChapterDocument(chapterHtml, cssFlowMap, sequentialImageMap)
+                    val rewrittenHtml = doc.outerHtml()
                     val chapterFileName = "chapter_$index.html"
                     val chapterFile = File(extractionDir, chapterFileName)
                     chapterFile.writeText(rewrittenHtml)
@@ -344,6 +313,56 @@ class MobiParser(private val context: Context) {
  * and parsed afterwards (docs/crashlytics-triage.md#91). Decoding each chapter straight out of the
  * array also drops the per-chapter `sliceArray` copy the split used to make.
  */
+/**
+ * Parses one chapter and rewrites its asset references to the paths used after extraction.
+ *
+ * Returns the DOM, not its HTML, so the caller can take the chapter's text from the same tree it
+ * serializes for the chapter file. The previous shape returned only [Document.outerHtml] and the
+ * caller immediately re-parsed that string to get the text, which meant two full jsoup documents
+ * per chapter were alive at once - a multi-MB peak per chapter on a big MOBI for no benefit
+ * (docs/crashlytics-triage.md#116).
+ */
+internal fun rewriteMobiChapterDocument(
+    html: String,
+    cssFlowMap: Map<String, String>,
+    sequentialImageMap: Map<Int, String>,
+): Document {
+    val doc = Jsoup.parse(html)
+
+    doc.select("link[href]").forEach { link ->
+        val originalHref = link.attr("href")
+        cssFlowMap[originalHref]?.let { newPath ->
+            link.attr("href", newPath)
+            Timber.d("Rewrote CSS link from '$originalHref' to '$newPath'")
+        } ?: Timber.w("Could not find mapping for CSS link: $originalHref")
+    }
+
+    doc.select("img").forEach { img ->
+        val src = img.attr("src")
+        if (src.startsWith("kindle:embed:")) {
+            val embedIndexString = src.substringAfter("embed:").substringBefore("?")
+            val embedIndex = embedIndexString.toIntOrNull()
+            if (embedIndex != null) {
+                // **THE FIX**: Use the sequential map, not a UID map
+                sequentialImageMap[embedIndex]?.let { newPath ->
+                    img.attr("src", newPath)
+                    Timber.d("Rewrote image src from '$src' to '$newPath' using sequential map")
+                } ?: Timber.w("No resource found for sequential image index: $embedIndex")
+            }
+        } else if (img.hasAttr("recindex")) {
+            val recIndex = img.attr("recindex").toIntOrNull()
+            if (recIndex != null) {
+                sequentialImageMap[recIndex]?.let { newPath ->
+                    img.attr("src", newPath)
+                    img.removeAttr("recindex")
+                } ?: Timber.w("Kotlin: No matching image found for recindex: $recIndex")
+            }
+        }
+    }
+
+    return doc
+}
+
 internal fun splitMobiChaptersByFilePosition(
     rawHtml: String,
     sortedToc: List<MobiParser.ParsedMobiTocEntry>

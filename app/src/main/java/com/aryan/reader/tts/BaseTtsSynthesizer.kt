@@ -21,6 +21,7 @@ package com.aryan.reader.tts
 
 import android.content.Context
 import android.os.Bundle
+import com.aryan.reader.shared.tts.createTextToSpeechOrNull
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
@@ -220,7 +221,7 @@ class BaseTtsSynthesizer(private val context: Context) {
         return suspendCancellableCoroutine { continuation ->
             Timber.d("BaseTts: Initializing TextToSpeech engine...")
             Timber.tag(TTS_LOCAL_DIAG_TAG).i("engine-init-start")
-            tts = TextToSpeech(context.applicationContext) { status ->
+            tts = createTextToSpeechOrNull(context.applicationContext) { status ->
                 if (status == TextToSpeech.SUCCESS) {
                     isInitialized = true
                     Timber.d("TextToSpeech engine initialized successfully.")

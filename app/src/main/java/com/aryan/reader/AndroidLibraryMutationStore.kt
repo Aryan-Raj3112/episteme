@@ -64,7 +64,12 @@ internal class AndroidLibraryMutationStore(
 
     override suspend fun assignTagToBooks(tagId: String, bookIds: Set<String>) {
         withContext(Dispatchers.IO) {
-            bookIds.forEach { tagDao.insertBookTagCrossRef(BookTagCrossRef(it, tagId)) }
+            database.withTransaction {
+                val crossRefs = bookTagCrossRefsForExistingBooks(tagId, bookIds)
+                if (crossRefs.isNotEmpty()) {
+                    tagDao.insertBookTagCrossRefs(crossRefs)
+                }
+            }
         }
     }
 
@@ -136,9 +141,45 @@ internal class AndroidLibraryMutationStore(
         timestamp: Long,
     ): List<BookShelfCrossRef> {
         if (bookIds.isEmpty()) return emptyList()
-        val existingBookIds = database.recentFileDao().getAllBookIds().toHashSet()
+        val existingBookIds = existingLibraryBookIds()
         return bookIds.filter { it in existingBookIds }.map { BookShelfCrossRef(it, shelfId, timestamp) }
     }
+
+    /**
+     * The same guard for `book_tag_cross_ref`, whose TWO foreign keys can each fail.
+     *
+     * `bookId` -> `recent_files(bookId)` is the #68 shape: tag assignment arrives from cloud
+     * sync (and from `LibraryMutationController`) with ids filtered by `syncableBookIds`, which
+     * admits books this device never materialised, so the row is absent and the insert aborts
+     * with `SQLiteConstraintException` 787.
+     *
+     * `tagId` -> `tags(id)` fails when the tag was deleted (locally, or by a remote deletion
+     * applied between the caller reading the tag list and this insert) or was never created
+     * because `seedTagsIfEmpty` only seeds an empty table. Both are checked here, at the one
+     * place that writes this table, so no caller's filter has to be right.
+     *
+     * Checked inside the caller's transaction so the parents cannot disappear between check and
+     * insert. Uses the narrow `SELECT bookId` and a single primary-key lookup rather than
+     * `SELECT *` (docs/crashlytics-triage.md#54).
+     */
+    private suspend fun bookTagCrossRefsForExistingBooks(
+        tagId: String,
+        bookIds: Collection<String>,
+    ): List<BookTagCrossRef> {
+        if (bookIds.isEmpty()) return emptyList()
+        if (tagDao.getTagId(tagId) == null) return emptyList()
+        val existingBookIds = existingLibraryBookIds()
+        return bookIds.filter { it in existingBookIds }.map { BookTagCrossRef(it, tagId) }
+    }
+
+    /**
+     * Every `recent_files.bookId`, the parent set shared by both cross-ref tables.
+     *
+     * Soft-deleted books keep their row, so a tombstoned book is legitimately referenceable;
+     * only a completely absent row must be rejected.
+     */
+    private suspend fun existingLibraryBookIds(): Set<String> =
+        database.recentFileDao().getAllBookIds().toHashSet()
 
     suspend fun migrateLegacyShelves() = withContext(Dispatchers.IO) {
         val prefs = context.getSharedPreferences("reader_user_prefs", Context.MODE_PRIVATE)

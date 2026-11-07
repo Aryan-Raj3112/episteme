@@ -1,6 +1,8 @@
 package com.aryan.reader.epub
 
+import org.jsoup.Jsoup
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
@@ -12,6 +14,36 @@ import org.junit.Test
  * which is what made the reduction safe to do.
  */
 class MobiChapterSplitTest {
+
+    /**
+     * The chapter rewrite now hands back the parsed document so the caller can take the chapter's
+     * plain text from it, instead of re-parsing the HTML it had just serialized (a second full
+     * jsoup tree per chapter, docs/crashlytics-triage.md#116). That reduction is only valid while
+     * the text of the document equals the text of its own serialization - which is what this pins,
+     * alongside the asset rewriting the function exists for.
+     */
+    @Test
+    fun `chapter rewrite returns one document whose text matches its own serialization`() {
+        val html = """<html><body>
+            <p>Caf&eacute; &amp; cr&egrave;me br&ucirc;l&eacute;e</p>
+            <link rel="stylesheet" href="kindle:flow:0001?mime=text/css">
+            <p>Second <b>para</b> with <i>markup</i></p>
+            <img src="kindle:embed:0002?mime=image/jpeg">
+            <img recindex="3">
+        </body></html>"""
+
+        val doc = rewriteMobiChapterDocument(
+            html = html,
+            cssFlowMap = mapOf("kindle:flow:0001?mime=text/css" to "flow_0001.css"),
+            sequentialImageMap = mapOf(2 to "image_0002.jpg", 3 to "image_0003.png"),
+        )
+
+        assertEquals("flow_0001.css", doc.select("link[href]").attr("href"))
+        assertEquals(listOf("image_0002.jpg", "image_0003.png"), doc.select("img").map { it.attr("src") })
+        assertFalse("recindex must be cleared once rewritten", doc.select("img").any { it.hasAttr("recindex") })
+
+        assertEquals(doc.text(), Jsoup.parse(doc.outerHtml()).text())
+    }
 
     @Test
     fun `splits at byte offsets, not character offsets`() {

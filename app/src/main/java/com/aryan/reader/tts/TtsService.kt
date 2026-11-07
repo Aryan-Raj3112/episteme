@@ -47,6 +47,7 @@ import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aryan.reader.R
+import com.aryan.reader.isServiceNotificationChannelBlocked
 import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.loadAiByokSettings
 import com.aryan.reader.logMediaTransport
@@ -840,6 +841,16 @@ class TtsService : MediaSessionService() {
         foregroundBookTitle = bookTitle
         foregroundChapterTitle = chapterTitle
         ensureTtsNotificationChannel()
+
+        // Promoting on a channel the user turned off is rejected by the framework after
+        // startForeground() returns, so it cannot be caught and it kills the process
+        // (docs/crashlytics-triage.md#119). Leave the session un-promoted rather than crash.
+        if (isServiceNotificationChannelBlocked(this, TTS_FOREGROUND_CHANNEL_ID)) {
+            Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w(
+                "Foreground channel is blocked by the user; skipping the preparing notification. reason=$reason"
+            )
+            return
+        }
 
         try {
             val notification = buildPreparingForegroundNotification(bookTitle, chapterTitle)

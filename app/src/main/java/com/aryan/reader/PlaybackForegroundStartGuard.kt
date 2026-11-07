@@ -58,6 +58,18 @@ internal class PlaybackForegroundStartGuard(
         cancelIdleStop()
         if (canReachForeground()) return
 
+        // A channel the user turned off would get this notification rejected by the framework after
+        // startForeground() returned, killing the process with no way to catch it. There is nothing
+        // to play here anyway, so give the start up now instead of promoting.
+        if (isServiceNotificationChannelBlocked(service, channelId)) {
+            logMediaTransport(
+                "playback-start-without-playback",
+                "service=${service.javaClass.simpleName} startId=$startId channel-blocked"
+            )
+            service.stopSelf(startId)
+            return
+        }
+
         postPlaceholderForegroundNotification()
         val stop = Runnable {
             idleStop = null
