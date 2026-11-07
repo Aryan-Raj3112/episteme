@@ -62,6 +62,16 @@ jobs:
               fi
               ( cd rust/office-oxide-bridge && cargo --version )
 
+              # The image ships an empty /opt/android-sdk/ndk. AGP would install the
+              # NDK lazily during the build, but the cargo target linker is resolved at
+              # configuration time, before that, so cargo would fall back to the host
+              # cc and fail with "Relocations in generic ELF (EM: 183)". Install the
+              # NDK declared in app/build.gradle.kts up front and point the build at it.
+              ndk_version=$(sed -n "s/.*androidNdkVersion *= *\"\([0-9.]*\)\".*/\1/p" app/build.gradle.kts | head -1)
+              test -n "$ndk_version"
+              sdkmanager --install "ndk;$ndk_version"
+              export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/$ndk_version"
+
               sed -i -e "/jogamp/d" -e "/https.jitpack/d" settings.gradle.kts
               ./gradlew :app:assembleOssRelease --no-build-cache --max-workers=1 -Pkotlin.daemon.jvmargs=-Xmx4g
               cp app/build/outputs/renamed-apk/ossRelease/*.apk /release-assets/
