@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.reader
 
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import com.aryan.reader.shared.SystemUiMode
 
 data class MobileReaderSystemBarsVisibility(
@@ -29,6 +31,96 @@ fun mobilePdfSystemBarsVisibility(
     )
     SystemUiMode.HIDDEN -> MobileReaderSystemBarsVisibility(false, false)
 }
+
+/**
+ * What paints the strip behind a visible system bar. Reader bars are transparent and
+ * edge-to-edge, so the icons have to contrast with the surface actually drawn there.
+ */
+enum class MobileReaderSystemBarBackdrop {
+    /** The reader toolbar surface (`MaterialTheme.colorScheme.surface`). */
+    CHROME,
+
+    /** The reader page/render background. */
+    READER_CONTENT,
+
+    /** The reader paints no chrome there; leave the platform's existing appearance alone. */
+    PLATFORM_DEFAULT,
+}
+
+data class MobileReaderSystemBarBackdrops(
+    val statusBar: MobileReaderSystemBarBackdrop,
+    val navigationBar: MobileReaderSystemBarBackdrop,
+)
+
+/**
+ * Resolves the icon appearance for each system bar. A `null` flag means the reader has no
+ * opinion and the host's previous/default appearance must stay in place.
+ */
+data class MobileReaderSystemBarIconFlags(
+    val lightStatusBarAppearance: Boolean?,
+    val lightNavigationBarAppearance: Boolean?,
+)
+
+/**
+ * The EPUB top bar's Surface paints the status-bar strip whenever chrome is up, and the
+ * reader always paints the navigation-bar scrims with that same surface color; with chrome
+ * hidden the status strip shows the page.
+ */
+fun mobileEpubSystemBarBackdrops(
+    readerChromeVisible: Boolean,
+): MobileReaderSystemBarBackdrops = MobileReaderSystemBarBackdrops(
+    statusBar = if (readerChromeVisible) {
+        MobileReaderSystemBarBackdrop.CHROME
+    } else {
+        MobileReaderSystemBarBackdrop.READER_CONTENT
+    },
+    navigationBar = MobileReaderSystemBarBackdrop.CHROME,
+)
+
+/**
+ * The PDF top and bottom bars each paint their own system-bar strip. A bar that is not
+ * rendered leaves the default appearance untouched, because the strip then shows the
+ * document and there is no chrome color to match.
+ */
+fun mobilePdfSystemBarBackdrops(
+    topBarVisible: Boolean,
+    bottomBarVisible: Boolean,
+): MobileReaderSystemBarBackdrops = MobileReaderSystemBarBackdrops(
+    statusBar = if (topBarVisible) {
+        MobileReaderSystemBarBackdrop.CHROME
+    } else {
+        MobileReaderSystemBarBackdrop.PLATFORM_DEFAULT
+    },
+    navigationBar = if (bottomBarVisible) {
+        MobileReaderSystemBarBackdrop.CHROME
+    } else {
+        MobileReaderSystemBarBackdrop.PLATFORM_DEFAULT
+    },
+)
+
+/**
+ * Computes the `isAppearanceLightStatusBars` / `isAppearanceLightNavigationBars` values:
+ * "light appearance" means dark icons, so it is the inverse of the backdrop's darkness.
+ * This is what keeps the system icons readable when the app theme and the reader theme
+ * disagree (for example a dark app bar over a light reader page).
+ */
+fun mobileReaderSystemBarIconFlags(
+    backdrops: MobileReaderSystemBarBackdrops,
+    chromeBackground: Color,
+    contentBackground: Color,
+): MobileReaderSystemBarIconFlags {
+    fun appearance(backdrop: MobileReaderSystemBarBackdrop): Boolean? = when (backdrop) {
+        MobileReaderSystemBarBackdrop.CHROME -> !chromeBackground.isDarkReaderChrome()
+        MobileReaderSystemBarBackdrop.READER_CONTENT -> !contentBackground.isDarkReaderChrome()
+        MobileReaderSystemBarBackdrop.PLATFORM_DEFAULT -> null
+    }
+    return MobileReaderSystemBarIconFlags(
+        lightStatusBarAppearance = appearance(backdrops.statusBar),
+        lightNavigationBarAppearance = appearance(backdrops.navigationBar),
+    )
+}
+
+private fun Color.isDarkReaderChrome(): Boolean = luminance() < 0.5f
 
 /**
  * Whether vertical PDF content must start below the status bar.

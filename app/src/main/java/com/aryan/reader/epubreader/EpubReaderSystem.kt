@@ -24,10 +24,12 @@ import android.graphics.Color
 import android.view.KeyEvent
 import android.view.View
 import android.view.Window
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color as ComposeColor
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -37,7 +39,9 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.aryan.reader.paginatedreader.AndroidEpubKeyCommand
 import com.aryan.reader.paginatedreader.androidEpubKeyCommandOrNull
 import com.aryan.reader.RenderMode
+import com.aryan.reader.shared.reader.mobileEpubSystemBarBackdrops
 import com.aryan.reader.shared.reader.mobileEpubSystemBarsVisibility
+import com.aryan.reader.shared.reader.mobileReaderSystemBarIconFlags
 
 @Composable
 fun EpubReaderSystemUiController(
@@ -45,11 +49,24 @@ fun EpubReaderSystemUiController(
     view: View,
     showBars: Boolean,
     initialIsAppearanceLightStatusBars: Boolean,
+    initialIsAppearanceLightNavigationBars: Boolean,
     initialSystemBarsBehavior: Int,
-    isDarkTheme: Boolean,
+    readerBackground: ComposeColor,
     systemUiMode: SystemUiMode
 ) {
-    DisposableEffect(window, view, initialIsAppearanceLightStatusBars, initialSystemBarsBehavior) {
+    val systemBarIconFlags = mobileReaderSystemBarIconFlags(
+        backdrops = mobileEpubSystemBarBackdrops(readerChromeVisible = showBars),
+        chromeBackground = MaterialTheme.colorScheme.surface,
+        contentBackground = readerBackground,
+    )
+
+    DisposableEffect(
+        window,
+        view,
+        initialIsAppearanceLightStatusBars,
+        initialIsAppearanceLightNavigationBars,
+        initialSystemBarsBehavior
+    ) {
         if (window == null) {
             Timber.w("Window is null, cannot control system UI.")
             return@DisposableEffect onDispose {}
@@ -71,14 +88,24 @@ fun EpubReaderSystemUiController(
             window.navigationBarColor = originalNavigationBarColor
             insetsController.show(WindowInsetsCompat.Type.navigationBars() or WindowInsetsCompat.Type.statusBars())
             insetsController.isAppearanceLightStatusBars = initialIsAppearanceLightStatusBars
+            insetsController.isAppearanceLightNavigationBars = initialIsAppearanceLightNavigationBars
             insetsController.systemBarsBehavior = initialSystemBarsBehavior
         }
     }
 
-    LaunchedEffect(window, view, isDarkTheme) {
+    // The status bar is transparent, so its icons must follow what actually paints the strip:
+    // the toolbar surface while chrome is up, the reader page otherwise. Reader-chrome colors
+    // come from the app theme, not the reader theme, which is why a dark app bar over a light
+    // page used to leave dark icons on dark chrome.
+    LaunchedEffect(window, view, systemBarIconFlags) {
         if (window != null) {
             val insetsController = WindowCompat.getInsetsController(window, view)
-            insetsController.isAppearanceLightStatusBars = !isDarkTheme
+            systemBarIconFlags.lightStatusBarAppearance?.let {
+                insetsController.isAppearanceLightStatusBars = it
+            }
+            systemBarIconFlags.lightNavigationBarAppearance?.let {
+                insetsController.isAppearanceLightNavigationBars = it
+            }
         }
     }
 

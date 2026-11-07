@@ -355,7 +355,9 @@ import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.reader.MobilePdfReaderBackAction
 import com.aryan.reader.shared.reader.MobilePdfReaderBackState
 import com.aryan.reader.shared.reader.selectMobilePdfReaderBackAction
+import com.aryan.reader.shared.reader.mobilePdfSystemBarBackdrops
 import com.aryan.reader.shared.reader.mobilePdfSystemBarsVisibility
+import com.aryan.reader.shared.reader.mobileReaderSystemBarIconFlags
 import com.aryan.reader.shared.reader.shouldPadPdfVerticalContentBelowStatusBar
 import com.aryan.reader.shared.reader.MobileReaderSystemBarsVisibility
 import com.aryan.reader.shared.reader.MobilePdfDocumentPresentation
@@ -5779,6 +5781,7 @@ private fun PdfViewerDocumentSetup(
     var pendingRestorePage by setup.pendingRestorePage
     var showBars by setup.showBars
     var isTopToolbarEnabled by setup.isTopToolbarEnabled
+    var isBottomToolbarEnabled by setup.isBottomToolbarEnabled
     var showInsufficientCreditsDialog by setup.showInsufficientCreditsDialog
     var showTopTabStrip by setup.showTopTabStrip
     var systemUiMode by setup.systemUiMode
@@ -6161,6 +6164,7 @@ private fun PdfViewerDocumentSetup(
     val window = (view.context as? Activity)?.window
     val showStandardBars = showBars && !isEditMode
     val showTopBar = showStandardBars && isTopToolbarEnabled
+    val showBottomBar = showStandardBars && isBottomToolbarEnabled
     var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
     var showBrightnessSheet by remember { mutableStateOf(false) }
     if (ownsPaneGlobals) {
@@ -6172,12 +6176,44 @@ private fun PdfViewerDocumentSetup(
         saveReaderBrightnessSettings(context, settings)
     }
 
+    val initialIsAppearanceLightStatusBars = remember(window, view) {
+        window?.let { WindowCompat.getInsetsController(it, view).isAppearanceLightStatusBars } == true
+    }
+    val initialIsAppearanceLightNavigationBars = remember(window, view) {
+        window?.let { WindowCompat.getInsetsController(it, view).isAppearanceLightNavigationBars } == true
+    }
+
     DisposableEffect(window, view, isSplitPane, ownsPaneGlobals) {
         onDispose {
             if (ownsPaneGlobals) window?.let {
-                WindowCompat.getInsetsController(it, view).show(WindowInsetsCompat.Type.systemBars())
+                val insetsController = WindowCompat.getInsetsController(it, view)
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+                insetsController.isAppearanceLightStatusBars = initialIsAppearanceLightStatusBars
+                insetsController.isAppearanceLightNavigationBars = initialIsAppearanceLightNavigationBars
             }
         }
+    }
+
+    // The transparent system bars need icons that contrast with what actually paints their
+    // strip. The reader bars use the app-theme surface, which can disagree with the device
+    // theme (dark app bar in dark mode over a light reader theme, for example), so the old
+    // system-driven appearance left black icons on dark chrome. Bars without chrome keep the
+    // host's default appearance because the strip then shows the document.
+    val systemBarIconFlags = mobileReaderSystemBarIconFlags(
+        backdrops = mobilePdfSystemBarBackdrops(
+            topBarVisible = showTopBar,
+            bottomBarVisible = showBottomBar,
+        ),
+        chromeBackground = MaterialTheme.colorScheme.surface,
+        contentBackground = MaterialTheme.colorScheme.surface,
+    )
+    LaunchedEffect(window, view, ownsPaneGlobals, systemBarIconFlags) {
+        if (!ownsPaneGlobals || window == null) return@LaunchedEffect
+        val insetsController = WindowCompat.getInsetsController(window, view)
+        insetsController.isAppearanceLightStatusBars =
+            systemBarIconFlags.lightStatusBarAppearance ?: initialIsAppearanceLightStatusBars
+        insetsController.isAppearanceLightNavigationBars =
+            systemBarIconFlags.lightNavigationBarAppearance ?: initialIsAppearanceLightNavigationBars
     }
 
     LaunchedEffect(systemUiMode, showStandardBars, isSplitPane, ownsPaneGlobals) {

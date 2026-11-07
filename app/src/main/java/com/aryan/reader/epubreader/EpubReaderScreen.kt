@@ -752,6 +752,14 @@ fun EpubReaderHost(
             ).isAppearanceLightStatusBars
         } == true
     }
+    val initialIsAppearanceLightNavigationBars = remember(window, view) {
+        window?.let {
+            WindowCompat.getInsetsController(
+                it,
+                view
+            ).isAppearanceLightNavigationBars
+        } == true
+    }
     val initialSystemBarsBehavior = remember(window, view) {
         window?.let { WindowCompat.getInsetsController(it, view).systemBarsBehavior }
             ?: WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
@@ -2719,8 +2727,9 @@ fun EpubReaderHost(
         view = view,
         showBars = showBars,
         initialIsAppearanceLightStatusBars = initialIsAppearanceLightStatusBars,
+        initialIsAppearanceLightNavigationBars = initialIsAppearanceLightNavigationBars,
         initialSystemBarsBehavior = initialSystemBarsBehavior,
-        isDarkTheme = isDarkTheme,
+        readerBackground = effectiveBg,
         systemUiMode = prefs.systemUiMode
     )
 
