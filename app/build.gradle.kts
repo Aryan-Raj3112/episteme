@@ -408,6 +408,14 @@ val officeOxideStagingTasks = officeOxideAbis.map { (abi, triple) ->
 tasks.matching { it.name.startsWith("buildCMake") }.configureEach {
     dependsOn(officeOxideStagingTasks)
 }
+// CMakeLists.txt hard-fails when the .so is absent, so the per-ABI configure step
+// must run after cargo produced it. Ordering it against buildCMake alone is not
+// enough: configure* is an input of buildCMake*, so the two can be scheduled in
+// either order (and in parallel), which broke clean builds with
+// "Missing liboffice_oxide_bridge.so for <abi>".
+tasks.matching { it.name.startsWith("configureCMake") }.configureEach {
+    dependsOn(officeOxideStagingTasks)
+}
 // Both consumers of the staged jniLibs: merge*NativeLibs (packaging) and
 // merge*JniLibFolders (source-set merging). Without the explicit dependsOn,
 // Gradle fails validation with an "implicit dependency" error.
