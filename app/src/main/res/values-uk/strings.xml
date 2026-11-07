@@ -416,7 +416,7 @@
     <string name="no_summary_generated">Зведення не вдалося створити.</string>
     <string name="ai_thinking">Думаючи…</string>
     <string name="content_desc_open_dictionary">Відкрити в програмі Dictionary</string>
-    <string name="ai_no_definition">AI не зміг надати визначення.</string>
+    <string name="ai_no_definition">AI не ​​зміг надати визначення.</string>
     <string name="ai_asking_about">Питання AI про \'%1$s\'…</string>
     <string name="tts_settings">Налаштування синтезу мовлення</string>
     <string name="tts_stop_to_change_settings">Зупиніть відтворення, щоб змінити налаштування.</string>
