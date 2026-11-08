@@ -403,6 +403,7 @@ class TtsController(context: Context) : Player.Listener {
             val serviceBookProgressPercent = customState.getInt("bookProgressPercent", -1).takeIf { it >= 0 }
             val transcriptStartIndex = customState.getInt("transcriptStartIndex", 0)
             val transcriptChunks = customState.getStringArrayList("transcriptChunks").orEmpty()
+            val serviceCompletionCount = customState.getLong("completionCount", -1L).takeIf { it >= 0 }
 
             val sourceCfi = mediaItemExtras?.getString("sourceCfi") ?: customState.getString("sourceCfi")
             val startOffset = mediaItemExtras?.getInt("startOffset", -1)
@@ -468,6 +469,10 @@ class TtsController(context: Context) : Player.Listener {
                 currentWordSourceCfi = if (isPlaybackActive) currentWordSourceCfi else null,
                 currentWordStartOffset = if (isPlaybackActive) currentWordStartOffset else -1,
                 sessionFinished = sessionFinished,
+                // Monotonic chapter-completion event. A layout bundle that predates the field
+                // keeps the last value instead of falling back to 0, so a watcher cannot see
+                // the counter move backwards and stop matching.
+                completionCount = serviceCompletionCount ?: currentState.completionCount,
                 playbackSource = playbackSource,
                 ttsMode = serviceMode,
                 transcriptStartIndex = transcriptStartIndex,

@@ -2,6 +2,8 @@ package com.aryan.reader.shared
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class CloudTtsPlaybackMonitorPolicyTest {
     @Test
@@ -143,5 +145,34 @@ class CloudTtsPlaybackMonitorPolicyTest {
                 lastPosition = 3.0,
             ),
         )
+    }
+
+    @Test
+    fun idleSamplesAccumulateOnlyWhileAPlayerThatShouldPlaySitsAtZero() {
+        assertEquals(
+            1,
+            CloudTtsPlaybackMonitorPolicy.nextIdleSamples(previous = 0, position = 0.0, playing = false),
+        )
+        // A pause is not a failed start: the counter resets, so resuming later is not reported.
+        assertEquals(
+            0,
+            CloudTtsPlaybackMonitorPolicy.nextIdleSamples(previous = 3, position = 1.5, playing = false),
+        )
+        // Once it plays, it started, whatever happened before.
+        assertEquals(
+            0,
+            CloudTtsPlaybackMonitorPolicy.nextIdleSamples(previous = 3, position = 0.0, playing = true),
+        )
+    }
+
+    @Test
+    fun aStartThatNeverProducedAudioIsDetectedAfterTheBudget() {
+        var idleSamples = 0
+        repeat(CloudTtsPlaybackMonitorPolicy.NEVER_STARTED_SAMPLES - 1) {
+            idleSamples = CloudTtsPlaybackMonitorPolicy.nextIdleSamples(idleSamples, 0.0, playing = false)
+            assertFalse(CloudTtsPlaybackMonitorPolicy.hasNeverStarted(idleSamples))
+        }
+        idleSamples = CloudTtsPlaybackMonitorPolicy.nextIdleSamples(idleSamples, 0.0, playing = false)
+        assertTrue(CloudTtsPlaybackMonitorPolicy.hasNeverStarted(idleSamples))
     }
 }

@@ -88,6 +88,8 @@ import com.aryan.reader.shared.SharedSummaryCache
 import com.aryan.reader.shared.ReaderExtrasState
 import com.aryan.reader.shared.ReaderTheme
 import com.aryan.reader.shared.ReaderTtsPlanner
+import com.aryan.reader.shared.ReaderTtsChainDecision
+import com.aryan.reader.shared.decideReaderTtsChain
 import com.aryan.reader.shared.reader.ReaderTtsStartTag
 import com.aryan.reader.shared.reader.epubPositionSummary
 import com.aryan.reader.shared.reader.logEpubPositionSave
@@ -550,30 +552,52 @@ fun SharedMobileEpubReaderScreen(
         val epub = loadedBook ?: return
         val planMark = TimeSource.Monotonic.markNow()
         ttsPlanJob = scope.launch(Dispatchers.Default) {
-            var chapter = fromChapter
-            var planned: List<ReaderTtsChunk> = emptyList()
-            while (chapter < epub.chapters.size) {
-                planned = planChapterTtsChunks(epub, chapter)
-                if (planned.isNotEmpty()) break
-                chapter++
-            }
-            if (planned.isEmpty()) {
-                withContext(Dispatchers.Main) {
-                    println("[$ReaderTtsStartTag] ui localNoChapter bookId=${book.id} fromChapter=$fromChapter")
-                    localTts.stop()
+            var attempt = 0
+            while (true) {
+                var chapter = fromChapter
+                var planned: List<ReaderTtsChunk> = emptyList()
+                while (chapter < epub.chapters.size) {
+                    planned = planChapterTtsChunks(epub, chapter)
+                    if (planned.isNotEmpty()) break
+                    chapter++
                 }
-                return@launch
-            }
-            val startedChapter = chapter
-            val startedChunks = planned
-            val startedTitle = epub.title
-            withContext(Dispatchers.Main) {
-                if (!isActive) return@withContext
-                ttsActiveChapter = startedChapter
-                ttsSessionBookId = book.id
-                localTtsHandledCompletion = localTts.completionCount
-                localTts.start(chunks = startedChunks, bookTitle = startedTitle, bookId = book.id)
-                println("[$ReaderTtsStartTag] ui localPlanned chapter=$startedChapter chunks=${startedChunks.size} +${planMark.elapsedNow().inWholeMilliseconds}ms")
+                val plannedChapter = chapter.takeIf { planned.isNotEmpty() }
+                when (
+                    val decision = decideReaderTtsChain(
+                        // fromChapter is the first chapter to try, so the chapter that just
+                        // finished is the one before it.
+                        completedChapterIndex = fromChapter - 1,
+                        chapterCount = epub.chapters.size,
+                        plannedChapterIndex = plannedChapter,
+                        attempt = attempt,
+                    )
+                ) {
+                    is ReaderTtsChainDecision.Start -> {
+                        val startedChunks = planned
+                        val startedTitle = epub.title
+                        withContext(Dispatchers.Main) {
+                            if (!isActive) return@withContext
+                            ttsActiveChapter = decision.chapterIndex
+                            ttsSessionBookId = book.id
+                            localTtsHandledCompletion = localTts.completionCount
+                            localTts.start(chunks = startedChunks, bookTitle = startedTitle, bookId = book.id)
+                            println("[$ReaderTtsStartTag] ui localPlanned chapter=${decision.chapterIndex} chunks=${startedChunks.size} +${planMark.elapsedNow().inWholeMilliseconds}ms")
+                        }
+                        return@launch
+                    }
+                    is ReaderTtsChainDecision.Retry -> {
+                        attempt += 1
+                        println("[$ReaderTtsStartTag] ui localRetry chapter=$fromChapter attempt=$attempt")
+                        delay(decision.delayMillis)
+                    }
+                    ReaderTtsChainDecision.EndOfBook -> {
+                        withContext(Dispatchers.Main) {
+                            println("[$ReaderTtsStartTag] ui localNoChapter bookId=${book.id} fromChapter=$fromChapter")
+                            localTts.stop()
+                        }
+                        return@launch
+                    }
+                }
             }
         }
     }
@@ -584,29 +608,49 @@ fun SharedMobileEpubReaderScreen(
         cancelTtsPlanning()
         val planMark = TimeSource.Monotonic.markNow()
         ttsPlanJob = scope.launch(Dispatchers.Default) {
-            var chapter = fromChapter
-            var planned: List<ReaderTtsChunk> = emptyList()
-            while (chapter < epub.chapters.size) {
-                planned = planChapterTtsChunks(epub, chapter)
-                if (planned.isNotEmpty()) break
-                chapter++
-            }
-            if (planned.isEmpty()) {
-                withContext(Dispatchers.Main) {
-                    println("[$ReaderTtsStartTag] ui cloudNoChapter bookId=${book.id} fromChapter=$fromChapter")
+            var attempt = 0
+            while (true) {
+                var chapter = fromChapter
+                var planned: List<ReaderTtsChunk> = emptyList()
+                while (chapter < epub.chapters.size) {
+                    planned = planChapterTtsChunks(epub, chapter)
+                    if (planned.isNotEmpty()) break
+                    chapter++
                 }
-                return@launch
-            }
-            val startedChapter = chapter
-            val startedChunks = planned
-            val startedTitle = epub.title
-            withContext(Dispatchers.Main) {
-                if (!isActive) return@withContext
-                ttsActiveChapter = startedChapter
-                ttsSessionBookId = book.id
-                cloudTtsHandledCompletion = cloudTtsState.completionCount
-                controller.start(startedChunks, startedTitle, book.id, continueSession = continued)
-                println("[$ReaderTtsStartTag] ui cloudPlanned chapter=$startedChapter chunks=${startedChunks.size} continued=$continued +${planMark.elapsedNow().inWholeMilliseconds}ms")
+                val plannedChapter = chapter.takeIf { planned.isNotEmpty() }
+                when (
+                    val decision = decideReaderTtsChain(
+                        completedChapterIndex = fromChapter - 1,
+                        chapterCount = epub.chapters.size,
+                        plannedChapterIndex = plannedChapter,
+                        attempt = attempt,
+                    )
+                ) {
+                    is ReaderTtsChainDecision.Start -> {
+                        val startedChunks = planned
+                        val startedTitle = epub.title
+                        withContext(Dispatchers.Main) {
+                            if (!isActive) return@withContext
+                            ttsActiveChapter = decision.chapterIndex
+                            ttsSessionBookId = book.id
+                            cloudTtsHandledCompletion = cloudTtsState.completionCount
+                            controller.start(startedChunks, startedTitle, book.id, continueSession = continued)
+                            println("[$ReaderTtsStartTag] ui cloudPlanned chapter=${decision.chapterIndex} chunks=${startedChunks.size} continued=$continued +${planMark.elapsedNow().inWholeMilliseconds}ms")
+                        }
+                        return@launch
+                    }
+                    is ReaderTtsChainDecision.Retry -> {
+                        attempt += 1
+                        println("[$ReaderTtsStartTag] ui cloudRetry chapter=$fromChapter attempt=$attempt")
+                        delay(decision.delayMillis)
+                    }
+                    ReaderTtsChainDecision.EndOfBook -> {
+                        withContext(Dispatchers.Main) {
+                            println("[$ReaderTtsStartTag] ui cloudNoChapter bookId=${book.id} fromChapter=$fromChapter")
+                        }
+                        return@launch
+                    }
+                }
             }
         }
     }

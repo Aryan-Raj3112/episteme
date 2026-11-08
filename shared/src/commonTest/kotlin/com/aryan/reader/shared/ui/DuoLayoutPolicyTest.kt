@@ -74,7 +74,7 @@ class DuoLayoutPolicyTest {
     }
 
     @Test
-    fun `duo displays with a side column get the rail, ordinary devices never do`() {
+    fun `duo displays with a side column get the rail while ordinary devices never do`() {
         // Apple's Duo bar runs down the side of the outer display too.
         assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duoOuter, 466.dp))
         assertEquals(SharedLibraryNavMode.RAIL, DuoLayoutPolicy.navMode(duoInner, 626.dp))

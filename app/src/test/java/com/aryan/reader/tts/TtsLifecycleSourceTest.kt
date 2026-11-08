@@ -132,7 +132,10 @@ class TtsLifecycleSourceTest {
             startLocalChunkBody.indexOf("directLocalAudioFocusManager.requestFocus()") <
                 startLocalChunkBody.indexOf("directLocalTtsPlayer.speak(")
         )
-        assertTrue(startLocalChunkBody.contains("publishLocalChunkState(chunkIndex, isLoading = false, isPlaying = false)"))
+        // A refused request must not idle the session silently (that is how read-aloud used to
+        // stop at a chapter hand-off); the chunk is held and retried until focus returns.
+        assertTrue(startLocalChunkBody.contains("holdLocalSpeakForFocus(chunkIndex, safeOffset, generation)"))
+        assertFalse(startLocalChunkBody.contains("publishLocalChunkState(chunkIndex, isLoading = false, isPlaying = false)"))
     }
 
     @Test
@@ -143,9 +146,11 @@ class TtsLifecycleSourceTest {
 
         assertTrue(stopBody.contains("directLocalAudioFocusManager.abandonFocus()"))
 
+        // A naturally finished chapter is a hand-off, not the end of listening: abandoning focus
+        // there let another app take it and the next chapter's start was then refused.
         val finishBody = source.substringAfter("private fun handleLocalChunkDone")
             .substringBefore("override fun onError")
-        assertTrue(finishBody.contains("directLocalAudioFocusManager.abandonFocus()"))
+        assertFalse(finishBody.contains("directLocalAudioFocusManager.abandonFocus()"))
 
         val releaseBody = source.substringAfter("fun release()")
             .substringBefore("override fun onPlaybackStateChanged")
