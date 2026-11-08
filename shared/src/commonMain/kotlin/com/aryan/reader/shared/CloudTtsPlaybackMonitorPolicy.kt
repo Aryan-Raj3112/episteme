@@ -38,6 +38,15 @@ object CloudTtsPlaybackMonitorPolicy {
     /** Consecutive frozen samples before a mid-stream stall is reported. */
     const val STALL_SAMPLES = 2
 
+    /**
+     * Consecutive idle-at-position-0 samples before a start is declared failed.
+     *
+     * Eight 250 ms samples give route negotiation two seconds to finish. A player that should be
+     * playing and is still sitting at 0 after that never started, and waiting any longer is what
+     * made a lost start look like a paused session that never resumes.
+     */
+    const val NEVER_STARTED_SAMPLES = 8
+
     enum class Action {
         /** Position reached the end of the stream: advance to the next chunk. */
         FINISHED,
@@ -85,4 +94,15 @@ object CloudTtsPlaybackMonitorPolicy {
     /** Next frozen-sample counter for a position sample, or 0 once it moves. */
     fun nextStalledSamples(previous: Int, position: Double, lastPosition: Double): Int =
         if (position <= lastPosition + MOVEMENT_EPSILON_SECONDS) previous + 1 else 0
+
+    /**
+     * Next idle-sample counter: counts up while a player that should be playing sits at zero.
+     * Pausing (`playing == false` is expected then) resets it, so only a genuine failed start
+     * accumulates.
+     */
+    fun nextIdleSamples(previous: Int, position: Double, playing: Boolean): Int =
+        if (!playing && position <= MOVEMENT_EPSILON_SECONDS) previous + 1 else 0
+
+    /** True once [idleSamples] says a player that should be playing never produced audio. */
+    fun hasNeverStarted(idleSamples: Int): Boolean = idleSamples >= NEVER_STARTED_SAMPLES
 }

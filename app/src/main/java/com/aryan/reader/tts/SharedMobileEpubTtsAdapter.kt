@@ -45,7 +45,9 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
     private var sessionId = 0L
     private var chunks: List<ReaderTtsChunk> = emptyList()
     private var pendingPauseOnStart = false
-    private var lastFinished = false
+    // Service-side completion event counter (monotonic). The boolean edge it replaces could be
+    // missed by a coalesced emission, which silently ended chapter chaining.
+    private var lastServiceCompletionCount = 0L
     // Session identity, so a surface sharing this engine can tell its own session
     // apart from another surface's. Android benchmark: `TtsState.playbackSource`.
     private var activePlaybackSource: String? = null
@@ -81,8 +83,9 @@ internal class SharedMobileEpubTtsAdapter(context: Context) : SharedMobileEpubLo
         scope.launch {
             controller.ttsState.collectLatest { serviceState ->
                 errorMessage = serviceState.errorMessage
-                if (serviceState.sessionFinished && !lastFinished) completionCount += 1
-                lastFinished = serviceState.sessionFinished
+                val completionDelta = serviceState.completionCount - lastServiceCompletionCount
+                if (completionDelta > 0) completionCount += completionDelta
+                lastServiceCompletionCount = serviceState.completionCount
                 val hasSession = sharedMobileTtsHasActiveSession(
                     isPlaying = serviceState.isPlaying,
                     isLoading = serviceState.isLoading,

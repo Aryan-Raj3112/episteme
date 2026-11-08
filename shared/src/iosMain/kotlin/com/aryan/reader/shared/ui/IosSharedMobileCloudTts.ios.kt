@@ -18,6 +18,7 @@ import com.aryan.reader.shared.ReaderAiByokSettings
 import com.aryan.reader.shared.ReaderCloudTtsState
 import com.aryan.reader.shared.ReaderTtsCacheChapter
 import com.aryan.reader.shared.ReaderTtsCacheSummary
+import com.aryan.reader.shared.READER_TTS_AUDIO_SESSION_HANDOFF_GRACE_MS
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
 import com.aryan.reader.shared.ReaderVoiceSampleState
@@ -162,6 +163,9 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     private var playbackContinuation: CompletableDeferred<Boolean>? = null
     private var player: AVAudioPlayer? = null
     private var playJob: Job? = null
+    // The audio session is kept active across a chapter hand-off (see playChunks); this releases
+    // it once the hand-off window passes without a new chapter claiming it.
+    private var idleAudioSessionJob: Job? = null
     // Android parity (TtsPlaybackManager.prefetchNextChunkAudio): the chunk
     // after the one playing is fetched while it plays, so the hand-off has
     // audio ready instead of a network round-trip of silence.
@@ -268,7 +272,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             )
             return
         }
-        stop(clearError = false)
+        stop(clearError = false, deactivateSession = false)
         this.chunks = readable
         this.bookTitle = bookTitle
         this.bookId = bookId
@@ -690,7 +694,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         stop(clearError = true)
     }
 
-    private fun stop(clearError: Boolean) {
+    private fun stop(clearError: Boolean, deactivateSession: Boolean = true) {
         iosTtsStartLog("cloud.stop")
         iosCloudTtsTraceLog("cloud.stop", "sessionWas=$sessionId hadChunks=${chunks.isNotEmpty()} index=$currentChunkIndex")
         ttsStartMark = null
@@ -723,7 +727,31 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             progress = ReaderTtsProgress(),
         )
         closeWebSocket()
-        deactivateAudioSession()
+        if (deactivateSession) {
+            cancelIdleAudioSessionTeardown()
+            deactivateAudioSession()
+        }
+    }
+
+    private fun cancelIdleAudioSessionTeardown() {
+        idleAudioSessionJob?.cancel()
+        idleAudioSessionJob = null
+    }
+
+    /**
+     * Releases the audio session only once the chapter hand-off window has passed with nothing
+     * playing. Holding it through the hand-off is what keeps the next chapter's playback audible;
+     * releasing it unconditionally at completion was the race that made read-aloud go silent.
+     */
+    private fun scheduleIdleAudioSessionTeardown() {
+        cancelIdleAudioSessionTeardown()
+        idleAudioSessionJob = scope.launch(Dispatchers.Main) {
+            delay(READER_TTS_AUDIO_SESSION_HANDOFF_GRACE_MS)
+            idleAudioSessionJob = null
+            if (state.isPlaying || state.isLoading || state.isPaused) return@launch
+            iosCloudTtsTraceLog("cloud.idleTeardown", "index=$currentChunkIndex chunks=${chunks.size}")
+            deactivateAudioSession()
+        }
     }
 
     override fun release() {
@@ -816,9 +844,14 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                     completionCount = if (completed) state.completionCount + 1 else state.completionCount,
                 )
                 if (completed) {
+                    // The audio session deliberately stays active across the hand-off: the reader
+                    // chains straight into the next chapter, and tearing the route down here (then
+                    // racing its re-activation against the next chapter's first chunk) is what made
+                    // read-aloud go silent at chapter changes. A real stop tears it down; an idle
+                    // session that nothing chains into releases it after the grace window.
                     chunks = emptyList()
                     currentChunkIndex = -1
-                    deactivateAudioSession()
+                    scheduleIdleAudioSessionTeardown()
                 }
             }
         } catch (_: CancellationException) {
@@ -1112,7 +1145,11 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
     }
 
     private suspend fun playAudioAndWait(audio: ByteArray, requestedSession: Long): Boolean {
-        ensureAudioSession()
+        cancelIdleAudioSessionTeardown()
+        // Wait for the route: a chapter hand-off re-activates the session, and starting the
+        // player before that finishes makes play() return false with no delegate callback —
+        // a silent session that the monitor then reads as "paused" forever.
+        awaitAudioSession()
         iosCloudTtsTraceLog("cloud.playEntry", "session=$requestedSession bytes=${audio.size} wantsPlayback=$wantsPlayback")
         val completed = CompletableDeferred<Boolean>()
         playbackContinuation = completed
@@ -1139,7 +1176,12 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
             }
             val started = createdPlayer.play()
             iosCloudTtsTraceLog("cloud.playerPlay", "session=$requestedSession started=$started")
-            if (started) prefetchNextChunk(requestedSession)
+            if (!started) {
+                playbackContinuation = null
+                fail("Could not start cloud audio")
+                return false
+            }
+            prefetchNextChunk(requestedSession)
         } else {
             iosCloudTtsTraceLog("cloud.playerHeld", "session=$requestedSession reason=paused-at-start")
         }
@@ -1282,6 +1324,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         return scope.launch(Dispatchers.Main) {
             var lastPosition = -1.0
             var stalledSamples = 0
+            var idleSamples = 0
             while (isActive && !completed.isCompleted) {
                 delay(CloudTtsPlaybackMonitorPolicy.MONITOR_MILLIS)
                 if (requestedSession != sessionId) return@launch
@@ -1308,10 +1351,27 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
                     return@launch
                 }
                 if (!playing || !wantsPlayback) {
+                    // A start that never produced any audio used to be indistinguishable from a
+                    // pause: the loop skipped these samples forever and the session stayed silent
+                    // with no error. Report it so the caller can retry or surface a message.
+                    idleSamples = if (wantsPlayback) {
+                        CloudTtsPlaybackMonitorPolicy.nextIdleSamples(idleSamples, position, playing)
+                    } else {
+                        0
+                    }
+                    if (CloudTtsPlaybackMonitorPolicy.hasNeverStarted(idleSamples)) {
+                        iosCloudTtsTraceLog(
+                            "cloud.neverStarted",
+                            "session=$requestedSession idleSamples=$idleSamples position=$position duration=$duration"
+                        )
+                        if (completed.isActive) completed.complete(false)
+                        return@launch
+                    }
                     lastPosition = position
                     stalledSamples = 0
                     continue
                 }
+                idleSamples = 0
                 stalledSamples = CloudTtsPlaybackMonitorPolicy.nextStalledSamples(
                     previous = stalledSamples,
                     position = position,
@@ -1569,6 +1629,7 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
         player?.stop()
         playbackContinuation?.let { if (it.isActive) it.complete(false) }
         closeWebSocket()
+        scheduleIdleAudioSessionTeardown()
     }
 
     /** Velocity throttle from the Fish path; the loop waits and retries once. */
@@ -1662,6 +1723,10 @@ internal class IosSharedMobileCloudTts : SharedMobileEpubCloudTts {
 
     private fun ensureAudioSession() {
         IosTtsAudioSessionTeardown.activate()
+    }
+
+    private suspend fun awaitAudioSession() {
+        IosTtsAudioSessionTeardown.activateAndWait()
     }
 
     private fun deactivateAudioSession() {

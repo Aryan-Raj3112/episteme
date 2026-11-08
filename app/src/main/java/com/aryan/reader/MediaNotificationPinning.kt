@@ -25,9 +25,33 @@ import java.util.LinkedHashMap
  * ready or buffering. When playback is parked (paused) the notification stays swipeable and a
  * removal is delivered as the player's stop command, which the owning playback controller must
  * treat as a complete session stop.
+ *
+ * [sessionActivelySpeaking] covers the sessions whose media player does not describe the real
+ * playback. Read-aloud with the device voice ("BASE" mode) keeps ExoPlayer dormant: between
+ * chapters the wrapper reports idle/not-playing for a few hundred milliseconds while the system
+ * voice is already speaking the next chapter, and an unpinned notification in that window is what
+ * let an OEM media card clear the notification and stop the reading session.
  */
-internal fun isPlaybackNotificationPinned(playWhenReady: Boolean, playbackState: Int): Boolean =
-    playWhenReady && (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING)
+internal fun isPlaybackNotificationPinned(
+    playWhenReady: Boolean,
+    playbackState: Int,
+    sessionActivelySpeaking: Boolean = false,
+): Boolean = sessionActivelySpeaking ||
+    (playWhenReady && (playbackState == Player.STATE_READY || playbackState == Player.STATE_BUFFERING))
+
+/**
+ * Whether a transport stop triggered by a *dismissed* media notification should be ignored.
+ *
+ * Media3 turns a notification dismissal into a `COMMAND_STOP` playback pending intent, so a system
+ * media UI clearing our card is indistinguishable from the user pressing Stop and currently tears
+ * the whole reading session down. A session that is actively speaking (or preparing the next
+ * chunk) is pinned and cannot be dismissed by the user, so such a dismissal can only be external
+ * cleanup; it must not end the session. A paused session stays dismissible and still stops.
+ */
+internal fun shouldIgnoreDismissedTransportStop(
+    notificationDismissed: Boolean,
+    sessionActivelySpeaking: Boolean,
+): Boolean = notificationDismissed && sessionActivelySpeaking
 
 /**
  * Media3's [androidx.media3.session.DefaultMediaNotificationProvider] always builds
@@ -66,12 +90,30 @@ internal fun pinPostedPlaybackNotification(
     notificationId: Int,
     playWhenReady: Boolean,
     playbackState: Int,
-    diagnosticsTag: String
+    diagnosticsTag: String,
+    sessionActivelySpeaking: Boolean = false,
 ) {
-    if (!isPlaybackNotificationPinned(playWhenReady, playbackState)) return
+    if (!isPlaybackNotificationPinned(playWhenReady, playbackState, sessionActivelySpeaking)) {
+        // Which notifications are left dismissible is what decides whether an OEM media card can
+        // clear the session, so record the decision instead of only the successful pins.
+        Timber.tag(diagnosticsTag).i(
+            "Left media notification (id=%d) dismissible: playWhenReady=%s playbackState=%d.",
+            notificationId,
+            playWhenReady,
+            playbackState
+        )
+        return
+    }
     val notificationManager = context.getSystemService(NotificationManager::class.java)
     val postedNotification = notificationManager.activeNotifications
-        .firstOrNull { it.id == notificationId }?.notification ?: return
+        .firstOrNull { it.id == notificationId }?.notification
+        ?: run {
+            Timber.tag(diagnosticsTag).w(
+                "Could not pin media notification (id=%d): it is not posted.",
+                notificationId
+            )
+            return
+        }
     if (postedNotification.flags and Notification.FLAG_ONGOING_EVENT != 0) return
     postedNotification.flags = postedNotification.flags or Notification.FLAG_ONGOING_EVENT
     notificationManager.notify(notificationId, postedNotification)

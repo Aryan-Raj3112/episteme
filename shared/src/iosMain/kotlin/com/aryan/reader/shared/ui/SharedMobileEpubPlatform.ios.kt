@@ -22,6 +22,7 @@ import androidx.compose.ui.viewinterop.UIKitView
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderTtsChunk
 import com.aryan.reader.shared.ReaderTtsProgress
+import com.aryan.reader.shared.READER_TTS_AUDIO_SESSION_HANDOFF_GRACE_MS
 import com.aryan.reader.shared.ReaderExternalLookupAction
 import com.aryan.reader.shared.ReaderExternalLookupService
 import com.aryan.reader.shared.ReaderDefaultDictionaryLookupService
@@ -54,6 +55,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -614,6 +616,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
     private var ttsStartMark: TimeMark? = null
     private var interruptionState = LocalTtsInterruptionState()
     private val interruptionMonitor = IosTtsAudioInterruptionMonitor(::handleAudioInterruption)
+    private var idleAudioSessionJob: Job? = null
 
     // AVSpeechSynthesizer runs its delegate callbacks while it is still
     // finishing the utterance, so follow-up synthesis is posted to the next
@@ -633,6 +636,9 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
 
     override fun prepare() {
         iosTtsStartLog("local.prepare")
+        // A chapter chain arrives well inside the hand-off grace window; cancel the pending
+        // release so the new chapter keeps speaking on the session that is already active.
+        cancelIdleAudioSessionTeardown()
         if (!audioSessionActive) {
             configureAudioSession(active = true)
             audioSessionActive = true
@@ -773,6 +779,7 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         interruptionState = LocalTtsInterruptionState()
         sessionId += 1
         errorMessage = null
+        cancelIdleAudioSessionTeardown()
         invalidateActiveUtterance()
         synthesizer.stopSpeakingAtBoundary(AVSpeechBoundary.AVSpeechBoundaryImmediate)
         chunks = emptyList()
@@ -845,7 +852,11 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
             state = SharedMobileEpubLocalTtsState.IDLE
             completionCount += 1
             clearNowPlaying()
-            deactivateAudioSession()
+            // The audio session is deliberately kept across the chapter hand-off: the reader
+            // chains straight into the next chapter, and tearing it down here raced the next
+            // chapter's activation (silent playback / dropped route) at every chapter change.
+            // A real stop tears it down; an idle session nothing chains into releases it later.
+            scheduleIdleAudioSessionTeardown()
             return
         }
         // Keep the reader controls responsive even when a system voice starts slowly.
@@ -961,6 +972,27 @@ private class IosSharedMobileEpubLocalTts : SharedMobileEpubLocalTts {
         if (!active) return
         audioSessionGeneration += 1
         IosTtsAudioSessionTeardown.activate()
+    }
+
+    private fun cancelIdleAudioSessionTeardown() {
+        idleAudioSessionJob?.cancel()
+        idleAudioSessionJob = null
+    }
+
+    /**
+     * Releases the audio session only after the chapter hand-off window passes with nothing
+     * speaking. Keeping it active across the hand-off is what lets the next chapter start
+     * audibly; releasing it at completion raced that start.
+     */
+    private fun scheduleIdleAudioSessionTeardown() {
+        cancelIdleAudioSessionTeardown()
+        idleAudioSessionJob = scope.launch {
+            delay(READER_TTS_AUDIO_SESSION_HANDOFF_GRACE_MS)
+            idleAudioSessionJob = null
+            if (isSessionActive && activeUtterance != null) return@launch
+            if (state == SharedMobileEpubLocalTtsState.SPEAKING) return@launch
+            deactivateAudioSession()
+        }
     }
 
     /**

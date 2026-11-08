@@ -232,16 +232,59 @@ class SharedMediaOverlaySessionTest {
     fun `each clip entered is recorded`() = runTest {
         val store = RecordingProgressStore()
         val session = session(
-            projector = projector(clip(0, 0, 1_000), clip(1, 1_000, 2_000)),
+            projector = projector(clip(0, 0, 1_000), clip(1, 1_000, 2_000), clip(2, 2_000, 3_000)),
             store = store
         )
 
         session.start(chapterIndex = 1, readerOffset = null)
+        // The chapter label comes from the projection, so a clip is only recorded once one has
+        // resolved it — see `the first clip of a run is not recorded before its chapter is known`.
+        session.project(1, 0)
+        session.nextClip()
         session.nextClip()
 
-        assertEquals(listOf(0, 1), store.recorded.map { it.clipIndex })
+        assertEquals(listOf(1, 2), store.recorded.map { it.clipIndex })
         assertEquals("book", store.recorded.first().bookId)
         assertEquals(1, store.recorded.last().spineItemIndex)
+    }
+
+    /**
+     * The first clip of a run plays before the projection that names its chapter has landed. Recording
+     * it anyway would mean guessing a chapter, and the only guess available — the document's first
+     * chapter — is a different chapter on a TOC-split book, so the next open would reject the position
+     * as "another chapter" and restart at the top of the section, which is the bug this store exists to
+     * prevent. The previous, accurate row is the better answer.
+     */
+    @Test
+    fun `the first clip of a run is not recorded before its chapter is known`() = runTest {
+        val store = RecordingProgressStore()
+        val session = session(projector = projector(clip(0, 0, 1_000)), store = store)
+
+        session.start(chapterIndex = 1, readerOffset = null)
+
+        assertEquals(emptyList(), store.recorded.map { it.clipIndex })
+        assertNull(session.chapterIndex)
+    }
+
+    /**
+     * A start clears the projection the previous run left behind. Two runs in the same chapter would
+     * otherwise look "already projected" and the new run's first clip would be recorded against the
+     * previous run's chapter — on a split document, specifically the wrong one.
+     */
+    @Test
+    fun `a restart does not inherit the previous run's chapter`() = runTest {
+        val store = RecordingProgressStore()
+        val session = session(projector = projector(clip(0, 0, 1_000)), store = store)
+
+        session.start(chapterIndex = 1, readerOffset = null)
+        session.project(1, 0)
+        session.stop()
+        store.recorded.clear()
+
+        session.start(chapterIndex = 1, readerOffset = null)
+
+        assertEquals(emptyList(), store.recorded.map { it.clipIndex })
+        assertNull(session.chapterIndex)
     }
 
     // --- continuation -----------------------------------------------------------------------
@@ -379,10 +422,11 @@ class SharedMediaOverlaySessionTest {
      */
     @Test
     fun `projecting records the chapter the narration is in`() = runTest {
-        val projector = projector(clip(0, 0, 1_000), spineItemIndex = 0, chapterIndex = 1)
+        val projector = projector(clip(0, 0, 1_000), spineItemIndex = 1, chapterIndex = 1)
         val session = session(projector = projector)
+        session.start(chapterIndex = 1, readerOffset = null)
 
-        val projection = session.project(0, 0)
+        val projection = session.project(1, 0)
 
         assertEquals(1, session.chapterIndex)
         assertEquals(1, projection?.chapterIndex)
@@ -395,6 +439,42 @@ class SharedMediaOverlaySessionTest {
 
         assertNull(session.project(9, 0))
         assertNull(session.chapterIndex)
+    }
+
+    /**
+     * The engine reports a position in the *loaded clip list*, which loses its relationship with the
+     * document's clip indices as soon as the plan drops one (a `par` with no audio). Projecting the play
+     * index as a document index would then paint the band one line early for every dropped clip — and,
+     * because the projection also names the chapter a position is recorded against, persist the wrong
+     * chapter too. The plan is the translation.
+     */
+    @Test
+    fun `projecting translates the play index back to the document clip`() = runTest {
+        val projector = projector(
+            clip(0, 0, 1_000),
+            // Clip 1 is a TTS-shaped `par`: the plan drops it, so play index 1 is document clip 2.
+            clip(1, 1_000, 2_000, audioPath = null),
+            clip(2, 2_000, 3_000)
+        )
+        val session = session(projector = projector)
+        session.start(chapterIndex = 1, readerOffset = null)
+
+        val projection = session.project(1, 1)
+
+        assertEquals(2, projection?.clipIndex)
+    }
+
+    /**
+     * A position from the chapter the session has already replaced describes nothing in the loaded plan,
+     * so projecting it would paint a band for the wrong line. Null is the honest answer, and it clears
+     * nothing the new chapter's own projection will not set a frame later.
+     */
+    @Test
+    fun `a position from a replaced chapter projects to null`() = runTest {
+        val session = session(projector = projector(clip(0, 0, 1_000)))
+        session.start(chapterIndex = 1, readerOffset = null)
+
+        assertNull(session.project(2, 0))
     }
 
     // --- fixtures ---------------------------------------------------------------------------

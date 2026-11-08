@@ -52,6 +52,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -125,6 +126,13 @@ private const val TTS_SESSION_ACTIVITY_REQUEST_CODE = 4207
 private const val TTS_STREAM_WAV_HEADER_BYTES = 44L
 private const val NO_DEFERRED_TRANSITION_PREFETCH_GENERATION = -1
 private const val TTS_MISSING_CHUNK_RETRY_DELAY_MS = 1_000L
+
+/**
+ * How long a chunk start waits for audio focus to come back before giving up visibly.
+ * Two 600 ms attempts cover the interruption callbacks a hand-off normally waits out.
+ */
+private const val LOCAL_TTS_FOCUS_RETRY_DELAY_MS = 600L
+private const val LOCAL_TTS_FOCUS_RETRY_ATTEMPTS = 2
 internal const val MAX_CHUNK_GENERATION_FAILURES = 2
 
 private fun ttsSessionCommand(action: String): SessionCommand {
@@ -276,6 +284,17 @@ internal fun shouldGiveUpTtsChunkGeneration(
     maxFailures = maxFailures,
 )
 
+/**
+ * A natural completion is an event, not a repeatable flag.
+ *
+ * Both completion detectors (streamed-progress tracking and ExoPlayer STATE_ENDED) plus the
+ * direct-local utterance listener can report the same chapter end, and a continuation start
+ * carries [TtsState.completionCount] forward. Advancing only on a true `alreadyFinished` -> false
+ * transition keeps the count one-per-chapter so a watcher never advances twice for one chapter.
+ */
+internal fun nextTtsCompletionCount(current: Long, alreadyFinished: Boolean): Long =
+    if (alreadyFinished) current else current + 1
+
 internal fun shouldRetryPrematureTtsStreamTransition(
     transitionReason: Int,
     previousUriScheme: String?,
@@ -332,7 +351,10 @@ class TtsPlaybackManager(
     private val player: Player,
     private val generateAudioChunk: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, totalChunks: Int, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
     private val onResetContext: () -> Unit,
-    private val onPlaybackSessionPreparing: (bookTitle: String?, chapterTitle: String?) -> Unit = { _, _ -> },
+    // The continuation flag lets the service skip the "preparing" notification swap on a chapter
+    // hand-off: the media notification is already up, and replacing it there is what makes OEM
+    // media cards drop and rebuild the card at every chapter change.
+    private val onPlaybackSessionPreparing: (bookTitle: String?, chapterTitle: String?, continuation: Boolean) -> Unit = { _, _, _ -> },
     private val onPlaybackSessionStopped: () -> Unit = {},
     private val onExplicitStopRequested: () -> Unit = {}
 ) : MediaSession.Callback, Player.Listener, DirectLocalTtsListener, DirectLocalTtsAudioFocusListener {
@@ -382,6 +404,17 @@ class TtsPlaybackManager(
         val currentWordSourceCfi: String? = null,
         val currentWordStartOffset: Int = -1,
         val sessionFinished: Boolean = false,
+        /**
+         * Monotonic event counter: advances once per chapter that finished naturally.
+         *
+         * [sessionFinished] is a level, so anything watching it for a chapter hand-off has to
+         * catch a one-frame edge; a coalesced or clobbered edge silently ended the session
+         * ("read-aloud stops when it changes chapter"). This counter survives continuation
+         * starts, so a watcher can compare against the last value it handled and can never
+         * miss the event. Reset only when a brand-new (non-continued) session starts, so a
+         * finished session from another book cannot advance this one.
+         */
+        val completionCount: Long = 0L,
         val playbackSource: String? = null,
         val ttsMode: String = TtsMode.CLOUD.name,
         val transcriptStartIndex: Int = 0,
@@ -421,6 +454,11 @@ class TtsPlaybackManager(
     private var localResumeOffset = 0
     private var localLatestRangeOffset = 0
     private var localQueuedThrough = -1
+    // A chunk that could not start because audio focus was refused (a transient interruption
+    // landing on a chapter hand-off). Held so it can be spoken once focus returns instead of
+    // leaving the session silently idle; see startLocalChunk.
+    private var pendingLocalSpeak: PendingLocalSpeak? = null
+    private var pendingLocalSpeakJob: Job? = null
     private var directLocalPlayerStateInvalidator: (() -> Unit)? = null
 
     init {
@@ -813,7 +851,8 @@ class TtsPlaybackManager(
         directLocalPlaybackAnchor.pause()
         localQueuedThrough = -1
         localResumeOffset = localLatestRangeOffset
-        _ttsState.value = _ttsState.value.copy(isPlaying = false, isLoading = false)
+        clearPendingLocalSpeak()
+        _ttsState.update { it.copy(isPlaying = false, isLoading = false) }
         Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i(
             "pause chunk=${_ttsState.value.currentChunkIndex} resumeOffset=$localResumeOffset"
         )
@@ -840,6 +879,16 @@ class TtsPlaybackManager(
     }
 
     fun localIsPlaying(): Boolean = isDirectLocalPlayback() && _ttsState.value.isPlaying
+
+    /**
+     * True while the session is producing (or preparing) audio, including the gap between two
+     * chapters. System media UIs must never be able to end such a session by clearing its
+     * notification, and its notification must stay pinned so they cannot try.
+     */
+    fun isActivelySpeaking(): Boolean {
+        val state = _ttsState.value
+        return state.isPlaying || state.isLoading || localIsPlaying()
+    }
 
     private fun canSkipTtsChunk(direction: Int): Boolean {
         val currentIndex = if (currentTtsMode == TtsMode.BASE) {
@@ -886,7 +935,7 @@ class TtsPlaybackManager(
             )
             player.pause()
             wordTrackingJob?.cancel()
-            _ttsState.value = _ttsState.value.copy(
+            _ttsState.update { it.copy(
                 isLoading = true,
                 isPlaying = false,
                 currentText = targetChunk.text,
@@ -899,7 +948,7 @@ class TtsPlaybackManager(
                 currentWordSourceCfi = null,
                 currentWordStartOffset = -1,
                 sessionFinished = false
-            )
+            ) }
             val waitGeneration = currentPlaybackGeneration()
             targetPrefetchJob?.invokeOnCompletion { cause ->
                 scope.launch(Dispatchers.Main) {
@@ -950,7 +999,7 @@ class TtsPlaybackManager(
                         player.seekTo(playlistIndex, 0L)
                         player.playWhenReady = shouldResumePlayback
                         if (shouldResumePlayback) player.play()
-                        _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = shouldResumePlayback)
+                        _ttsState.update { it.copy(isLoading = false, isPlaying = shouldResumePlayback) }
                         prefetchNextChunkAudio(targetIndex)
                     } else {
                         logChunkNavWarnMain(
@@ -980,7 +1029,7 @@ class TtsPlaybackManager(
                 "skip-reuse-before-seek",
                 "direction=$direction targetChunk=$targetIndex targetPlaylistIndex=$targetPlaylistIndex"
             )
-            _ttsState.value = _ttsState.value.copy(
+            _ttsState.update { it.copy(
                 isLoading = false,
                 isPlaying = false,
                 currentText = targetChunk.text,
@@ -993,7 +1042,7 @@ class TtsPlaybackManager(
                 currentWordSourceCfi = null,
                 currentWordStartOffset = -1,
                 sessionFinished = false
-            )
+            ) }
             wordTrackingJob?.cancel()
             player.seekTo(targetPlaylistIndex, 0L)
             prefetchNextChunkAudio(targetIndex)
@@ -1013,7 +1062,7 @@ class TtsPlaybackManager(
             "direction=$direction targetChunk=$targetIndex resume=$shouldResumePlayback"
         )
 
-        _ttsState.value = _ttsState.value.copy(
+        _ttsState.update { it.copy(
             isLoading = true,
             isPlaying = false,
             currentText = targetChunk.text,
@@ -1026,7 +1075,7 @@ class TtsPlaybackManager(
             currentWordSourceCfi = null,
             currentWordStartOffset = -1,
             sessionFinished = false
-        )
+        ) }
 
         deferTransitionPrefetchForGeneration(newGeneration)
         preparationJob = scope.launch {
@@ -1113,9 +1162,15 @@ class TtsPlaybackManager(
                 "speak-blocked-no-focus chunk=$chunkIndex generation=$generation"
             )
             logMediaTransport("tts-speak-blocked-no-focus", "chunk=$chunkIndex generation=$generation")
-            publishLocalChunkState(chunkIndex, isLoading = false, isPlaying = false)
+            // Do not idle silently here: this path is reachable exactly at a chapter hand-off
+            // (focus taken between two chapters), and an idle session with no error and no
+            // pending work is indistinguishable from "read-aloud stopped on its own".
+            holdLocalSpeakForFocus(chunkIndex, safeOffset, generation)
             return
         }
+        pendingLocalSpeak = null
+        pendingLocalSpeakJob?.cancel()
+        pendingLocalSpeakJob = null
         directLocalPlaybackAnchor.start()
         publishLocalChunkState(chunkIndex, isLoading = true, isPlaying = false)
         updateLocalMediaItem(chunkIndex)
@@ -1150,7 +1205,7 @@ class TtsPlaybackManager(
 
     private fun publishLocalChunkState(chunkIndex: Int, isLoading: Boolean, isPlaying: Boolean) {
         val chunk = textChunks.getOrNull(chunkIndex) ?: return
-        _ttsState.value = _ttsState.value.copy(
+        _ttsState.update { it.copy(
             isLoading = isLoading,
             isPlaying = isPlaying,
             currentText = chunk.text,
@@ -1163,7 +1218,74 @@ class TtsPlaybackManager(
             currentWordSourceCfi = chunk.sourceCfi,
             currentWordStartOffset = chunk.startOffsetInSource,
             sessionFinished = false
-        )
+        ) }
+    }
+
+    /** A chunk whose start audio focus refused, kept until focus returns. */
+    private data class PendingLocalSpeak(
+        val chunkIndex: Int,
+        val spokenStartOffset: Int,
+        val generation: Int,
+    )
+
+    /**
+     * Audio focus refused a chunk start. Keep the session alive and retry, rather than the old
+     * behaviour of publishing an idle state and returning: at a chapter boundary that left the
+     * user with no audio, no error and nothing to resume, which read as "TTS stopped by itself".
+     *
+     * Focus usually returns through [onLocalTtsInterruptionEnded]; the bounded retry below covers
+     * a device that never sends that callback, and gives up with a visible error.
+     */
+    private fun holdLocalSpeakForFocus(chunkIndex: Int, spokenStartOffset: Int, generation: Int) {
+        pendingLocalSpeak = PendingLocalSpeak(chunkIndex, spokenStartOffset, generation)
+        publishLocalChunkState(chunkIndex, isLoading = true, isPlaying = false)
+        pendingLocalSpeakJob?.cancel()
+        pendingLocalSpeakJob = scope.launch(Dispatchers.Main) {
+            repeat(LOCAL_TTS_FOCUS_RETRY_ATTEMPTS) {
+                delay(LOCAL_TTS_FOCUS_RETRY_DELAY_MS)
+                val held = pendingLocalSpeak ?: return@launch
+                if (!isPlaybackGenerationActive(held.generation)) {
+                    pendingLocalSpeak = null
+                    return@launch
+                }
+                if (!directLocalAudioFocusManager.requestFocus()) return@repeat
+                pendingLocalSpeak = null
+                pendingLocalSpeakJob = null
+                startLocalChunk(held.chunkIndex, held.spokenStartOffset, advancePlaybackGeneration())
+                return@launch
+            }
+            val held = pendingLocalSpeak ?: return@launch
+            Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).w("focus-retry-exhausted chunk=${held.chunkIndex}")
+            logChunkNavWarnMain("speak-focus-retry-exhausted", "chunk=${held.chunkIndex}")
+            pendingLocalSpeak = null
+            _ttsState.update { it.copy(
+                isLoading = false,
+                isPlaying = false,
+                errorMessage = appContext.getString(R.string.tts_error_playback, "audio focus")
+            ) }
+        }
+    }
+
+    /** Speaks the held chunk if focus is available now. Returns true when it restarted speech. */
+    private fun speakPendingLocalChunk(): Boolean {
+        val pending = pendingLocalSpeak ?: return false
+        if (!isPlaybackGenerationActive(pending.generation)) {
+            pendingLocalSpeak = null
+            return false
+        }
+        if (!directLocalAudioFocusManager.requestFocus()) return false
+        pendingLocalSpeak = null
+        val retryJob = pendingLocalSpeakJob
+        pendingLocalSpeakJob = null
+        retryJob?.cancel()
+        startLocalChunk(pending.chunkIndex, pending.spokenStartOffset, advancePlaybackGeneration())
+        return true
+    }
+
+    private fun clearPendingLocalSpeak() {
+        pendingLocalSpeak = null
+        pendingLocalSpeakJob?.cancel()
+        pendingLocalSpeakJob = null
     }
 
     private fun updateLocalMediaItem(chunkIndex: Int) {
@@ -1231,10 +1353,10 @@ class TtsPlaybackManager(
                 rangeStart = start,
                 visibleTextMatchesSpokenText = chunk.spokenText.ifBlank { chunk.text } == chunk.text
             )
-            _ttsState.value = _ttsState.value.copy(
+            _ttsState.update { it.copy(
                 currentWordSourceCfi = chunk.sourceCfi,
                 currentWordStartOffset = sourceOffset
-            )
+            ) }
         }
     }
 
@@ -1253,15 +1375,19 @@ class TtsPlaybackManager(
             localResumeOffset = 0
             localLatestRangeOffset = 0
             localQueuedThrough = -1
-            directLocalAudioFocusManager.abandonFocus()
+            // Audio focus is deliberately kept here. A chapter finishing is a hand-off, not the
+            // end of listening: abandoning focus at this point let any other app take it during
+            // the (asynchronous) start of the next chapter, and the focus-denied start then left
+            // the session silently idle. Focus is abandoned on stop/pause/release instead.
             directLocalPlaybackAnchor.pause()
-            _ttsState.value = _ttsState.value.copy(
+            _ttsState.update { it.copy(
                 isLoading = false,
                 isPlaying = false,
                 currentWordSourceCfi = null,
                 currentWordStartOffset = -1,
-                sessionFinished = true
-            )
+                sessionFinished = true,
+                completionCount = nextTtsCompletionCount(it.completionCount, it.sessionFinished)
+            ) }
             Timber.tag(TTS_LOCAL_SPEAK_DIAG_TAG).i("session-finished chunk=${utterance.chunkIndex}")
         }
     }
@@ -1269,11 +1395,11 @@ class TtsPlaybackManager(
     override fun onError(utterance: LocalTtsUtterance?, errorCode: Int) {
         scope.launch(Dispatchers.Main) {
             if (utterance != null && !isPlaybackGenerationActive(utterance.generation)) return@launch
-            _ttsState.value = _ttsState.value.copy(
+            _ttsState.update { it.copy(
                 isLoading = false,
                 isPlaying = false,
                 errorMessage = appContext.getString(R.string.tts_error_playback, errorCode.toString())
-            )
+            ) }
         }
     }
 
@@ -1308,6 +1434,10 @@ class TtsPlaybackManager(
             )
             if (transition.action == LocalTtsInterruptionAction.RESUME) {
                 playFromTransport()
+            } else if (canResume && pendingLocalSpeak != null) {
+                // The interruption began while nothing was playing (a chapter had just ended),
+                // so the policy has nothing to resume; the held chunk still has to be spoken.
+                speakPendingLocalChunk()
             }
         }
     }
@@ -1332,7 +1462,7 @@ class TtsPlaybackManager(
         if (currentIdx == C.INDEX_UNSET) return
 
         player.pause()
-        _ttsState.value = _ttsState.value.copy(isLoading = true)
+        _ttsState.update { it.copy(isLoading = true) }
 
         advancePlaybackGeneration()
         onResetContext()
@@ -1382,7 +1512,7 @@ class TtsPlaybackManager(
     private fun handleChangeTtsMode(newMode: TtsMode) {
         if (currentTtsMode == newMode) return
         currentTtsMode = newMode
-        _ttsState.value = _ttsState.value.copy(ttsMode = newMode.name)
+        _ttsState.update { it.copy(ttsMode = newMode.name) }
         Timber.d("TTS Mode changed to $newMode (pending next start)")
     }
 
@@ -1402,7 +1532,7 @@ class TtsPlaybackManager(
         args: Bundle // Added this parameter
     ) {
         if (chunks.isEmpty()) {
-            _ttsState.value = _ttsState.value.copy(errorMessage = appContext.getString(R.string.tts_error_no_text))
+            _ttsState.update { it.copy(errorMessage = appContext.getString(R.string.tts_error_no_text)) }
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).w("handleStartTts aborted because chunks is empty.")
             return
         }
@@ -1439,7 +1569,7 @@ class TtsPlaybackManager(
             "start-session",
             "chunks=${chunks.size} startChunk=$startChunkIndex resolvedStart=${resolveTtsStartChunkIndex(startChunkIndex, chunks.size)} continueSession=$continueSession generation=$startGeneration"
         )
-        onPlaybackSessionPreparing(bookTitle, chapterTitle)
+        onPlaybackSessionPreparing(bookTitle, chapterTitle, continueSession)
 
         val effectiveSpeakerId = normalizeTtsSpeakerId(speakerId)
 
@@ -1459,6 +1589,7 @@ class TtsPlaybackManager(
         chunkGenerationFailures.clear()
         lastPrefetchIndex = -1
 
+        val previousState = _ttsState.value
         _ttsState.value = TtsState(
             isLoading = true,
             bookId = bookId,
@@ -1473,9 +1604,13 @@ class TtsPlaybackManager(
             speakerId = effectiveSpeakerId,
             playbackSource = playbackSource,
             ttsMode = ttsMode.name,
-            currentText = if (continueSession) _ttsState.value.currentText else null,
+            currentText = if (continueSession) previousState.currentText else null,
+            // A chapter continuation keeps the event count alive so the hand-off that started
+            // this session is not replayed; a fresh session starts a new count so a finished
+            // session from another book can never advance this one.
+            completionCount = if (continueSession) previousState.completionCount else 0L,
             // New listen keeps its own spend line; chapter continuations accrue.
-            cloudSessionSpendMicros = if (continueSession) _ttsState.value.cloudSessionSpendMicros else 0L
+            cloudSessionSpendMicros = if (continueSession) previousState.cloudSessionSpendMicros else 0L
         )
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
             "TTS state set to loading. bookProgress=${_ttsState.value.bookProgressPercent}, currentTextRetained=${_ttsState.value.currentText != null}"
@@ -1504,11 +1639,11 @@ class TtsPlaybackManager(
 
     fun forceStopWithError(errorMessage: String) {
         scope.launch(Dispatchers.Main) {
-            _ttsState.value = _ttsState.value.copy(
+            _ttsState.update { it.copy(
                 isLoading = false,
                 isPlaying = false,
                 errorMessage = errorMessage
-            )
+            ) }
             handleStopTts(clearState = false)
         }
     }
@@ -1518,7 +1653,7 @@ class TtsPlaybackManager(
         if (currentSpeakerId == safeSpeakerId) return
         currentSpeakerId = safeSpeakerId
         saveTtsSpeaker(appContext, safeSpeakerId)
-        _ttsState.value = _ttsState.value.copy(speakerId = safeSpeakerId)
+        _ttsState.update { it.copy(speakerId = safeSpeakerId) }
         Timber.d("Speaker changed to $safeSpeakerId (pending next start)")
     }
 
@@ -1703,7 +1838,7 @@ class TtsPlaybackManager(
             "Setting sessionFinished = true for naturally completed streamed TTS. chunk=$safeChunkIndex, totalChunks=${textChunks.size}"
         )
 
-        _ttsState.value = _ttsState.value.copy(
+        _ttsState.update { it.copy(
             isPlaying = false,
             isLoading = false,
             currentChunkIndex = safeChunkIndex,
@@ -1711,8 +1846,9 @@ class TtsPlaybackManager(
             bookProgressPercent = calculateBookProgressPercent(safeChunkIndex),
             currentWordSourceCfi = null,
             currentWordStartOffset = -1,
-            sessionFinished = true
-        )
+            sessionFinished = true,
+            completionCount = nextTtsCompletionCount(it.completionCount, it.sessionFinished)
+        ) }
     }
 
     private fun clearPlaylistForContinuation() {
@@ -1745,7 +1881,7 @@ class TtsPlaybackManager(
         val generation = currentPlaybackGeneration()
         val firstChunk = textChunks.getOrNull(startAtIndex)
         if (firstChunk == null) {
-            _ttsState.value = _ttsState.value.copy(isLoading = false, errorMessage = appContext.getString(R.string.tts_error_starting_playback))
+            _ttsState.update { it.copy(isLoading = false, errorMessage = appContext.getString(R.string.tts_error_starting_playback)) }
             onPlaybackSessionStopped()
             return
         }
@@ -1784,11 +1920,11 @@ class TtsPlaybackManager(
         )
         if (ttsAudioData.costMicros > 0) {
             val currentError = _ttsState.value.errorMessage
-            _ttsState.value = _ttsState.value.copy(
-                cloudSessionSpendMicros = _ttsState.value.cloudSessionSpendMicros + ttsAudioData.costMicros,
+            _ttsState.update { it.copy(
+                cloudSessionSpendMicros = it.cloudSessionSpendMicros + ttsAudioData.costMicros,
                 // A successful chunk clears a stale rate/spend notice (e.g. after auto-retry).
                 errorMessage = if (parseSpendGuardSentinel(currentError) != null) null else currentError
-            )
+            ) }
         }
         if (!isPlaybackGenerationActive(generation)) {
             Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i(
@@ -1807,7 +1943,7 @@ class TtsPlaybackManager(
             // RATE_LIMITED retries once automatically after the worker's window;
             // the overlay notice (ttsState.errorMessage) shows the countdown.
             if (spendGuard?.first == "RATE_LIMITED" && !retriedAfterRateLimit) {
-                _ttsState.value = _ttsState.value.copy(isLoading = true, errorMessage = ttsAudioData.error)
+                _ttsState.update { it.copy(isLoading = true, errorMessage = ttsAudioData.error) }
                 delay(spendGuard.second.coerceIn(1, 120) * 1000L)
                 if (isPlaybackGenerationActive(generation)) {
                     prepareAndPlayFirstChunk(startAtIndex, playWhenReady, startAtPosition, prefetchAfterPrepare, retriedAfterRateLimit = true)
@@ -1816,7 +1952,7 @@ class TtsPlaybackManager(
             }
             withContext(Dispatchers.Main) {
                 if (!isPlaybackGenerationActive(generation)) return@withContext
-                _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = false, errorMessage = ttsAudioData.error)
+                _ttsState.update { it.copy(isLoading = false, isPlaying = false, errorMessage = ttsAudioData.error) }
                 handleStopTts(clearState = false)
             }
             return
@@ -1883,7 +2019,7 @@ class TtsPlaybackManager(
                     "prepare-first-set-media-after",
                     "chunk=$startAtIndex mediaId=${mediaItem.mediaId} resume=$playWhenReady prepMs=${System.currentTimeMillis() - prepStartTime}"
                 )
-                _ttsState.value = _ttsState.value.copy(
+                _ttsState.update { it.copy(
                     isLoading = false,
                     isPlaying = playWhenReady,
                     currentText = updatedChunk.text,
@@ -1896,7 +2032,7 @@ class TtsPlaybackManager(
                     sessionFinished = false,
                     sourceCfi = updatedChunk.sourceCfi,
                     startOffsetInSource = updatedChunk.startOffsetInSource
-                )
+                ) }
             }
             if (!isPlaybackGenerationActive(generation)) return
             if (prefetchAfterPrepare) {
@@ -1918,10 +2054,10 @@ class TtsPlaybackManager(
                     "chunk=$startAtIndex failureCount=$failureCount"
                 )
             }
-            _ttsState.value = _ttsState.value.copy(
+            _ttsState.update { it.copy(
                 isLoading = false,
                 errorMessage = ttsAudioData.error ?: appContext.getString(R.string.tts_error_load_audio)
-            )
+            ) }
             onPlaybackSessionStopped()
         }
     }
@@ -1975,11 +2111,15 @@ class TtsPlaybackManager(
         localResumeOffset = 0
         localLatestRangeOffset = 0
         localQueuedThrough = -1
+        clearPendingLocalSpeak()
         if (clearState) {
             val finalState = TtsState(
                 sessionEndedByStop = userInitiated,
                 speakerId = currentSpeakerId,
-                ttsMode = currentTtsMode.name
+                ttsMode = currentTtsMode.name,
+                // Never reset: a watcher compares against the last count it handled, and a
+                // counter that fell back to 0 would stop matching on the next session.
+                completionCount = _ttsState.value.completionCount
             )
             _ttsState.value = finalState
             updateSessionControls(finalState)
@@ -2070,7 +2210,7 @@ class TtsPlaybackManager(
         val sourceCfi = extras?.getString("sourceCfi")
         val startOffset = extras?.getInt("startOffset", -1) ?: -1
 
-        _ttsState.value = _ttsState.value.copy(
+        _ttsState.update { it.copy(
             currentText = newText,
             chapterTitle = chapterTitle,
             chapterIndex = chapterIndex,
@@ -2081,7 +2221,7 @@ class TtsPlaybackManager(
             sessionFinished = false,
             sourceCfi = sourceCfi,
             startOffsetInSource = startOffset
-        )
+        ) }
 
         wordTrackingJob?.cancel()
         if (player.isPlaying) {
@@ -2149,7 +2289,7 @@ class TtsPlaybackManager(
         cancelPrefetchWork()
         onResetContext()
 
-        _ttsState.value = _ttsState.value.copy(
+        _ttsState.update { it.copy(
             isLoading = true,
             isPlaying = false,
             currentText = chunk.text,
@@ -2162,7 +2302,7 @@ class TtsPlaybackManager(
             currentWordSourceCfi = null,
             currentWordStartOffset = -1,
             sessionFinished = false
-        )
+        ) }
 
         player.pause()
         player.stop()
@@ -2189,7 +2329,7 @@ class TtsPlaybackManager(
         cancelPrefetchWork()
         onResetContext()
 
-        _ttsState.value = _ttsState.value.copy(
+        _ttsState.update { it.copy(
             isLoading = true,
             isPlaying = false,
             currentText = chunk.text,
@@ -2202,7 +2342,7 @@ class TtsPlaybackManager(
             currentWordSourceCfi = null,
             currentWordStartOffset = -1,
             sessionFinished = false
-        )
+        ) }
 
         player.pause()
         player.stop()
@@ -2269,7 +2409,7 @@ class TtsPlaybackManager(
                         "player-ended-retry-premature-stream",
                         "currentChunk=$currentChunkIndex streamId=$currentStreamId"
                     )
-                    _ttsState.value = nextState.copy(isLoading = true, isPlaying = false)
+                    _ttsState.update { it.copy(isLoading = true, isPlaying = false) }
                     retryTtsChunkAfterPrematureStreamEnd(currentChunkIndex)
                     return
                 }
@@ -2306,7 +2446,26 @@ class TtsPlaybackManager(
             }
         }
 
-        _ttsState.value = nextState
+        // Only the fields this callback owns are written, from a fresh read: a completion that
+        // landed meanwhile (streamed-progress tracking runs on Main too, but prefetch accounting
+        // runs on IO) must not be reverted by a snapshot taken before it.
+        _ttsState.update { latest ->
+            latest.copy(
+                isPlaying = nextState.isPlaying,
+                isLoading = nextState.isLoading,
+                currentWordSourceCfi = nextState.currentWordSourceCfi,
+                currentWordStartOffset = nextState.currentWordStartOffset,
+                currentChunkIndex = nextState.currentChunkIndex,
+                totalChunks = nextState.totalChunks,
+                bookProgressPercent = nextState.bookProgressPercent,
+                sessionFinished = latest.sessionFinished || nextState.sessionFinished,
+                completionCount = if (nextState.sessionFinished) {
+                    nextTtsCompletionCount(latest.completionCount, latest.sessionFinished)
+                } else {
+                    latest.completionCount
+                },
+            )
+        }
 
         if (!isPlaying && player.playbackState == Player.STATE_IDLE) {
             if (!nextState.sessionEndedByStop && !nextState.isLoading && preparationJob?.isActive != true) {
@@ -2322,7 +2481,7 @@ class TtsPlaybackManager(
     override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
         Timber.tag("TTS_CLOUD_DIAG").e(error, "Player error: [${error.errorCodeName}] ${error.message}")
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).e(error, "Player error. code=${error.errorCodeName}, message=${error.message}")
-        _ttsState.value = _ttsState.value.copy(errorMessage = appContext.getString(R.string.tts_error_playback, error.message.orEmpty()))
+        _ttsState.update { it.copy(errorMessage = appContext.getString(R.string.tts_error_playback, error.message.orEmpty())) }
         handleStopTts(userInitiated = true)
     }
 
@@ -2436,16 +2595,18 @@ class TtsPlaybackManager(
                         }
 
                         if (ttsAudioData.costMicros > 0) {
-                            val currentError = _ttsState.value.errorMessage
-                            _ttsState.value = _ttsState.value.copy(
-                                cloudSessionSpendMicros = _ttsState.value.cloudSessionSpendMicros + ttsAudioData.costMicros,
-                                errorMessage = if (parseSpendGuardSentinel(currentError) != null) null else currentError
-                            )
+                            _ttsState.update { current ->
+                                val currentError = current.errorMessage
+                                current.copy(
+                                    cloudSessionSpendMicros = current.cloudSessionSpendMicros + ttsAudioData.costMicros,
+                                    errorMessage = if (parseSpendGuardSentinel(currentError) != null) null else currentError
+                                )
+                            }
                         }
                         if (ttsAudioData.error == "INSUFFICIENT_CREDITS" || parseSpendGuardSentinel(ttsAudioData.error) != null) {
                             withContext(Dispatchers.Main) {
                                 if (!isPlaybackGenerationActive(generation)) return@withContext
-                                _ttsState.value = _ttsState.value.copy(isLoading = false, isPlaying = false, errorMessage = ttsAudioData.error)
+                                _ttsState.update { it.copy(isLoading = false, isPlaying = false, errorMessage = ttsAudioData.error) }
                                 handleStopTts(clearState = false)
                             }
                             return@launch
@@ -2514,7 +2675,7 @@ class TtsPlaybackManager(
                                         "prefetch-loading-resolved",
                                         "currentChunk=$currentChunkIndex targetChunk=$targetIndex generation=$generation"
                                     )
-                                    _ttsState.value = _ttsState.value.copy(isLoading = false)
+                                    _ttsState.update { it.copy(isLoading = false) }
                                 }
                             }
                         } else {
@@ -2637,7 +2798,7 @@ class TtsPlaybackManager(
                                             "stream-finished-next-missing-prefetch",
                                             "finishedChunk=$finishedChunkIndex expectedNext=${finishedChunkIndex + 1}"
                                         )
-                                        _ttsState.value = _ttsState.value.copy(isLoading = true)
+                                        _ttsState.update { it.copy(isLoading = true) }
                                         prefetchNextChunkAudio(finishedChunkIndex)
                                     } else {
                                         logChunkNavMain(
@@ -2671,10 +2832,10 @@ class TtsPlaybackManager(
                 if (currentWordIndex != -1) {
                     val currentWordOffset = offsets[currentWordIndex]
                     if (_ttsState.value.currentWordStartOffset != currentWordOffset || _ttsState.value.currentWordSourceCfi != sourceCfi) {
-                        _ttsState.value = _ttsState.value.copy(
+                        _ttsState.update { it.copy(
                             currentWordSourceCfi = sourceCfi,
                             currentWordStartOffset = currentWordOffset
-                        )
+                        ) }
                     }
                 }
             }
@@ -2958,6 +3119,7 @@ class TtsPlaybackManager(
             putString("currentWordSourceCfi", state.currentWordSourceCfi)
             putInt("currentWordStartOffset", state.currentWordStartOffset)
             putBoolean("sessionFinished", state.sessionFinished)
+            putLong("completionCount", state.completionCount)
             putString("playbackSource", state.playbackSource)
             putString("ttsMode", state.ttsMode)
             putInt("transcriptStartIndex", transcriptRange.first)

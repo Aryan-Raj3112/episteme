@@ -1919,14 +1919,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         // TTS controller init (prefs read + engine setup) happens on first
         // ttsState access; collect on IO so browsing never pays for it on Main.
         viewModelScope.launch(Dispatchers.IO) {
-            var wasSessionFinished = false
+            // Completion is a monotonic event counter (see TtsPlaybackManager.TtsState), so a
+            // background hand-off cannot be lost to a coalesced emission the way an edge on
+            // `sessionFinished` could.
+            var handledCompletionCount = ttsController.ttsState.value.completionCount
             ttsController.ttsState.collect { state ->
-                val isPlaying = state.isPlaying
-                val sessionFinished = state.sessionFinished
                 val isReaderSource = state.playbackSource == "READER"
+                val completionCount = state.completionCount
+                if (completionCount < handledCompletionCount) handledCompletionCount = completionCount
 
                 if (isReaderSource) {
-                    if (sessionFinished && !wasSessionFinished) {
+                    if (completionCount > handledCompletionCount) {
+                        handledCompletionCount = completionCount
                         if (_internalState.value.selectedEpubBook == null) {
                             Timber.tag("TTS_BG_ADVANCE").i("Reader is closed. Handling auto-advance in background.")
                             advanceTtsChapterInBackground(state, locatorConverter)
@@ -1938,7 +1942,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         backgroundTtsCoverPath = null
                     }
                 }
-                wasSessionFinished = sessionFinished
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -4286,6 +4289,10 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             bookId = bookId,
                             chapterIndex = nextIdx,
                             totalChapters = totalChapters,
+                            // Continue the session across the chapter hand-off (Android benchmark:
+                            // KEY_CONTINUE_SESSION). Starting a fresh session here tore down and
+                            // rebuilt the engine at every chapter while listening in the background.
+                            continueSession = true,
                             ttsMode = mode,
                             playbackSource = "READER",
                             authToken = token
