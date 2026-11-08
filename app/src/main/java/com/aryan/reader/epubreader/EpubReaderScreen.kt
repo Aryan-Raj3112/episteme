@@ -740,6 +740,11 @@ fun EpubReaderHost(
     var addBookmarkRequest by addBookmarkRequestState
     val isChapterReadyForBookmarkCheckState = remember { mutableStateOf(false) }
     var isChapterReadyForBookmarkCheck by isChapterReadyForBookmarkCheckState
+    // Incremented by the WebView renderer each time the visible chapter's document is ready (a
+    // chapter hand-off replaces the WebView, so a TTS highlight requested before the new document
+    // exists is dropped). TTS highlighting watches it to re-apply on the new document.
+    val webViewContentRevisionState = remember { mutableIntStateOf(0) }
+    val webViewContentRevision by webViewContentRevisionState
     var lastBookmarkCheckTime by remember { mutableLongStateOf(0L) }
     val isSwitchingToPaginatedState = remember { mutableStateOf(false) }
     var isSwitchingToPaginated by isSwitchingToPaginatedState
@@ -1994,7 +1999,9 @@ fun EpubReaderHost(
         ttsChapterIndex = ttsChapterIndex,
         scope = scope,
         isTwoPageSpread = isTwoPageSpread,
-        totalBookPageCount = totalBookPageCount()
+        totalBookPageCount = totalBookPageCount(),
+        webViewContentRevision = webViewContentRevision,
+        loadedChunkCount = loadedChunkCount
     )
 
     // --- EPUB media overlays: the publisher's own narration -------------------------------------
@@ -4990,6 +4997,7 @@ fun EpubReaderHost(
                     isAutoScrollPlayingState = isAutoScrollPlayingState,
                     isChapterParsingState = isChapterParsingState,
                     isChapterReadyForBookmarkCheckState = isChapterReadyForBookmarkCheckState,
+                    webViewContentRevisionState = webViewContentRevisionState,
                     isMusicianModeState = isMusicianModeState,
                     isPagerInitializedState = isPagerInitializedState,
                     isRecapLoadingState = isRecapLoadingState,

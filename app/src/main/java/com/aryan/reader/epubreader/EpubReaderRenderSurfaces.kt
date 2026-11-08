@@ -81,6 +81,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -295,6 +296,10 @@ internal fun EpubReaderRenderSurfaces(
     isAutoScrollPlayingState: MutableState<Boolean>,
     isChapterParsingState: MutableState<Boolean>,
     isChapterReadyForBookmarkCheckState: MutableState<Boolean>,
+    // Bumped whenever the rendered chapter's WebView finished loading and scrolled. TTS
+    // highlighting watches it: a chapter hand-off swaps the WebView, and a highlight requested
+    // before the new document exists is silently dropped by the JS bridge.
+    webViewContentRevisionState: MutableIntState,
     isMusicianModeState: MutableState<Boolean>,
     isPagerInitializedState: MutableState<Boolean>,
     isRecapLoadingState: MutableState<Boolean>,
@@ -1025,6 +1030,13 @@ internal fun EpubReaderRenderSurfaces(
                                                     imageToLoad = null
                                                     Timber.d("Initial scroll consumed for chapter $targetChapterIndex. Was CFI scroll: $wasCfiScroll, Was image scroll: $wasImageScroll")
                                                     isWebViewReady = true
+                                                    // The document for this chapter (re)loaded, so any TTS highlight that
+                                                    // was applied to the previous document has to be re-applied.
+                                                    webViewContentRevisionState.intValue += 1
+                                                    logTtsChapterDiag(
+                                                        "Vertical chapter content ready. revision=${webViewContentRevisionState.intValue} " +
+                                                            "renderedChapter=$targetChapterIndex"
+                                                    )
 
                                                     if (wasCfiScroll) {
                                                         scope.launch {

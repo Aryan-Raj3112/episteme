@@ -47,6 +47,8 @@ import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.aryan.reader.R
+import com.aryan.reader.isPlaybackNotificationPinned
+import com.aryan.reader.shouldIgnoreDismissedTransportStop
 import com.aryan.reader.isServiceNotificationChannelBlocked
 import com.aryan.reader.GEMINI_CLOUD_TTS_MODEL
 import com.aryan.reader.loadAiByokSettings
@@ -426,7 +428,10 @@ private class TtsSessionPlayer(
     private val localPlaybackState: () -> Int,
     private val playDirectLocal: () -> Unit,
     private val pauseDirectLocal: () -> Unit,
-    private val stopDirectLocal: () -> Unit
+    private val stopDirectLocal: () -> Unit,
+    private val consumeNotificationDismissal: () -> Boolean,
+    private val sessionActivelySpeaking: () -> Boolean,
+    private val refreshNotification: () -> Unit
 ) : ForwardingPlayer(player) {
     private data class LocalPlayerSnapshot(
         val playbackState: Int,
@@ -552,11 +557,26 @@ private class TtsSessionPlayer(
     }
 
     override fun stop() {
+        val notificationDismissed = consumeNotificationDismissal()
         logMediaTransport(
             "tts-session-player-stop",
-            "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} ${playerTransportSnapshot(this)}"
+            "directLocal=${isDirectLocalPlayback()} localPlaying=${localIsPlaying()} " +
+                "notificationDismissed=$notificationDismissed ${playerTransportSnapshot(this)}"
         )
-        // A transport stop (notification dismissal, headset stop, task dismissal) always ends the
+        if (shouldIgnoreDismissedTransportStop(notificationDismissed, sessionActivelySpeaking())) {
+            // The user cannot swipe a pinned notification, so this is a system media UI clearing
+            // our card (Media3 turns a dismissal into a COMMAND_STOP). Ending the reading session
+            // for that is the reported "read-aloud stops when it changes chapter". Put the card
+            // back and keep speaking; the explicit stop paths (notification stop button, in-app
+            // stop, headset stop, task removal) still end the session.
+            logMediaTransport(
+                "tts-session-player-stop-ignored",
+                "reason=notification-dismissed-while-speaking ${playerTransportSnapshot(this)}"
+            )
+            refreshNotification()
+            return
+        }
+        // A transport stop (headset stop, task dismissal, dismissal while paused) always ends the
         // complete TTS session; it must never leave playback running without its session.
         stopDirectLocal()
     }
@@ -664,6 +684,9 @@ class TtsService : MediaSessionService() {
     private lateinit var cacheManager: TtsCacheManager
     private lateinit var bookTtsCoordinator: BookTtsSessionCoordinator
     private var foregroundNotificationShown = false
+    // Set when a media-notification dismissal starts this service; consumed by the transport stop
+    // it triggers so the stop log says whether the user (or the OEM's media card) ended the session.
+    private var notificationDismissalPending = false
     private var foregroundPlaybackExpected = false
     private var foregroundIdleJob: Job? = null
     private var foregroundBookTitle: String? = null
@@ -671,6 +694,20 @@ class TtsService : MediaSessionService() {
     private var bookSleepTimerJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A media-notification dismissal arrives here (Media3's notification delete intent is a
+        // COMMAND_STOP playback pending intent carrying this extra) and ends up in
+        // TtsSessionPlayer.stop(). Samsung One UI clears the media card on its own while read-aloud
+        // is live, which is indistinguishable from a user dismissal without this extra — so log it
+        // and expose it to the session player's stop log.
+        val notificationDismissed =
+            intent?.getBooleanExtra(MediaNotification.NOTIFICATION_DISMISSED_EVENT_KEY, false) == true
+        if (notificationDismissed) {
+            notificationDismissalPending = true
+            logMediaTransport(
+                "tts-notification-dismissed",
+                "startId=$startId " + playerTransportSnapshot(if (::player.isInitialized) player else null)
+            )
+        }
         if (intent?.action != null) {
             val keyEventDetails = if (intent.action == Intent.ACTION_MEDIA_BUTTON) {
                 " ${mediaButtonKeyEventDetails(intent)}"
@@ -680,6 +717,7 @@ class TtsService : MediaSessionService() {
             logMediaTransport(
                 "tts-on-start-command",
                 "action=${intent.action} startId=$startId$keyEventDetails " +
+                    "notificationDismissed=$notificationDismissed " +
                     playerTransportSnapshot(if (::player.isInitialized) player else null)
             )
         }
@@ -818,9 +856,17 @@ class TtsService : MediaSessionService() {
         }
 
         Timber.tag(TTS_NOTIFICATION_DIAG_TAG).i("Delegating notification update to MediaSessionService.")
+        val sessionActivelySpeaking = ::playbackManager.isInitialized && playbackManager.isActivelySpeaking()
         logMediaTransport(
             "tts-on-update-notification",
             "startInForegroundRequired=$startInForegroundRequired " +
+                // The raw ExoPlayer is idle in BASE mode while the device voice speaks; the
+                // session player is what Media3 publishes to system media UIs, so log that too.
+                "publishedState=${session.player.playbackState} " +
+                "publishedPlayWhenReady=${session.player.playWhenReady} " +
+                "publishedIsPlaying=${session.player.isPlaying} " +
+                "activelySpeaking=$sessionActivelySpeaking " +
+                "pinned=${isPlaybackNotificationPinned(session.player.playWhenReady, session.player.playbackState, sessionActivelySpeaking)} " +
                 playerTransportSnapshot(if (::player.isInitialized) player else null)
         )
         super.onUpdateNotification(session, startInForegroundRequired)
@@ -829,7 +875,8 @@ class TtsService : MediaSessionService() {
             notificationId = TTS_FOREGROUND_NOTIFICATION_ID,
             playWhenReady = session.player.playWhenReady,
             playbackState = session.player.playbackState,
-            diagnosticsTag = TTS_NOTIFICATION_DIAG_TAG
+            diagnosticsTag = TTS_NOTIFICATION_DIAG_TAG,
+            sessionActivelySpeaking = sessionActivelySpeaking
         )
     }
 
@@ -940,15 +987,37 @@ class TtsService : MediaSessionService() {
         }
     }
 
-    private fun onPlaybackSessionPreparing(bookTitle: String?, chapterTitle: String?) {
+    private fun onPlaybackSessionPreparing(
+        bookTitle: String?,
+        chapterTitle: String?,
+        continuation: Boolean
+    ) {
         foregroundPlaybackExpected = true
         foregroundIdleJob?.cancel()
         logMediaTransport(
             "tts-foreground-preparing",
-            "book=$bookTitle chapter=$chapterTitle " +
+            "book=$bookTitle chapter=$chapterTitle continuation=$continuation " +
                 playerTransportSnapshot(if (::player.isInitialized) player else null)
         )
+        // A chapter hand-off keeps the same foreground service and the same media notification.
+        // Swapping in the "preparing" notification there made the media card disappear and
+        // reappear at every chapter change, which is exactly when system media UIs clear it.
+        if (continuation && foregroundNotificationShown) {
+            logMediaTransport("tts-foreground-preparing-kept", "reason=chapter-continuation")
+            return
+        }
         showPreparingForegroundNotification("START_TTS_COMMAND", bookTitle, chapterTitle)
+    }
+
+    /**
+     * Re-posts and re-pins the media notification after a system dismissal. Media3 hides the
+     * notification for a dismissed controller until the player leaves idle, so re-requesting the
+     * update is what restores the card for a session that kept speaking.
+     */
+    private fun refreshTtsNotification() {
+        val session = mediaSession ?: return
+        logMediaTransport("tts-notification-refresh", "reason=ignored-dismissal")
+        onUpdateNotification(session, /* startInForegroundRequired= */ true)
     }
 
     private fun onPlaybackSessionStopped() {
@@ -1623,8 +1692,8 @@ class TtsService : MediaSessionService() {
             player = player,
             generateAudioChunk = audioGenerator,
             onResetContext = { liveClient.close() },
-            onPlaybackSessionPreparing = { bookTitle, chapterTitle ->
-                runOnApplicationThread { onPlaybackSessionPreparing(bookTitle, chapterTitle) }
+            onPlaybackSessionPreparing = { bookTitle, chapterTitle, continuation ->
+                runOnApplicationThread { onPlaybackSessionPreparing(bookTitle, chapterTitle, continuation) }
             },
             onPlaybackSessionStopped = {
                 runOnApplicationThread { onPlaybackSessionStopped() }
@@ -1655,7 +1724,12 @@ class TtsService : MediaSessionService() {
             localPlaybackState = playbackManager::localPlaybackState,
             playDirectLocal = playbackManager::playFromTransport,
             pauseDirectLocal = playbackManager::pauseFromTransport,
-            stopDirectLocal = playbackManager::stopFromTransport
+            stopDirectLocal = playbackManager::stopFromTransport,
+            consumeNotificationDismissal = {
+                notificationDismissalPending.also { notificationDismissalPending = false }
+            },
+            sessionActivelySpeaking = playbackManager::isActivelySpeaking,
+            refreshNotification = ::refreshTtsNotification
         )
 
         mediaSession = MediaSession.Builder(this, sessionPlayer)

@@ -243,9 +243,29 @@ fun TtsHighlightHandler(
     ttsChapterIndex: Int?,
     scope: CoroutineScope,
     isTwoPageSpread: Boolean = false,
-    totalBookPageCount: Int = 0
+    totalBookPageCount: Int = 0,
+    /**
+     * Bumped when the visible chapter's WebView finished loading its document.
+     *
+     * A chapter hand-off replaces the WebView (and in WebView vertical mode the reader injects
+     * content chunk by chunk), so the highlight requested as the new chapter starts can land on a
+     * document that does not exist yet and be dropped by the JS bridge. Without re-applying, the
+     * highlight stayed missing for the whole chunk even though read-aloud was speaking it.
+     */
+    webViewContentRevision: Int = 0,
+    /** Chunk count currently injected into the WebView; re-applies the highlight as it grows. */
+    loadedChunkCount: Int = 0,
 ) {
-    LaunchedEffect(ttsState.currentText, ttsState.sourceCfi, ttsState.startOffsetInSource, webViewRef) {
+    LaunchedEffect(
+        ttsState.currentText,
+        ttsState.sourceCfi,
+        ttsState.startOffsetInSource,
+        webViewRef,
+        webViewContentRevision,
+        loadedChunkCount,
+        currentChapterIndex,
+        ttsChapterIndex,
+    ) {
         val text = ttsState.currentText
         val cfi = ttsState.sourceCfi
         val offset = ttsState.startOffsetInSource
@@ -273,7 +293,8 @@ fun TtsHighlightHandler(
                 Timber.tag("TTS_CHAPTER_CHANGE_DIAG").d(
                     "Applying vertical TTS highlight. visibleChapter=$currentChapterIndex " +
                         "activeTtsChapter=$activeTtsChapterIndex cfi=${cfi.take(48)} " +
-                        "offset=$offset textLen=${text.length}"
+                        "offset=$offset textLen=${text.length} " +
+                        "contentRevision=$webViewContentRevision loadedChunks=$loadedChunkCount"
                 )
             }
             webViewRef?.evaluateJavascript(jsCommand, null)

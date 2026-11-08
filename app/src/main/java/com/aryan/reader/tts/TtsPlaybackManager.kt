@@ -351,7 +351,10 @@ class TtsPlaybackManager(
     private val player: Player,
     private val generateAudioChunk: suspend (bookTitle: String, chapterTitle: String?, chunkIndex: Int, totalChunks: Int, textChunk: String, speakerId: String, mode: TtsMode, authToken: String?) -> TtsAudioData,
     private val onResetContext: () -> Unit,
-    private val onPlaybackSessionPreparing: (bookTitle: String?, chapterTitle: String?) -> Unit = { _, _ -> },
+    // The continuation flag lets the service skip the "preparing" notification swap on a chapter
+    // hand-off: the media notification is already up, and replacing it there is what makes OEM
+    // media cards drop and rebuild the card at every chapter change.
+    private val onPlaybackSessionPreparing: (bookTitle: String?, chapterTitle: String?, continuation: Boolean) -> Unit = { _, _, _ -> },
     private val onPlaybackSessionStopped: () -> Unit = {},
     private val onExplicitStopRequested: () -> Unit = {}
 ) : MediaSession.Callback, Player.Listener, DirectLocalTtsListener, DirectLocalTtsAudioFocusListener {
@@ -876,6 +879,16 @@ class TtsPlaybackManager(
     }
 
     fun localIsPlaying(): Boolean = isDirectLocalPlayback() && _ttsState.value.isPlaying
+
+    /**
+     * True while the session is producing (or preparing) audio, including the gap between two
+     * chapters. System media UIs must never be able to end such a session by clearing its
+     * notification, and its notification must stay pinned so they cannot try.
+     */
+    fun isActivelySpeaking(): Boolean {
+        val state = _ttsState.value
+        return state.isPlaying || state.isLoading || localIsPlaying()
+    }
 
     private fun canSkipTtsChunk(direction: Int): Boolean {
         val currentIndex = if (currentTtsMode == TtsMode.BASE) {
@@ -1556,7 +1569,7 @@ class TtsPlaybackManager(
             "start-session",
             "chunks=${chunks.size} startChunk=$startChunkIndex resolvedStart=${resolveTtsStartChunkIndex(startChunkIndex, chunks.size)} continueSession=$continueSession generation=$startGeneration"
         )
-        onPlaybackSessionPreparing(bookTitle, chapterTitle)
+        onPlaybackSessionPreparing(bookTitle, chapterTitle, continueSession)
 
         val effectiveSpeakerId = normalizeTtsSpeakerId(speakerId)
 
