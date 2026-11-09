@@ -138,6 +138,7 @@ import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
 import com.aryan.reader.shared.pdf.SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
 import com.aryan.reader.shared.pdf.SharedPdfInkSample
 import com.aryan.reader.shared.sharedPdfStylusBarrelPressed
+import com.aryan.reader.shared.ui.launchScrollPhysics
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
@@ -2553,7 +2554,15 @@ internal fun PdfVerticalReader(
                                 // leaves a scheduling gap between pointer-up and the first decay
                                 // frame in which the camera is frozen; under render load that reads
                                 // as a stall followed by a jump, which is the reported micro-hop.
-                                verticalFlingJob = scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                                //
+                                // The pinned motion scale is the other half of #484: with the system
+                                // animator duration scale at 0f, Compose plays this decay at its end
+                                // value on the first frame, so the whole fling lands as one jump.
+                                // Scroll physics must not be disabled by "Remove animations", which
+                                // is how every platform scroll surface already behaves.
+                                verticalFlingJob = scope.launchScrollPhysics(
+                                    start = CoroutineStart.UNDISPATCHED,
+                                ) {
                                     val flingStartNanos = PdfVerticalPerfLog.nowNanos()
                                     frameStats.flingStart(flingStartNanos)
                                     PdfVerticalPerfLog.i(

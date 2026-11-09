@@ -244,6 +244,7 @@ import com.aryan.reader.shared.formatSpendGuardCountdown
 import com.aryan.reader.shared.hasSpendableBalance
 import com.aryan.reader.shared.parseSpendGuardSentinel
 import com.aryan.reader.shared.spendableDisplayText
+import com.aryan.reader.shared.ui.launchScrollPhysics
 import com.aryan.reader.SummaryCacheManager
 import com.aryan.reader.TtsSettingsSheet
 import com.aryan.reader.TtsWordReplacementsSheet
@@ -12147,7 +12148,9 @@ private fun PdfViewerPaginationPage(
                                     }
 
                                     if (flingX != 0f || flingY != 0f) {
-                                        spreadPanFlingJob = coroutineScope.launch {
+                                        // Scroll physics outlives "Remove animations"; see
+                                        // ScrollPhysicsMotionDurationScale.
+                                        spreadPanFlingJob = coroutineScope.launchScrollPhysics {
                                             try {
                                                 val startOffset = currentActiveOffset
                                                 var decayedX = startOffset.x

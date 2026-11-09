@@ -113,6 +113,7 @@ import com.aryan.reader.shared.pdf.sharedPdfIsEraserOverride
 import com.aryan.reader.shared.pdf.SHARED_PDF_INK_MIN_SAMPLE_DISTANCE_PX
 import com.aryan.reader.shared.pdf.SharedPdfInkSample
 import com.aryan.reader.shared.sharedPdfStylusBarrelPressed
+import com.aryan.reader.shared.ui.launchScrollPhysics
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
@@ -3396,7 +3397,9 @@ internal fun PdfPageComposable(
                             )
                         } else {
                             val startOffset = offset
-                            paginationPanFlingJob = coroutineScope.launch {
+                            // Scroll physics outlives "Remove animations"; see
+                            // ScrollPhysicsMotionDurationScale.
+                            paginationPanFlingJob = coroutineScope.launchScrollPhysics {
                                 try {
                                     kotlinx.coroutines.coroutineScope {
                                         launch {
