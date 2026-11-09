@@ -263,6 +263,11 @@ fun resolveCargoExecutable(): String? {
     return candidates.firstOrNull { it.canExecute() }?.absolutePath
 }
 
+/** The `CARGO_HOME` cargo will use, resolved the same way cargo resolves it. */
+fun resolveCargoHome(): String = System.getenv("CARGO_HOME")
+    ?.takeIf { it.isNotBlank() }
+    ?: File(System.getProperty("user.home"), ".cargo").absolutePath
+
 /**
  * `rustup` installs the toolchain pinned by `rust-toolchain.toml` on the first
  * cargo invocation, and it is not safe against several processes doing that at
@@ -336,6 +341,12 @@ fun registerOfficeOxideLibrary(abi: String, cargoTriple: String): TaskProvider<S
         )
         outputs.dir(officeOxideCrateDir.dir("target/$cargoTriple/release"))
 
+        // Environment variables are not part of an Exec task's up-to-date check, so
+        // fold the linker and the remapped registry prefix into the cache key.
+        val cargoRustflags = "--remap-path-prefix=${resolveCargoHome()}/registry=/cargo/registry"
+        inputs.property("cargoTargetLinker", ndkLinker ?: "")
+        inputs.property("cargoEncodedRustflags", cargoRustflags)
+
         commandLine(
             cargo ?: "cargo",
             "build",
@@ -352,6 +363,13 @@ fun registerOfficeOxideLibrary(abi: String, cargoTriple: String): TaskProvider<S
                 ndkLinker,
             )
         }
+        // Cargo compiles every dependency's panic locations into the cdylib as
+        // absolute paths into the registry (141 of them for this dependency graph),
+        // so two machines with different CARGO_HOME (/root vs /home/vagrant) link
+        // byte-different .so files and F-Droid's "compare with the published
+        // binary" step fails. Remap that prefix to a fixed path so a given commit
+        // produces identical binaries anywhere.
+        environment("CARGO_ENCODED_RUSTFLAGS", cargoRustflags)
     }
 
     return tasks.register<Sync>("stageOfficeOxide${label}JniLibs") {
