@@ -164,6 +164,33 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
+    fun `unified library keeps pinned books first without disturbing the sort`() {
+        val alpha = book("alpha", title = "Alpha")
+        val beta = book("beta", title = "Beta")
+        val gamma = book("gamma", title = "Gamma")
+
+        val visible = mobileUnifiedLibraryBooks(
+            books = listOf(beta, gamma, alpha),
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "",
+            sortOrder = SortOrder.TITLE_ASC,
+            pinnedBookIds = setOf("gamma"),
+        )
+
+        assertEquals(listOf("gamma", "alpha", "beta"), visible.map { it.id })
+        assertEquals(
+            listOf("alpha", "beta", "gamma"),
+            mobileUnifiedLibraryBooks(
+                books = listOf(beta, gamma, alpha),
+                filter = MobileUnifiedLibraryFilter.ALL,
+                query = "",
+                sortOrder = SortOrder.TITLE_ASC,
+            ).map { it.id },
+            "an empty pin set must leave the sort untouched",
+        )
+    }
+
+    @Test
     fun `unified continue reading prefers most recently positioned active book`() {
         val older = book(id = "older", displayName = "Older.epub", progress = 20f, positionModified = 20L)
         val newer = book(id = "newer", displayName = "Newer.epub", progress = 80f, positionModified = 40L)

@@ -19,6 +19,7 @@ import com.aryan.reader.shared.progressPercentValue
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.sortBooks
 import com.aryan.reader.shared.toHomeScreenModel
+import com.aryan.reader.shared.withPinnedFirst
 
 enum class SharedAppToolAction {
     SETTINGS,
@@ -160,12 +161,7 @@ internal fun SharedReaderScreenState.visibleIosLibraryBooks(): List<BookItem> {
         sortOrder,
     )
     if (pinnedLibraryBookIds.isEmpty()) return sorted
-    return sorted.withIndex()
-        .sortedWith(
-            compareByDescending<IndexedValue<BookItem>> { it.value.id in pinnedLibraryBookIds }
-                .thenBy { it.index }
-        )
-        .map { it.value }
+    return sorted.withPinnedFirst(pinnedLibraryBookIds) { it.id }
 }
 
 /** Android's shelves landing page contains manual shelves and root folders only. */
@@ -688,6 +684,8 @@ internal fun mobileUnifiedLibraryBooks(
     libraryFilters: LibraryFilters = LibraryFilters(),
     sortOrder: SortOrder = SortOrder.RECENT,
     folderAliases: Map<String, String> = emptyMap(),
+    /** Pinned books lead the list; see [withPinnedFirst]. */
+    pinnedBookIds: Set<String> = emptySet(),
     /**
      * Inside-file content matches for the current query, best-first. Unioned
      * after metadata hits only when [searchInsideFiles] is true; otherwise
@@ -700,22 +698,24 @@ internal fun mobileUnifiedLibraryBooks(
     val preFiltered = applyLibraryFilters(books, libraryFilters, folderAliases)
     val metadataBooks = preFiltered
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
-    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
-        return sortBooks(metadataBooks, sortOrder)
-    }
-    // Content-only books join metadata hits but still respect the active
-    // status filter (blank query = filter check without text matching).
-    // Relevance wins inside this group: best content match first, otherwise a
-    // strong hit sits below a book the user merely opened last.
-    val metadataIds = metadataBooks.mapTo(mutableSetOf()) { it.id }
-    val contentOnly = contentSearchResults
-        .filter { it.bookId !in metadataIds }
-    return sortBooks(metadataBooks, sortOrder) +
-        contentOnly.mapNotNull { result ->
-            preFiltered.firstOrNull {
-                it.id == result.bookId && it.matchesMobileUnifiedLibraryFilter(filter, "")
+    val ordered = if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
+        sortBooks(metadataBooks, sortOrder)
+    } else {
+        // Content-only books join metadata hits but still respect the active
+        // status filter (blank query = filter check without text matching).
+        // Relevance wins inside this group: best content match first, otherwise a
+        // strong hit sits below a book the user merely opened last.
+        val metadataIds = metadataBooks.mapTo(mutableSetOf()) { it.id }
+        val contentOnly = contentSearchResults
+            .filter { it.bookId !in metadataIds }
+        sortBooks(metadataBooks, sortOrder) +
+            contentOnly.mapNotNull { result ->
+                preFiltered.firstOrNull {
+                    it.id == result.bookId && it.matchesMobileUnifiedLibraryFilter(filter, "")
+                }
             }
-        }
+    }
+    return ordered.withPinnedFirst(pinnedBookIds) { it.id }
 }
 
 /**

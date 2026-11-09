@@ -139,6 +139,7 @@ import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import com.aryan.reader.shared.ui.activeFilterCount
 import com.aryan.reader.shared.ui.matchesMobileUnifiedLibraryFilter
 import com.aryan.reader.shared.ui.mobileUnifiedContinueReadingBook
+import com.aryan.reader.shared.withPinnedFirst
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -388,6 +389,7 @@ fun UnifiedLibraryScreen(
         uiState.rawLibraryFiles,
         uiState.libraryFilters,
         uiState.sortOrder,
+        uiState.pinnedLibraryBookIds,
         filter,
         debouncedQuery,
         uiState.libraryState.searchInsideFiles,
@@ -400,6 +402,7 @@ fun UnifiedLibraryScreen(
             uiState.libraryState.searchInsideFiles,
             uiState.libraryState.contentSearchResults,
             uiState.sortOrder,
+            uiState.pinnedLibraryBookIds,
         )
     }
     val section = UnifiedLibrarySection.fromPersisted(uiState.unifiedLibrarySection)
@@ -1301,6 +1304,7 @@ internal fun filterUnifiedLibraryBooks(
     searchInsideFiles: Boolean = false,
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     sortOrder: SortOrder = SortOrder.RECENT,
+    pinnedBookIds: Set<String> = emptySet(),
 ): List<RecentFileItem> {
     if (books.isEmpty()) return emptyList()
     val normalizedQuery = query.trim()
@@ -1309,18 +1313,23 @@ internal fun filterUnifiedLibraryBooks(
     val metadataBooks = sharedBooks
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
         .mapNotNull { byId[it.id] }
-    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
-        return sortFiles(metadataBooks, sortOrder)
+    val ordered = if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
+        sortFiles(metadataBooks, sortOrder)
+    } else {
+        // Content-only books follow metadata hits but still respect the active
+        // status filter (blank query = filter check without text matching).
+        // Relevance wins inside this group: best content match first, otherwise a
+        // strong hit sits below a book the user merely opened last.
+        val metadataIds = metadataBooks.mapTo(HashSet()) { it.bookId }
+        val contentScores = contentSearchResults.associate { it.bookId to it.score }
+        val contentOnly = sharedBooks
+            .filter { it.id !in metadataIds && it.matchesMobileUnifiedLibraryFilter(filter, "") }
+            .sortedByDescending { contentScores[it.id] ?: Double.NEGATIVE_INFINITY }
+            .mapNotNull { byId[it.id] }
+        sortFiles(metadataBooks, sortOrder) + contentOnly
     }
-    // Content-only books follow metadata hits but still respect the active
-    // status filter (blank query = filter check without text matching).
-    // Relevance wins inside this group: best content match first, otherwise a
-    // strong hit sits below a book the user merely opened last.
-    val metadataIds = metadataBooks.mapTo(HashSet()) { it.bookId }
-    val contentScores = contentSearchResults.associate { it.bookId to it.score }
-    val contentOnly = sharedBooks
-        .filter { it.id !in metadataIds && it.matchesMobileUnifiedLibraryFilter(filter, "") }
-        .sortedByDescending { contentScores[it.id] ?: Double.NEGATIVE_INFINITY }
-        .mapNotNull { byId[it.id] }
-    return sortFiles(metadataBooks, sortOrder) + contentOnly
+    // Android benchmark: pinned books lead the home/library list. Applied here
+    // because Library Beta re-derives the list from raw books instead of using
+    // the projector's already ordered `libraryBooks`.
+    return ordered.withPinnedFirst(pinnedBookIds) { it.bookId }
 }

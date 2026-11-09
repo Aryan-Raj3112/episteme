@@ -314,6 +314,7 @@ fun SharedMobileUnifiedLibraryScreen(
         state.libraryFilters,
         state.syncedFolders,
         state.sortOrder,
+        state.pinnedLibraryBookIds,
         filter,
         query,
         state.searchInsideFiles,
@@ -327,6 +328,9 @@ fun SharedMobileUnifiedLibraryScreen(
             sortOrder = state.sortOrder,
             // iOS books record the folder name while selections store Android's uriString.
             folderAliases = state.syncedFolders.associate { it.name to it.uriString },
+            // Pin state is the unified library set, matching the shared home cards
+            // and the Android context-bar toggle.
+            pinnedBookIds = state.pinnedLibraryBookIds,
             searchInsideFiles = state.searchInsideFiles,
             contentSearchResults = contentSearchResults,
         )

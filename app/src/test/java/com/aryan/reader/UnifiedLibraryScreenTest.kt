@@ -42,6 +42,30 @@ class UnifiedLibraryScreenTest {
     }
 
     @Test
+    fun pinnedBooksLeadTheLibraryListWithoutRewritingTheSort() {
+        val books = listOf(
+            book("Alpha", 10f, timestamp = 30L),
+            book("Beta", 10f, timestamp = 20L),
+            book("Gamma", 10f, timestamp = 10L)
+        )
+
+        assertEquals(
+            listOf("Gamma", "Alpha", "Beta"),
+            filterUnifiedLibraryBooks(
+                books = books,
+                filter = UnifiedLibraryFilter.ALL,
+                query = "",
+                pinnedBookIds = setOf("Gamma"),
+            ).map { it.displayName },
+        )
+        assertEquals(
+            "an empty pin set must keep the raw sort",
+            listOf("Alpha", "Beta", "Gamma"),
+            filterUnifiedLibraryBooks(books, UnifiedLibraryFilter.ALL, "").map { it.displayName },
+        )
+    }
+
+    @Test
     fun continueReadingPrefersMostRecentlyReadInProgressBook() {
         val older = book("Older", 30f, timestamp = 10L)
         val newer = book("Newer", 60f, timestamp = 20L)

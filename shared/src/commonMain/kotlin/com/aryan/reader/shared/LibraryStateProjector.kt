@@ -93,12 +93,12 @@ class SharedLibraryStateProjector(
         }
         val filtered = applyLibraryFilters(queried, current.filters)
         val sortedLibraryBooks = sortBooks(filtered, current.sortOrder)
-            .withPinnedFirst(current.pinnedLibraryBookIds)
+            .withPinnedFirst(current.pinnedLibraryBookIds) { it.id }
         val visibleRecentBooks = sortBooks(
             allLibraryBooks.filter { it.isRecent },
             SortOrder.RECENT
         )
-            .withPinnedFirst(current.pinnedHomeBookIds)
+            .withPinnedFirst(current.pinnedHomeBookIds) { it.id }
             .take(if (current.recentLimit > 0) current.recentLimit else Int.MAX_VALUE)
         val booksById = allLibraryBooks.associateBy { it.id }
         val tabState = current.tabs.reconcileAvailableBooks(booksById.keys)
@@ -492,11 +492,18 @@ fun SharedReaderScreenState.withImportedFiles(
     )
 }
 
-private fun List<BookItem>.withPinnedFirst(pinnedBookIds: Set<String>): List<BookItem> {
+/**
+ * Pinned entries lead the list; both groups keep the caller's existing order.
+ *
+ * Shared by every mobile surface that re-derives a list from raw books
+ * (Android's unified library, iOS's library projection, and the shared
+ * unified model) so a pin looks the same wherever it is toggled.
+ */
+fun <T> List<T>.withPinnedFirst(pinnedBookIds: Set<String>, idOf: (T) -> String): List<T> {
     if (pinnedBookIds.isEmpty()) return this
     return withIndex()
         .sortedWith(
-            compareByDescending<IndexedValue<BookItem>> { it.value.id in pinnedBookIds }
+            compareByDescending<IndexedValue<T>> { idOf(it.value) in pinnedBookIds }
                 .thenBy { it.index }
         )
         .map { it.value }

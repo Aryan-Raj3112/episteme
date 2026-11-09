@@ -329,6 +329,7 @@ internal fun UnifiedLibraryHome(
                 item = item,
                 isSelected = item.bookId in selectedBookIds,
                 modifier = Modifier.fillMaxWidth(),
+                isPinned = item.bookId in pinnedBookIds,
                 onClick = { onBookClick(item) },
                 onLongClick = { onBookLongClick(item) },
                 isDownloading = item.bookId in downloadingBookIds,
