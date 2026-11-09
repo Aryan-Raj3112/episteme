@@ -264,6 +264,23 @@ fun resolveCargoExecutable(): String? {
 }
 
 /**
+ * `rustup` installs the toolchain pinned by `rust-toolchain.toml` on the first
+ * cargo invocation, and it is not safe against several processes doing that at
+ * the same time: they race renaming the same `downloads/<sha>.partial` and the
+ * losers fail the build with "component download failed … could not rename
+ * downloaded file". Every per-ABI cargo build therefore waits for this single
+ * warm-up, which also installs the Android targets declared in that file.
+ */
+val officeOxideToolchainWarmUp = tasks.register<Exec>("warmOfficeOxideToolchain") {
+    group = "build"
+    description = "Installs the Rust toolchain pinned by rust-toolchain.toml, before the per-ABI cargo builds."
+    val cargo: String? = resolveCargoExecutable()
+    onlyIf("Rust toolchain (cargo) is installed") { cargo != null }
+    workingDir = officeOxideCrateDir.asFile
+    commandLine(cargo ?: "cargo", "--version")
+}
+
+/**
  * Builds `liboffice_oxide_bridge.so` for one ABI with cargo, then stages it into
  * `build/generated/officeOxideJni/<abi>/`, which the Android plugin packages as
  * a jniLib. Staging (rather than pointing at cargo's own output directory) keeps
@@ -308,6 +325,7 @@ fun registerOfficeOxideLibrary(abi: String, cargoTriple: String): TaskProvider<S
         group = "build"
         description = "Builds the office_oxide Rust bridge for $abi ($cargoTriple)."
         onlyIf("Rust toolchain (cargo) is installed") { cargo != null }
+        dependsOn(officeOxideToolchainWarmUp)
         workingDir = officeOxideCrateDir.asFile
 
         inputs.dir(officeOxideCrateDir.dir("src"))

@@ -411,7 +411,8 @@ internal fun SharedMobilePdfZoomViewport(
         val directionX = velocityX / speed
         val directionY = velocityY / speed
         val viewportSize = PdfZoomSize(viewport.width.toFloat(), viewport.height.toFloat())
-        cameraAnimationJob = scope.launch {
+        // Scroll physics outlives "Remove animations"; see ScrollPhysicsMotionDurationScale.
+        cameraAnimationJob = scope.launchScrollPhysics {
             try {
                 Animatable(0f).animateDecay(
                     initialVelocity = speed * 0.72f,
