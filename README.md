@@ -119,7 +119,7 @@ Thank you to the people helping keep Episteme Reader moving:
 | Supporter | Platform |
 |---|---|
 | <img src="https://github.com/johan13220.png?size=48" width="24" height="24" valign="middle" alt="johan13220 avatar"> [ProgrammerWhoPrograms](https://github.com/johan13220) | GitHub Sponsor |
-| <img src="https://github.com/litaeusworks.png?size=48" width="24" height="24" valign="middle" alt="litaeusworks avatar"> [litaeusworks](https://github.com/litaeusworks) | Patreon Member |
+| <img src="https://github.com/gbabic65gb-a11y.png?size=48" width="24" height="24" valign="middle" alt="gbabic65gb-a11y avatar"> [gbabic65gb-a11y](https://github.com/gbabic65gb-a11y) | GitHub Sponsor |
 
 ## Support the Project
 
