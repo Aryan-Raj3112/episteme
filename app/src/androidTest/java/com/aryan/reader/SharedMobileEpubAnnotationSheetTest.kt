@@ -3,6 +3,7 @@ package com.aryan.reader
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -17,6 +18,7 @@ import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.ui.SharedMobileEpubAnnotationLabels
 import com.aryan.reader.shared.ui.SharedMobileEpubAnnotationSheet
 import com.google.common.truth.Truth.assertThat
+import java.util.concurrent.atomic.AtomicReference
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,16 +57,7 @@ class SharedMobileEpubAnnotationSheetTest {
                     palette = ReaderHighlightPalette(),
                     effectiveBg = MaterialTheme.colorScheme.surface,
                     effectiveText = MaterialTheme.colorScheme.onSurface,
-                    labels = SharedMobileEpubAnnotationLabels(
-                        copy = "Copy",
-                        speak = "Speak",
-                        dictionary = "Dict",
-                        translate = "Translate",
-                        search = "Search",
-                        notePlaceholder = "Add a note…",
-                        delete = "Delete",
-                        saveNote = "Save Note",
-                    ),
+                    labels = labels(),
                     onColorChange = { chosenArgb = it },
                     onStyleChange = { chosenStyle = it },
                     onCopy = {},
@@ -102,4 +95,82 @@ class SharedMobileEpubAnnotationSheetTest {
             assertThat(deleted).isTrue()
         }
     }
+
+    @Test
+    fun typingCommitsTheDraftWithoutPressingSave() {
+        // #609: the note was lost on every dismissal that was not the Save button, so the sheet now
+        // reports the draft as the user types. This drives the real debounce rather than a frame, so
+        // it waits on wall-clock time instead of advancing the compose clock.
+        val committedNote = AtomicReference<String?>(null)
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedMobileEpubAnnotationSheet(
+                    highlight = highlight,
+                    palette = ReaderHighlightPalette(),
+                    effectiveBg = MaterialTheme.colorScheme.surface,
+                    effectiveText = MaterialTheme.colorScheme.onSurface,
+                    labels = labels(),
+                    onColorChange = {},
+                    onStyleChange = {},
+                    onCopy = {},
+                    onDictionary = {},
+                    onTranslate = {},
+                    onSearch = {},
+                    onDismiss = {},
+                    onSave = { committedNote.set(it) },
+                    onDelete = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("Add a note…").performTextInput("A half-written note")
+        composeTestRule.waitUntil(timeoutMillis = 10_000) { committedNote.get() != null }
+
+        composeTestRule.runOnIdle {
+            assertThat(committedNote.get()).isEqualTo("A half-written note")
+        }
+    }
+
+    @Test
+    fun noteBodyScrollsSoTheKeyboardCannotSqueezeTheEditorOut() {
+        // #609: with the note field and the actions in one non-scrollable Column, the keyboard made
+        // the sheet taller than the viewport and Compose measured the field and the Save button down
+        // to nothing. The scroll container above the pinned actions is what stops that.
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedMobileEpubAnnotationSheet(
+                    highlight = highlight,
+                    palette = ReaderHighlightPalette(),
+                    effectiveBg = MaterialTheme.colorScheme.surface,
+                    effectiveText = MaterialTheme.colorScheme.onSurface,
+                    labels = labels(),
+                    onColorChange = {},
+                    onStyleChange = {},
+                    onCopy = {},
+                    onDictionary = {},
+                    onTranslate = {},
+                    onSearch = {},
+                    onDismiss = {},
+                    onSave = {},
+                    onDelete = {},
+                )
+            }
+        }
+
+        assertThat(composeTestRule.onAllNodes(hasScrollAction()).fetchSemanticsNodes()).isNotEmpty()
+        composeTestRule.onNodeWithText("Add a note…").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Save Note").assertIsDisplayed()
+    }
+
+    private fun labels() = SharedMobileEpubAnnotationLabels(
+        copy = "Copy",
+        speak = "Speak",
+        dictionary = "Dict",
+        translate = "Translate",
+        search = "Search",
+        notePlaceholder = "Add a note…",
+        delete = "Delete",
+        saveNote = "Save Note",
+    )
 }

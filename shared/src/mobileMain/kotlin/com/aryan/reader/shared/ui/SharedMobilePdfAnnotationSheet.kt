@@ -9,10 +9,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -42,11 +45,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -100,121 +106,159 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
         onUpdate(annotation.copy(note = noteText.trim().ifBlank { null }, comments = next))
     }
 
+    // Draft autosave, same contract as the EPUB sheet: `onUpdate` is "persist", the sheet reports
+    // the note through it long before Done and flushes on every dismissal path, so a swipe-down or
+    // a back press no longer takes the note with it.
+    val scope = rememberCoroutineScope()
+    val commitNote by rememberUpdatedState<(String) -> Unit> { text ->
+        onUpdate(annotation.copy(note = text.trim().ifBlank { null }, comments = comments))
+    }
+    val autosave = remember(annotation.id) {
+        SharedReaderNoteAutosave(
+            scope = scope,
+            initialText = annotation.note.orEmpty(),
+            commit = { commitNote(it) }
+        )
+    }
+    val dismissWithFlush: () -> Unit = {
+        autosave.flush(noteText)
+        onDismiss()
+    }
+    // Delete/Done step aside while the keyboard is up so the scrolling body gets the room — in
+    // landscape the space above the IME is a strip. Nothing depends on them: the note is committed
+    // as it is typed and on dismissal, and the row returns when the keyboard closes. Visibility
+    // comes from a non-zero IME inset because `WindowInsets.isImeVisible` is Android-only here.
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = dismissWithFlush,
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface,
         contentColor = MaterialTheme.colorScheme.onSurface
     ) {
-        Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp).padding(bottom = 24.dp)
-        ) {
-            SharedMobilePdfHighlightStyleRow(annotation.highlightStyle) { style ->
-                onUpdate(annotation.copy(highlightStyle = style, note = noteText.ifBlank { null }, comments = comments))
-            }
-            SharedMobilePdfHighlightColorRow(annotation.colorArgb) { color ->
-                onUpdate(annotation.copy(colorArgb = color, note = noteText.ifBlank { null }, comments = comments))
-            }
-            val displayColor = Color(annotation.colorArgb)
-            Surface(
-                color = displayColor.copy(alpha = 0.1f),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, displayColor.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+        Column(Modifier.fillMaxWidth().imePadding()) {
+            // Scrollable body, pinned actions: with the keyboard up the note field scrolls into view
+            // instead of pushing Done/Delete off the sheet (see the EPUB sheet for the full story).
+            Column(
+                Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp).padding(bottom = 16.dp)
             ) {
-                Row(Modifier.heightIn(min = 64.dp)) {
-                    Box(Modifier.width(6.dp).fillMaxHeight().background(displayColor))
-                    Text(
-                        text = "\"${annotation.text.ifBlank { "Highlighted section" }}\"",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(16.dp)
-                    )
+                SharedMobilePdfHighlightStyleRow(annotation.highlightStyle) { style ->
+                    onUpdate(annotation.copy(highlightStyle = style, note = noteText.ifBlank { null }, comments = comments))
                 }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                SharedMobilePdfAnnotationTool(icon = Res.drawable.copy, label = readerString("action_copy", "Copy")) {
-                    val result = writeSharedClipboard(copiedTextLabel, annotation.text)
-                    if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
+                SharedMobilePdfHighlightColorRow(annotation.colorArgb) { color ->
+                    onUpdate(annotation.copy(colorArgb = color, note = noteText.ifBlank { null }, comments = comments))
                 }
-                SharedMobilePdfAnnotationTool(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = readerString("action_read_aloud", "Read aloud"), onClick = onReadAloud)
-                if (readerExternalLookupActionsAvailable(annotation.text.length)) {
-                    SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Book, label = readerString("label_dict", "Dict")) {
-                        openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, annotation.text)
-                    }
-                    SharedMobilePdfAnnotationTool(icon = Res.drawable.translate, label = readerString("action_translate", "Translate")) {
-                        openSharedMobileEpubLookup(ReaderExternalLookupAction.TRANSLATE, annotation.text)
-                    }
-                    SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Search, label = readerString("action_search", "Search")) {
-                        openSharedMobileEpubLookup(ReaderExternalLookupAction.SEARCH, annotation.text)
+                val displayColor = Color(annotation.colorArgb)
+                Surface(
+                    color = displayColor.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, displayColor.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(Modifier.heightIn(min = 64.dp)) {
+                        Box(Modifier.width(6.dp).fillMaxHeight().background(displayColor))
+                        Text(
+                            text = "\"${annotation.text.ifBlank { "Highlighted section" }}\"",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(16.dp)
+                        )
                     }
                 }
-            }
-            Spacer(Modifier.height(16.dp))
-            SharedMobilePdfAnnotationTabs(section, comments.count { it.contents.isNotBlank() }) { section = it }
-            Spacer(Modifier.height(12.dp))
-            if (section == SharedMobilePdfAnnotationSection.NOTE) {
-                OutlinedTextField(
-                    value = noteText,
-                    onValueChange = { noteText = it },
-                    placeholder = { Text("Add a note") },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                    maxLines = 5,
-                    shape = RoundedCornerShape(12.dp)
-                )
-            } else {
-                SharedMobilePdfCommentsEditor(
-                    comments = comments,
-                    commentText = commentText,
-                    commentAuthor = commentAuthor,
-                    replyTargetId = replyTargetId,
-                    editingCommentId = editingCommentId,
-                    onTextChange = { commentText = it },
-                    onAuthorChange = { commentAuthor = it },
-                    onReply = { replyTargetId = it.id; editingCommentId = null; commentText = "" },
-                    onEdit = { editingCommentId = it.id; replyTargetId = null; commentText = it.contents; commentAuthor = it.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR } },
-                    onCancel = { replyTargetId = null; editingCommentId = null; commentText = "" },
-                    onDelete = { target -> updateComments(comments.withoutPdfCommentThread(target.id)) },
-                    onSubmit = {
-                        val contents = commentText.trim()
-                        if (contents.isNotBlank()) {
-                            val author = commentAuthor.trim().ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
-                            val now = currentTimestamp()
-                            val next = if (editingCommentId != null) {
-                                comments.map { if (it.id == editingCommentId) it.copy(author = author, contents = contents, modifiedAt = now) else it }
-                            } else {
-                                comments + SharedPdfAnnotationComment(
-                                    id = "pdf_comment_${now}_${comments.size}", parentId = replyTargetId,
-                                    author = author, contents = contents, createdAt = now, modifiedAt = now
-                                )
-                            }
-                            updateComments(next)
-                            commentText = ""; replyTargetId = null; editingCommentId = null
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    SharedMobilePdfAnnotationTool(icon = Res.drawable.copy, label = readerString("action_copy", "Copy")) {
+                        val result = writeSharedClipboard(copiedTextLabel, annotation.text)
+                        if (!result.success) onClipboardError?.invoke(clipboardErrorMessage)
+                    }
+                    SharedMobilePdfAnnotationTool(imageVector = Icons.AutoMirrored.Filled.VolumeUp, label = readerString("action_read_aloud", "Read aloud"), onClick = onReadAloud)
+                    if (readerExternalLookupActionsAvailable(annotation.text.length)) {
+                        SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Book, label = readerString("label_dict", "Dict")) {
+                            openSharedMobileEpubLookup(ReaderExternalLookupAction.DICTIONARY, annotation.text)
+                        }
+                        SharedMobilePdfAnnotationTool(icon = Res.drawable.translate, label = readerString("action_translate", "Translate")) {
+                            openSharedMobileEpubLookup(ReaderExternalLookupAction.TRANSLATE, annotation.text)
+                        }
+                        SharedMobilePdfAnnotationTool(imageVector = Icons.Default.Search, label = readerString("action_search", "Search")) {
+                            openSharedMobileEpubLookup(ReaderExternalLookupAction.SEARCH, annotation.text)
                         }
                     }
-                )
-            }
-            Spacer(Modifier.height(24.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Button(
-                    onClick = onDelete,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
-                ) {
-                    Icon(Icons.Default.Delete, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Delete")
                 }
-                Button(onClick = {
-                    onUpdate(annotation.copy(note = noteText.trim().ifBlank { null }, comments = comments))
-                    onDismiss()
-                }) { Text("Done") }
+                Spacer(Modifier.height(16.dp))
+                SharedMobilePdfAnnotationTabs(section, comments.count { it.contents.isNotBlank() }) { section = it }
+                Spacer(Modifier.height(12.dp))
+                if (section == SharedMobilePdfAnnotationSection.NOTE) {
+                    OutlinedTextField(
+                        value = noteText,
+                        onValueChange = {
+                            noteText = it
+                            autosave.onTextChanged(it)
+                        },
+                        placeholder = { Text("Add a note") },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
+                        maxLines = 5,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                } else {
+                    SharedMobilePdfCommentsEditor(
+                        comments = comments,
+                        commentText = commentText,
+                        commentAuthor = commentAuthor,
+                        replyTargetId = replyTargetId,
+                        editingCommentId = editingCommentId,
+                        onTextChange = { commentText = it },
+                        onAuthorChange = { commentAuthor = it },
+                        onReply = { replyTargetId = it.id; editingCommentId = null; commentText = "" },
+                        onEdit = { editingCommentId = it.id; replyTargetId = null; commentText = it.contents; commentAuthor = it.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR } },
+                        onCancel = { replyTargetId = null; editingCommentId = null; commentText = "" },
+                        onDelete = { target -> updateComments(comments.withoutPdfCommentThread(target.id)) },
+                        onSubmit = {
+                            val contents = commentText.trim()
+                            if (contents.isNotBlank()) {
+                                val author = commentAuthor.trim().ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
+                                val now = currentTimestamp()
+                                val next = if (editingCommentId != null) {
+                                    comments.map { if (it.id == editingCommentId) it.copy(author = author, contents = contents, modifiedAt = now) else it }
+                                } else {
+                                    comments + SharedPdfAnnotationComment(
+                                        id = "pdf_comment_${now}_${comments.size}", parentId = replyTargetId,
+                                        author = author, contents = contents, createdAt = now, modifiedAt = now
+                                    )
+                                }
+                                updateComments(next)
+                                commentText = ""; replyTargetId = null; editingCommentId = null
+                            }
+                        }
+                    )
+                }
+            }
+
+            if (!isImeVisible) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 8.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Button(
+                        onClick = {
+                            // Drop the draft first: a pending commit would write the note back onto the
+                            // annotation this button just deleted.
+                            autosave.discard()
+                            onDelete()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) {
+                        Icon(Icons.Default.Delete, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Delete")
+                    }
+                    Button(onClick = dismissWithFlush) { Text("Done") }
+                }
             }
         }
     }

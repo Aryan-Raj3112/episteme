@@ -4390,8 +4390,9 @@ fun SharedMobileEpubReaderScreen(
             onOpenPaletteManager = { showHighlightPaletteManager = true },
             onDismiss = { editingHighlight = null },
             onSave = { note ->
+                // Persist only: the sheet autosaves the draft through this callback and closes
+                // itself, so clearing `editingHighlight` here would dismiss the editor mid-typing.
                 update(highlight.copy(note = note.trim().takeIf { it.isNotBlank() }))
-                editingHighlight = null
             },
             onDelete = { confirmDeleteHighlight = highlight }
         )

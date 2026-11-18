@@ -5368,6 +5368,9 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                 },
                 onDismiss = { highlightToNoteId = null },
                 onSave = { noteText, comments ->
+                    // Persist only. The sheet autosaves the draft through this callback and closes
+                    // itself via `onDismiss`, so clearing `highlightToNoteId` here would dismiss the
+                    // editor on the first autosave.
                     val index =
                         userHighlights.indexOfFirst { it.id == targetHighlight.id }
                     if (index != -1) {
@@ -5377,7 +5380,6 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                                 comments = comments
                             )
                     }
-                    highlightToNoteId = null
                 },
                 onUpdate = { noteText, comments ->
                     val index =

@@ -160,13 +160,16 @@ internal fun EpubHighlightNoteEditorSheet(
             // the highlight had been re-anchored — repairing a locator rewrites its position, and
             // re-highlighting the same span rewrites cfi — leaving the edit to land on whatever
             // highlight now occupies the old position, or on none.
+            //
+            // Persist only: the sheet reports the draft here while the user types and closes itself
+            // afterwards, so this must not clear `highlightToNoteCfi` (that would dismiss the editor
+            // on the first autosave).
             val index = userHighlights.indexOfFirst { it.id == targetHighlight.id }
             if (index != -1) {
                 userHighlights[index] = userHighlights[index].copy(
                     note = noteText.takeIf { it.isNotBlank() }
                 )
             }
-            navigation.highlightToNoteCfi = null
         },
         onDelete = {
             userHighlights.remove(targetHighlight)
