@@ -199,6 +199,9 @@ import com.aryan.reader.shared.ui.iosInstalledLookupAppSchemes
 import com.aryan.reader.shared.migrateLegacyIosReaderAutoScrollSpeed
 import com.aryan.reader.shared.migrateAndroidEpubFormatSettings
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.SharedFontFiles
+import com.aryan.reader.shared.SharedGoogleFontsDownloadOutcome
+import com.aryan.reader.shared.googleFontCatalogEntry
 import com.aryan.reader.shared.canOpenMobilePdfTab
 import com.aryan.reader.shared.canUseCloudSync
 import com.aryan.reader.shared.cloudSyncSetupRoute
@@ -1015,26 +1018,33 @@ class ReaderIosBridge internal constructor(
             }
     }
 
-    fun recordImportedFonts(fileNames: List<String>, filePaths: List<String> = fileNames) {
-        if (fileNames.isEmpty()) {
+    fun recordImportedFonts(
+        fileNames: List<String>,
+        filePaths: List<String> = fileNames,
+        wasCancelled: Boolean = false,
+    ) {
+        if (wasCancelled) {
             latestNativeEvent = "Font import cancelled"
             return
         }
         val imported = fileNames.mapIndexedNotNull { index, fileName ->
             val path = filePaths.getOrNull(index) ?: return@mapIndexedNotNull null
-            val extension = fileName.substringAfterLast('.', "").lowercase()
-            if (extension !in setOf("ttf", "otf", "woff", "woff2")) return@mapIndexedNotNull null
+            if (!SharedFontFiles.isSupportedFileName(fileName)) return@mapIndexedNotNull null
             CustomFontItem(
                 id = "ios-font-${path.hashCode()}",
                 displayName = fileName.substringBeforeLast('.').ifBlank { fileName },
                 fileName = fileName,
-                fileExtension = extension,
+                fileExtension = SharedFontFiles.extensionOf(fileName),
                 path = path,
                 timestamp = currentTimestamp()
             )
         }
+        if (imported.isEmpty()) {
+            latestNativeEvent = "No supported font files selected"
+            return
+        }
         importedFonts = (imported + importedFonts).distinctBy { it.path }
-        latestNativeEvent = if (imported.isEmpty()) "No supported font files selected" else "Imported ${imported.size} font(s)"
+        latestNativeEvent = "Imported ${imported.size} font(s)"
     }
 
     fun deleteImportedFont(path: String) {
@@ -1071,6 +1081,9 @@ class ReaderIosBridge internal constructor(
             .distinct()
             .sorted()
     }
+
+    /** Font extensions the picker may offer; mirrors Android's MIME filter. */
+    fun supportedFontExtensions(): List<String> = SharedFontFiles.supportedExtensions.sorted()
 
     fun importedFilePathsMissingContentId(): List<String> {
         return importedFiles.filter { it.contentId.isBlank() }.map { it.path }
@@ -4530,16 +4543,26 @@ private fun ReaderIosApp(
         googleFontNames = loadIosGoogleFontNames()
     }
 
-    fun downloadGoogleFont(fontName: String, onComplete: () -> Unit) {
+    fun downloadGoogleFont(
+        fontName: String,
+        onComplete: (SharedGoogleFontsDownloadOutcome) -> Unit,
+    ) {
         scope.launch {
-            val result = withContext(Dispatchers.Default) { downloadIosGoogleFont(fontName) }
+            // Catalog entries may carry a `:face` suffix for families without a
+            // Regular 400 face (e.g. "Buda:300").
+            val catalog = googleFontNames.ifEmpty { loadIosGoogleFontNames() }
+            val cssFamily = googleFontCatalogEntry(fontName, catalog)
+            val result = withContext(Dispatchers.Default) {
+                downloadIosGoogleFont(cssFamily, fontName)
+            }
             result.onSuccess { font ->
                 bridge.recordImportedFonts(listOf(font.fileName), listOf(font.path))
                 showMessage("$fontName downloaded successfully!")
-            }.onFailure { error ->
-                showMessage("Failed to download $fontName: ${error.message}")
             }
-            onComplete()
+            val errorMessage = result.exceptionOrNull()?.let { error ->
+                error.message?.takeIf { it.isNotBlank() } ?: "Failed to download '$fontName'."
+            }
+            onComplete(SharedGoogleFontsDownloadOutcome(errorMessage = errorMessage))
         }
     }
 

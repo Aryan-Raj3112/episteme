@@ -150,6 +150,10 @@ import com.aryan.reader.shared.CloudMaintenanceIntent
 import com.aryan.reader.shared.CloudMaintenanceResult
 import com.aryan.reader.shared.EpubAnnotationSerializer
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.SharedGoogleFontsDownloadOutcome
+import com.aryan.reader.shared.googleFontCatalogEntry
+import com.aryan.reader.shared.googleFontDownloadExtension
+import com.aryan.reader.shared.googleFontDownloadUrlFromCss
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
@@ -1547,66 +1551,79 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         return googleFontsCache
     }
 
-    fun downloadGoogleFont(fontName: String, onComplete: () -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val encodedName = java.net.URLEncoder.encode(fontName, "UTF-8")
-                val url = java.net.URL("https://fonts.googleapis.com/css?family=$encodedName")
-                val connection = url.openConnection() as java.net.HttpURLConnection
+    fun downloadGoogleFont(
+        fontName: String,
+        onComplete: (SharedGoogleFontsDownloadOutcome) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val outcome = withContext(Dispatchers.IO) { downloadGoogleFontFile(fontName) }
+            onComplete(outcome)
+        }
+    }
 
-                // CRITICAL: We spoof an old Safari User-Agent. This forces Google to return the raw .ttf file instead of .woff2
-                connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; en-us) AppleWebKit/533.21.1 (KHTML, like Gecko) Version/5.0.5 Safari/533.21.1")
+    /** Fetches one family from Google Fonts and imports the returned face. */
+    private suspend fun downloadGoogleFontFile(fontName: String): SharedGoogleFontsDownloadOutcome {
+        return try {
+            // Bundled catalog entries may carry a `:face` suffix for families
+            // without a Regular 400 face (e.g. "Buda:300").
+            val catalog = googleFontsCache.ifEmpty { loadGoogleFontsList(appContext) }
+            val cssFamily = googleFontCatalogEntry(fontName, catalog)
+            val encodedName = java.net.URLEncoder.encode(cssFamily, "UTF-8")
+            val connection = java.net.URL("https://fonts.googleapis.com/css?family=$encodedName")
+                .openConnection() as java.net.HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 15_000
 
-                if (connection.responseCode != 200) {
-                    withContext(Dispatchers.Main) { showBanner("Font '$fontName' not found on server.", isError = true) }
-                    return@launch
-                }
+            // CRITICAL: We spoof an old Safari User-Agent. This forces Google to return the raw .ttf file instead of .woff2
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; en-us) AppleWebKit/533.21.1 (KHTML, like Gecko) Version/5.0.5 Safari/533.21.1")
 
-                val css = connection.inputStream.bufferedReader().readText()
-
-                val regex = """url\((https://[^)]+)\)""".toRegex()
-                val match = regex.find(css)
-
-                if (match != null) {
-                    val fontUrl = match.groupValues[1]
-                    val ext = fontUrl.substringAfterLast(".", "ttf").lowercase()
-
-                    // Strict format validation
-                    if (ext != "ttf" && ext != "otf") {
-                        withContext(Dispatchers.Main) { showBanner("Unsupported format ($ext) returned for $fontName", isError = true) }
-                        return@launch
-                    }
-
-                    val fontConnection = java.net.URL(fontUrl).openConnection() as java.net.HttpURLConnection
-                    val tempFile = File(appContext.cacheDir, "$fontName.$ext")
-
-                    fontConnection.inputStream.use { input ->
-                        tempFile.outputStream().use { output ->
-                            input.copyTo(output)
-                        }
-                    }
-
-                    val result = fontsRepository.importFont(Uri.fromFile(tempFile))
-                    result.onSuccess { font ->
-                        if (uiState.value.isSyncEnabled) {
-                            uploadNewFont(font)
-                        }
-                        withContext(Dispatchers.Main) { showBanner("$fontName downloaded successfully!") }
-                    }.onFailure {
-                        withContext(Dispatchers.Main) {
-                            showBanner(appContext.getString(R.string.error_import_font, it.message), isError = true)
-                        }
-                    }
-                    tempFile.delete()
-                } else {
-                    withContext(Dispatchers.Main) { showBanner("Could not parse download link for $fontName", isError = true) }
-                }
-            } catch (e: Exception) {
-                Timber.e(e, "Failed to download Google Font: $fontName")
-                withContext(Dispatchers.Main) { showBanner("Failed to download $fontName: ${e.localizedMessage}", isError = true) }
-            } finally {
-                withContext(Dispatchers.Main) { onComplete() }
+            if (connection.responseCode != 200) {
+                return SharedGoogleFontsDownloadOutcome(
+                    errorMessage = "'$fontName' is not available on Google Fonts."
+                )
             }
+
+            val css = connection.inputStream.bufferedReader().readText()
+            val fontUrl = googleFontDownloadUrlFromCss(css)
+                ?: return SharedGoogleFontsDownloadOutcome(
+                    errorMessage = "Could not find a download link for '$fontName'."
+                )
+
+            val ext = googleFontDownloadExtension(fontUrl)
+            if (ext != "ttf" && ext != "otf") {
+                return SharedGoogleFontsDownloadOutcome(
+                    errorMessage = "Google Fonts returned an unsupported format ($ext) for '$fontName'."
+                )
+            }
+
+            val fontConnection = java.net.URL(fontUrl).openConnection() as java.net.HttpURLConnection
+            fontConnection.connectTimeout = 15_000
+            fontConnection.readTimeout = 30_000
+            val tempFile = File(appContext.cacheDir, "$fontName.$ext")
+            try {
+                fontConnection.inputStream.use { input ->
+                    tempFile.outputStream().use { output -> input.copyTo(output) }
+                }
+                val imported = fontsRepository.importFont(Uri.fromFile(tempFile))
+                imported.fold(
+                    onSuccess = { font ->
+                        if (uiState.value.isSyncEnabled) uploadNewFont(font)
+                        SharedGoogleFontsDownloadOutcome()
+                    },
+                    onFailure = { error ->
+                        SharedGoogleFontsDownloadOutcome(
+                            errorMessage = appContext.getString(R.string.error_import_font, error.message)
+                        )
+                    },
+                )
+            } finally {
+                tempFile.delete()
+            }
+        } catch (e: Exception) {
+            Timber.e(e, "Failed to download Google Font: $fontName")
+            SharedGoogleFontsDownloadOutcome(
+                errorMessage = "Failed to download '$fontName': ${e.localizedMessage}"
+            )
         }
     }
 

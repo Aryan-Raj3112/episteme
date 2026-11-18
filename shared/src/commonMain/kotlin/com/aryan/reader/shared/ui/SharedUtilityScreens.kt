@@ -82,6 +82,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aryan.reader.shared.AppFontPreference
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.SharedGoogleFontsDownloadOutcome
+import com.aryan.reader.shared.googleFontFamilyName
 
 data class SharedAndroidUtilityLinkStrings(
     val title: String,
@@ -326,7 +328,9 @@ fun SharedCustomFontsScreen(
     onDeleteFont: (CustomFontItem) -> Unit,
     googleFontsAvailable: Boolean = false,
     getGoogleFonts: () -> List<String> = { emptyList() },
-    onDownloadGoogleFont: (String, () -> Unit) -> Unit = { _, onComplete -> onComplete() },
+    onDownloadGoogleFont: (String, (SharedGoogleFontsDownloadOutcome) -> Unit) -> Unit = { _, onComplete ->
+        onComplete(SharedGoogleFontsDownloadOutcome())
+    },
     fontFamilyForPreview: (CustomFontItem) -> FontFamily? = { null },
     modifier: Modifier = Modifier
 ) {
@@ -468,40 +472,14 @@ fun SharedFontSettingsTabs(
 private fun SharedGoogleFontsDialog(
     existingFonts: List<CustomFontItem>,
     getGoogleFonts: () -> List<String>,
-    onDownloadGoogleFont: (String, () -> Unit) -> Unit,
+    onDownloadGoogleFont: (String, (SharedGoogleFontsDownloadOutcome) -> Unit) -> Unit,
     onDismiss: () -> Unit
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var downloadingFontName by remember { mutableStateOf<String?>(null) }
-    val popularPresets = remember {
-        listOf(
-            "Merriweather",
-            "Open Sans",
-            "Playfair Display",
-            "Montserrat",
-            "Oswald",
-            "Raleway",
-            "Nunito",
-            "Poppins",
-            "Ubuntu",
-            "Fira Sans",
-            "Quicksand",
-            "Crimson Text",
-            "Literata",
-            "EB Garamond",
-            "Libre Baskerville",
-            "Inter",
-            "Work Sans"
-        )
-    }
+    var downloadError by remember { mutableStateOf<String?>(null) }
     val displayList = remember(searchQuery) {
-        if (searchQuery.isBlank()) {
-            popularPresets
-        } else {
-            getGoogleFonts()
-                .filter { it.contains(searchQuery, ignoreCase = true) }
-                .take(50)
-        }
+        sharedGoogleFontsDisplayList(searchQuery, getGoogleFonts)
     }
 
     AlertDialog(
@@ -516,13 +494,20 @@ private fun SharedGoogleFontsDialog(
         ) {
             SharedStableOutlinedTextField(
                 value = searchQuery,
-                onValueChange = { searchQuery = it },
+                onValueChange = {
+                    searchQuery = it
+                    downloadError = null
+                },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text(readerString("google_fonts_search_placeholder", "Search 1900+ fonts...")) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 singleLine = true,
                 shape = RoundedCornerShape(8.dp)
             )
+
+            downloadError?.let { message ->
+                SharedGoogleFontsDownloadError(message)
+            }
 
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
@@ -553,10 +538,12 @@ private fun SharedGoogleFontsDialog(
                     val isDownloading = downloadingFontName == fontName
                     fun startDownload() {
                         downloadingFontName = fontName
-                        onDownloadGoogleFont(fontName) {
+                        downloadError = null
+                        onDownloadGoogleFont(fontName) { outcome ->
                             if (downloadingFontName == fontName) {
                                 downloadingFontName = null
                             }
+                            downloadError = outcome.errorMessage
                         }
                     }
                     Row(
@@ -1299,7 +1286,8 @@ data class SharedGoogleFontsLabels(
     val downloadContentDescription: String,
 )
 
-private val sharedGoogleFontsPopularPresets = listOf(
+/** Curated presets shown before the user types a search. */
+val sharedGoogleFontsPopularPresets = listOf(
     "Merriweather", "Open Sans", "Playfair Display", "Montserrat", "Oswald", "Raleway", "Nunito",
     "Poppins", "Ubuntu", "Fira Sans", "Quicksand", "Crimson Text", "Literata", "EB Garamond",
     "Libre Baskerville", "Inter", "Work Sans",
@@ -1311,7 +1299,11 @@ fun sharedGoogleFontsDisplayList(
 ): List<String> = if (searchQuery.isBlank()) {
     sharedGoogleFontsPopularPresets
 } else {
-    getFullFontList().filter { it.contains(searchQuery, ignoreCase = true) }.take(50)
+    getFullFontList()
+        .map(::googleFontFamilyName)
+        .distinct()
+        .filter { it.contains(searchQuery, ignoreCase = true) }
+        .take(50)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1319,13 +1311,14 @@ fun sharedGoogleFontsDisplayList(
 fun SharedGoogleFontsBottomSheet(
     existingFontNames: List<String>,
     getFullFontList: () -> List<String>,
-    onDownloadFont: (String, () -> Unit) -> Unit,
+    onDownloadFont: (String, (SharedGoogleFontsDownloadOutcome) -> Unit) -> Unit,
     labels: SharedGoogleFontsLabels,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var searchQuery by remember { mutableStateOf("") }
     var downloadingFontName by remember { mutableStateOf<String?>(null) }
+    var downloadError by remember { mutableStateOf<String?>(null) }
     val displayList = remember(searchQuery) {
         sharedGoogleFontsDisplayList(searchQuery, getFullFontList)
     }
@@ -1345,13 +1338,19 @@ fun SharedGoogleFontsBottomSheet(
             )
             OutlinedTextField(
                 value = searchQuery,
-                onValueChange = { searchQuery = it },
+                onValueChange = {
+                    searchQuery = it
+                    downloadError = null
+                },
                 modifier = Modifier.fillMaxWidth(),
                 placeholder = { Text(labels.searchPlaceholder) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
             )
+            downloadError?.let { message ->
+                SharedGoogleFontsDownloadError(message)
+            }
             Spacer(Modifier.height(16.dp))
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
@@ -1388,8 +1387,10 @@ fun SharedGoogleFontsBottomSheet(
                             .clip(RoundedCornerShape(8.dp))
                             .clickable(enabled = !isDownloaded && !isDownloading) {
                                 downloadingFontName = fontName
-                                onDownloadFont(fontName) {
+                                downloadError = null
+                                onDownloadFont(fontName) { outcome ->
                                     if (downloadingFontName == fontName) downloadingFontName = null
+                                    downloadError = outcome.errorMessage
                                 }
                             }
                             .background(
@@ -1434,5 +1435,21 @@ fun SharedGoogleFontsBottomSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SharedGoogleFontsDownloadError(message: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+        )
     }
 }

@@ -112,6 +112,7 @@ import com.aryan.reader.shared.ui.SharedAppThemeControls
 import com.aryan.reader.shared.ui.SharedAppThemeSettingsDialog
 import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedConfirmDialog
+import com.aryan.reader.shared.SharedGoogleFontsDownloadOutcome
 import com.aryan.reader.shared.ui.SharedCustomFontsScreen
 import com.aryan.reader.shared.ui.SharedHelpFeedbackScreen
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
@@ -3074,10 +3075,16 @@ internal fun EpistemeDesktopApp(
             .getOrNull()
     }
 
-    fun downloadGoogleFont(fontName: String, onComplete: () -> Unit) {
+    fun downloadGoogleFont(
+        fontName: String,
+        onComplete: (SharedGoogleFontsDownloadOutcome) -> Unit,
+    ) {
         if (!featurePolicy.googleFontsDownload) {
-            updateState(state.withBanner("Google Fonts download is unavailable in this desktop build.", isError = true))
-            onComplete()
+            onComplete(
+                SharedGoogleFontsDownloadOutcome(
+                    errorMessage = "Google Fonts download is unavailable in this desktop build."
+                )
+            )
             return
         }
         scope.launch {
@@ -3092,10 +3099,13 @@ internal fun EpistemeDesktopApp(
                     updateState(state.withBanner("${font.displayName} downloaded successfully."))
                     queueFullCloudSyncAfterLocalChange()
                 }
-                .onFailure { error ->
-                    updateState(state.withBanner(error.message ?: "Could not download $fontName.", isError = true))
-                }
-            onComplete()
+            onComplete(
+                SharedGoogleFontsDownloadOutcome(
+                    errorMessage = result.exceptionOrNull()?.let { error ->
+                        error.message ?: "Could not download '$fontName'."
+                    }
+                )
+            )
         }
     }
 
@@ -4322,7 +4332,7 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.TEST_PANEL_DETECTION,
                                     SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
                                     SharedSettingsAction.EXPORT_LOGS,
-                                    SharedSettingsAction.DEBUG_ACTIONS,
+                                    SharedSettingsAction.FPS_OVERLAY,
                                     SharedSettingsAction.DEVICE_MANAGEMENT,
                                     SharedSettingsAction.RECENT_LIMIT,
                                     SharedSettingsAction.STRICT_FILE_FILTER,

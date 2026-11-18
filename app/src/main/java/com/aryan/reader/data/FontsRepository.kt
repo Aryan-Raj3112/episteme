@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import com.aryan.reader.ReaderFontDiagnosticsTag
 import com.aryan.reader.readerFontDiagnosticSummary
+import com.aryan.reader.shared.SharedFontFiles
 import timber.log.Timber
 import java.io.File
 import java.io.FileOutputStream
@@ -83,7 +84,7 @@ class FontsRepository(private val context: Context) {
                     readerFontDiagnosticSummary(displayName)
             )
 
-            if (extension !in listOf("ttf", "otf", "woff2")) {
+            if (!SharedFontFiles.isSupportedFileName(originalName)) {
                 Timber.tag(ReaderFontDiagnosticsTag).w(
                     "import.unsupported originalName='$originalName' extension='$extension'"
                 )

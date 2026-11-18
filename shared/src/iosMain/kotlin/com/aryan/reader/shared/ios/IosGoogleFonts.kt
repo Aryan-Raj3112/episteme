@@ -4,6 +4,8 @@ package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.CustomFontItem
 import com.aryan.reader.shared.currentTimestamp
+import com.aryan.reader.shared.googleFontDownloadExtension
+import com.aryan.reader.shared.googleFontDownloadUrlFromCss
 import com.aryan.reader.shared.generated.resources.Res
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.serialization.json.Json
@@ -42,9 +44,9 @@ internal suspend fun loadIosGoogleFontNames(): List<String> {
     return names
 }
 
-internal suspend fun downloadIosGoogleFont(fontName: String): Result<CustomFontItem> {
+internal suspend fun downloadIosGoogleFont(cssFamily: String, fontName: String): Result<CustomFontItem> {
     return runCatching {
-        val cssUrl = "https://fonts.googleapis.com/css?family=${iosPercentEncode(fontName)}"
+        val cssUrl = "https://fonts.googleapis.com/css?family=${iosPercentEncode(cssFamily)}"
         val cssResponse = IosGoogleFontsHttpClient.fetch(
             url = cssUrl,
             username = null,
@@ -53,17 +55,14 @@ internal suspend fun downloadIosGoogleFont(fontName: String): Result<CustomFontI
         )
         if (cssResponse.error != null) error(cssResponse.error.localizedDescription)
         val statusCode = (cssResponse.response as? NSHTTPURLResponse)?.statusCode?.toInt() ?: 200
-        if (statusCode != 200) error("Font '$fontName' not found on server.")
-        val css = iosStringFromData(cssResponse.data) ?: error("Font '$fontName' not found on server.")
+        if (statusCode != 200) error("'$fontName' is not available on Google Fonts.")
+        val css = iosStringFromData(cssResponse.data) ?: error("Could not read the Google Fonts response.")
 
-        val fontUrl = Regex("""url\((https://[^)]+)\)""")
-            .find(css)
-            ?.groupValues
-            ?.get(1)
-            ?: error("Could not parse download link for $fontName")
-        val extension = fontUrl.substringAfterLast('.', "ttf").lowercase()
+        val fontUrl = googleFontDownloadUrlFromCss(css)
+            ?: error("Could not find a download link for '$fontName'.")
+        val extension = googleFontDownloadExtension(fontUrl)
         if (extension != "ttf" && extension != "otf") {
-            error("Unsupported format ($extension) returned for $fontName")
+            error("Google Fonts returned an unsupported format ($extension) for '$fontName'.")
         }
 
         val data = NSData.dataWithContentsOfURL(

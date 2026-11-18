@@ -83,7 +83,7 @@ struct ContentView: View {
         .fileImporter(
             isPresented: $isImportPickerPresented,
             allowedContentTypes: importKind == .fonts
-                ? [.font]
+                ? allowedFontImportTypes
                 : (
                     importKind == .folder || importKind == .audiobookFolder
                         ? [.folder]
@@ -141,14 +141,21 @@ struct ContentView: View {
                     )
                     return
                 }
-                let importedFiles = urls.compactMap { url in
+                let fontFiles = importKind == .fonts
+                    ? urls.filter { self.supportedFontExtensions.contains($0.pathExtension.lowercased()) }
+                    : urls
+                let importedFiles = fontFiles.compactMap { url in
                     copyImportedFileToAppSupport(
                         url,
                         directoryName: importKind == .fonts ? "Fonts" : (importKind == .cover ? "Covers" : "Imports")
                     )
                 }
                 if importKind == .fonts {
-                    bridge.recordImportedFonts(fileNames: importedFiles.map(\.name), filePaths: importedFiles.map(\.path))
+                    bridge.recordImportedFonts(
+                        fileNames: importedFiles.map(\.name),
+                        filePaths: importedFiles.map(\.path),
+                        wasCancelled: false
+                    )
                 } else if importKind == .cover {
                     bridge.recordImportedCover(filePath: importedFiles.first?.path)
                 } else {
@@ -167,7 +174,7 @@ struct ContentView: View {
                 let wasCancelled = error is CancellationError ||
                     (nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError)
                 if importKind == .fonts {
-                    bridge.recordImportedFonts(fileNames: [], filePaths: [])
+                    bridge.recordImportedFonts(fileNames: [], filePaths: [], wasCancelled: wasCancelled)
                 } else if importKind == .cover {
                     bridge.recordImportedCover(filePath: nil)
                 } else if importKind == .folder {
@@ -516,6 +523,22 @@ struct ContentView: View {
             UTType(filenameExtension: $0)
         }
         return types.isEmpty ? [.item] : types
+    }
+
+    /// Android parity (`SharedFontFiles`): every supported font UTI, plus the
+    /// `.font` parent and a generic `public.data` fallback. Document providers
+    /// often hand fonts over as plain data, which a `.font`-only filter hides
+    /// (Android passes `application/octet-stream` for the same reason).
+    private var allowedFontImportTypes: [UTType] {
+        let fontTypes = bridge.supportedFontExtensions().compactMap {
+            UTType(filenameExtension: $0)
+        }
+        var seen = Set<UTType>()
+        return ([.font] + fontTypes + [.data]).filter { seen.insert($0).inserted }
+    }
+
+    private var supportedFontExtensions: Set<String> {
+        Set(bridge.supportedFontExtensions())
     }
 
     private func handleExternalURL(_ url: URL) {

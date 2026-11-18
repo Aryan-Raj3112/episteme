@@ -155,6 +155,7 @@ import androidx.core.text.HtmlCompat
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.SharedFontFiles
 import com.aryan.reader.shared.SharedLegalLinks
 import com.aryan.reader.shared.SharedLegalProfile
 import com.aryan.reader.data.BookMetadataEdit
@@ -186,16 +187,7 @@ internal val PRIVACY_POLICY_URL: String get() = legalLinksForAndroidFlavor().pri
 internal val TERMS_URL: String get() = legalLinksForAndroidFlavor().termsUrl
 internal val LICENSES_URL: String get() = legalLinksForAndroidFlavor().licensesUrl
 
-fun supportedFontMimeTypes(): Array<String> = arrayOf(
-    "font/ttf",
-    "font/otf",
-    "font/woff2",
-    "application/x-font-ttf",
-    "application/x-font-otf",
-    "application/font-woff2",
-    "application/vnd.ms-opentype",
-    "application/x-font-opentype"
-)
+fun supportedFontMimeTypes(): Array<String> = SharedFontFiles.androidPickerMimeTypes.toTypedArray()
 
 class CustomTabUriHandler(private val context: Context) : UriHandler {
     override fun openUri(uri: String) {
