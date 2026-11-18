@@ -319,7 +319,6 @@ internal fun UnifiedLibraryHome(
             com.aryan.reader.shared.ui.SharedAndroidActiveTabsRow(
                 openTabs = openTabs,
                 tabsEnabled = tabsEnabled,
-                activeTabsLabel = stringResource(R.string.active_tabs),
                 closeAllTabsDescription = stringResource(R.string.close_all_tabs),
                 closeTabDescription = stringResource(R.string.close_tab),
                 itemKey = { it.bookId },

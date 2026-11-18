@@ -851,45 +851,19 @@ internal fun SharedMobileActiveTabs(
     onCloseTab: (BookItem) -> Unit,
     onCloseAllTabs: () -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Active tabs", style = MaterialTheme.typography.titleLarge)
-            IconButton(onClick = onCloseAllTabs) {
-                Icon(Icons.Default.Close, contentDescription = "Close all tabs", tint = MaterialTheme.colorScheme.error)
-            }
-        }
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            items(openTabs, key = { "tab_${it.id}" }) { tab ->
-                InputChip(
-                    selected = false,
-                    onClick = { onOpenTab(tab) },
-                    label = {
-                        Text(
-                            text = tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 150.dp)
-                        )
-                    },
-                    trailingIcon = {
-                        IconButton(
-                            onClick = { onCloseTab(tab) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Close tab", modifier = Modifier.size(16.dp))
-                        }
-                    }
-                )
-            }
-        }
-    }
+    // Same compact row as Android: shared layout keeps both platforms identical.
+    val usePdfFileNameAsDisplayName = LocalUsePdfFileNameAsDisplayName.current
+    SharedAndroidActiveTabsRow(
+        openTabs = openTabs,
+        tabsEnabled = true,
+        closeAllTabsDescription = "Close all tabs",
+        closeTabDescription = "Close tab",
+        itemKey = { it.id },
+        itemTitle = { it.cardTitle(usePdfFileNameAsDisplayName) },
+        onItemClick = onOpenTab,
+        onCloseTab = onCloseTab,
+        onCloseAllTabs = onCloseAllTabs,
+    )
 }
 
 @Composable

@@ -1398,7 +1398,8 @@ fun SharedMobileHomeScreen(
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp),
                         verticalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
-                        if (state.isTabsEnabled && model.activeTabs.isNotEmpty()) {
+                        // A single open tab is already surfaced by the recent/continue card.
+                        if (state.isTabsEnabled && model.activeTabs.size > 1) {
                             item(key = "tabs") {
                                 SharedMobileActiveTabs(
                                     openTabs = model.activeTabs,
