@@ -8,6 +8,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.font.FontFamily
 import com.aryan.reader.shared.reader.ReaderSettings
+import com.aryan.reader.shared.reader.readerBundledFontResourcePath
 import com.aryan.reader.shared.toSharedReaderFontFamily
 
 /**
@@ -16,14 +17,8 @@ import com.aryan.reader.shared.toSharedReaderFontFamily
  * set ships in `app` assets (Android native reader) and shared resources
  * (this path), so both render identical glyphs.
  */
-internal fun sharedReaderBundledFontFile(fontFamilyName: String): String? = when (fontFamilyName) {
-    "Merriweather" -> "files/fonts/merriweather.ttf"
-    "Lora" -> "files/fonts/lora.ttf"
-    "Lato" -> "files/fonts/lato.ttf"
-    "Lexend" -> "files/fonts/lexend.ttf"
-    "Roboto Mono" -> "files/fonts/roboto_mono.ttf"
-    else -> null
-}
+internal fun sharedReaderBundledFontFile(fontFamilyName: String): String? =
+    readerBundledFontResourcePath(fontFamilyName)
 
 /**
  * Loads the bundled reader typeface, or null when the family has no bundled

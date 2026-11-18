@@ -19,7 +19,6 @@ class ReaderHtmlStylesHighlightMarkerTest {
     private val styles: String = readerDocumentStyles(
         settings = settings,
         bookCss = "",
-        customFontCss = "",
         appearance = settings.toDocumentAppearanceCss(textureDataUri = null),
         align = "left",
         family = "sans-serif",

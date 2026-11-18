@@ -42,6 +42,30 @@ class ReaderHtmlDocumentBuilderTest {
     }
 
     @Test
+    fun `reader font override lives in a removable style element`() {
+        val customHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(
+                fontFamily = "Imported",
+                customFontPath = "/fonts/Imported-Regular.ttf",
+            ),
+        )
+
+        assertTrue(customHtml.contains("id=\"reader-custom-font-style\""))
+        assertTrue(customHtml.contains("--reader-family: 'ReaderCustomFont', Georgia"))
+        // Android benchmark (epub_reader.js updateReaderStyles): publication
+        // font rules never win over the reader's chosen family.
+        assertTrue(customHtml.contains("font-family: var(--reader-family) !important"))
+
+        val originalHtml = ReaderHtmlDocumentBuilder.verticalDocument(
+            book = repeatedWordBook("alpha beta"),
+            settings = ReaderSettings(fontFamily = "Original"),
+        )
+        assertFalse(originalHtml.contains("reader-custom-font-style"))
+        assertFalse(originalHtml.contains("font-family: var(--reader-family) !important"))
+    }
+
+    @Test
     fun `vertical position reports are throttled during scrolling instead of deferred until scroll stops`() {
         val html = ReaderHtmlDocumentBuilder.verticalDocument(
             book = repeatedWordBook("alpha beta"),

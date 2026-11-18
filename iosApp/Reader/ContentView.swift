@@ -1336,9 +1336,8 @@ nonisolated private func scanImportedFolderInPlace(
         .ubiquitousItemIsDownloadingKey,
     ]
     // Android skips dotfiles and the sidecar directory during recursion
-    // (FolderSyncWorker.kt:927). The enumerator cannot prune a directory it
-    // has already descended into, so the check is applied to the path.
-    let sidecarDirectoryName = "EpistemeSyncData"
+    // (FolderSyncWorker.kt:927). The sidecar files themselves are dot-prefixed
+    // JSON, so the per-file guards below never turn them into books.
 
     // Coordinate the enumeration so File Provider / iCloud materialises the
     // directory listing, mirroring Android's ContentResolver query which
@@ -1384,6 +1383,9 @@ nonisolated private func scanImportedFolderInPlace(
 
     var scanned: [ImportedReaderFile] = []
     var wasCancelled = false
+    var rootFileCount = 0
+    var nestedFileCount = 0
+    var directoryCount = 0
     for case let itemURL as URL in enumerator {
         // Abort the walk rather than finishing a result nobody will apply.
         // Android does the same via its `isStopped` checks (FolderSyncWorker).
@@ -1399,13 +1401,27 @@ nonisolated private func scanImportedFolderInPlace(
                 continue
             }
             let relativePath = String(itemPath.dropFirst(sourcePrefix.count + 1))
-            if values.isDirectory == true {
-                if relativePath == sidecarDirectoryName || relativePath.hasPrefix("\(sidecarDirectoryName)/") {
-                    continue
-                }
+            var directoryFlag = ObjCBool(false)
+            let isDirectory = values.isDirectory == true || (
+                values.isRegularFile == nil &&
+                    fileManager.fileExists(atPath: itemPath, isDirectory: &directoryFlag) &&
+                    directoryFlag.boolValue
+            )
+            if isDirectory {
+                directoryCount += 1
+                // The enumerator already descends; directory entries are not
+                // books themselves. Sidecars live under a directory Android
+                // prunes too.
                 continue
             }
-            guard values.isRegularFile == true else { continue }
+            // A File Provider (Dropbox, other third-party providers) can omit
+            // `.isRegularFileKey` for an item it has not materialised. This
+            // used to `continue` for every such child, so a Dropbox folder
+            // whose nested books were not locally realised imported only its
+            // root files. Treat "not a directory" as a candidate file and let
+            // the shared library filter by supported type; only an explicit
+            // non-regular entry (symlink, socket, …) is skipped.
+            if values.isRegularFile == false { continue }
             // Sidecars and the app's own temp files are dot-prefixed; skip them
             // the way Android does so they never become books.
             guard !itemURL.lastPathComponent.hasPrefix(".") else { continue }
@@ -1413,15 +1429,18 @@ nonisolated private func scanImportedFolderInPlace(
             // iCloud / File Provider stub: entry listed but bytes not local
             // yet. Trigger download and mark PARTIAL (Android parity: never
             // infer deletions from a view it could not see). Next foreground
-            // rescan picks the file up once materialised.
+            // rescan picks the file up once materialised. `.downloaded` is
+            // readable locally (possibly an older version), so only
+            // `.notDownloaded` is skipped.
             if let status = try? itemURL.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]).ubiquitousItemDownloadingStatus,
-               status != .current {
+               status == .notDownloaded {
                 try? fileManager.startDownloadingUbiquitousItem(at: itemURL)
                 sawChildError = true
                 noteSkipped("not_downloaded relative=\(relativePath) status=\(status.rawValue)")
                 localFolderScanLogger.info("scan.not_downloaded folder=\(folderName, privacy: .public) relative=\(relativePath, privacy: .public)")
                 continue
             }
+            if relativePath.contains("/") { nestedFileCount += 1 } else { rootFileCount += 1 }
             scanned.append(
                 ImportedReaderFile(
                     name: itemURL.lastPathComponent,
@@ -1466,7 +1485,7 @@ nonisolated private func scanImportedFolderInPlace(
     let status: ImportedFolderScanStatus = isPartial ? .partial : .complete
     let detail = isPartial ? "partial skipped=\(skippedCount) first=\(firstSkipDetail)" : ""
     localFolderScanLogger.info(
-        "scan.succeeded folder=\(folderName, privacy: .public) status=\(status.rawValue, privacy: .public) files=\(scanned.count, privacy: .public) skipped=\(skippedCount, privacy: .public) in_place=true"
+        "scan.succeeded folder=\(folderName, privacy: .public) status=\(status.rawValue, privacy: .public) files=\(scanned.count, privacy: .public) root=\(rootFileCount, privacy: .public) nested=\(nestedFileCount, privacy: .public) dirs=\(directoryCount, privacy: .public) skipped=\(skippedCount, privacy: .public) in_place=true"
     )
     return ImportedFolderScan(files: scanned, succeeded: true, status: status, detail: detail)
 }

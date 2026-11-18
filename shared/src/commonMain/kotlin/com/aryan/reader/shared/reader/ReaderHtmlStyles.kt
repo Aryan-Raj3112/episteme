@@ -5,7 +5,6 @@ import com.aryan.reader.shared.HighlightColor
 internal fun readerDocumentStyles(
     settings: ReaderSettings,
     bookCss: String,
-    customFontCss: String,
     appearance: ReaderDocumentAppearanceCss,
     align: String,
     family: String,
@@ -13,7 +12,6 @@ internal fun readerDocumentStyles(
 ): String = """
           <style>
             $bookCss
-            $customFontCss
             :root {
               color-scheme: ${appearance.colorScheme};
               --reader-bg: ${appearance.background};

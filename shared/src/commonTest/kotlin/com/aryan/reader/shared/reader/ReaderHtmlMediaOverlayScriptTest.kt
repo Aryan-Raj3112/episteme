@@ -40,7 +40,6 @@ class ReaderHtmlMediaOverlayScriptTest {
     private val styles: String = readerDocumentStyles(
         settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.SINGLE),
         bookCss = "",
-        customFontCss = "",
         appearance = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.SINGLE)
             .toDocumentAppearanceCss(textureDataUri = null),
         align = "left",
