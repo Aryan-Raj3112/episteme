@@ -81,7 +81,8 @@ fun SharedAndroidUnifiedScaffold(
                             )
                         }
                         MobileUnifiedLibrarySection.FOLDERS,
-                        MobileUnifiedLibrarySection.CATALOGS -> Unit
+                        MobileUnifiedLibrarySection.CATALOGS,
+                        MobileUnifiedLibrarySection.TAGS -> Unit
                     }
                 }
             }

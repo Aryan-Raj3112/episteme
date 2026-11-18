@@ -757,8 +757,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             ),
             mainScreenStartPage = prefs.getInt(KEY_MAIN_SCREEN_START_PAGE, 0).coerceIn(0, 2),
             unifiedLibrarySection = prefs.getInt(KEY_UNIFIED_LIBRARY_SECTION, 0)
-                .coerceIn(0, 4),
+                .coerceIn(0, com.aryan.reader.shared.ui.MobileUnifiedLibrarySection.MAX_PERSISTED_VALUE),
             unifiedLibraryListView = prefs.getBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, false),
+            unifiedShelfListView = prefs.getBoolean(KEY_UNIFIED_LIBRARY_SHELF_LIST_VIEW, true),
             pdfSplitWorkspace = restoredPdfSplitWorkspace,
             currentUser = authRepository.getSignedInUser(),
             isSyncEnabled = prefs.getBoolean(KEY_SYNC_ENABLED, false),
@@ -9189,7 +9190,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setUnifiedLibrarySection(section: Int) {
-        val sanitizedSection = section.coerceIn(0, 4)
+        val sanitizedSection = section.coerceIn(0, com.aryan.reader.shared.ui.MobileUnifiedLibrarySection.MAX_PERSISTED_VALUE)
         if (_internalState.value.unifiedLibrarySection == sanitizedSection) return
         _internalState.update { it.copy(unifiedLibrarySection = sanitizedSection) }
         persistLibraryLandingState()
@@ -9198,6 +9199,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     fun setUnifiedLibraryListView(useListView: Boolean) {
         if (_internalState.value.unifiedLibraryListView == useListView) return
         _internalState.update { it.copy(unifiedLibraryListView = useListView) }
+        persistLibraryLandingState()
+    }
+
+    fun setUnifiedShelfListView(useListView: Boolean) {
+        if (_internalState.value.unifiedShelfListView == useListView) return
+        _internalState.update { it.copy(unifiedShelfListView = useListView) }
         persistLibraryLandingState()
     }
 
@@ -9542,6 +9549,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             putInt(KEY_LIBRARY_SCREEN_START_PAGE, state.libraryScreenStartPage)
             putInt(KEY_UNIFIED_LIBRARY_SECTION, state.unifiedLibrarySection)
             putBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, state.unifiedLibraryListView)
+            putBoolean(KEY_UNIFIED_LIBRARY_SHELF_LIST_VIEW, state.unifiedShelfListView)
             putBoolean(KEY_SEARCH_INSIDE_FILES, state.libraryState.searchInsideFiles)
             putString(KEY_LAST_VIEWING_SHELF_ID, resolvedUiState.viewingShelfId)
             putBoolean(KEY_LAST_ADDING_BOOKS_TO_SHELF, resolvedUiState.isAddingBooksToShelf)

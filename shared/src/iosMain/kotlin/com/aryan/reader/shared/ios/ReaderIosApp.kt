@@ -508,6 +508,12 @@ class ReaderIosBridge internal constructor(
     internal var iosUnifiedLibraryListView by mutableStateOf(loadIosUnifiedLibraryListView())
 
     /**
+     * Shelf surfaces default to the row layout (Android parity) instead of the
+     * grid Beta shipped with, while keeping the grid one tap away.
+     */
+    internal var iosUnifiedShelfListView by mutableStateOf(loadIosUnifiedShelfListView())
+
+    /**
      * Fold geometry reported by the iOS host (`ReaderStatusBarHostController`), driving
      * the Duo-only layout branches. Stays [IosDeviceLayoutSnapshot]'s default on every
      * other device, which maps to [com.aryan.reader.shared.ui.SharedDeviceLayout.None].
@@ -2591,6 +2597,22 @@ private fun loadIosUnifiedLibraryListView(): Boolean =
 
 private fun persistIosUnifiedLibraryListView(useListView: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(useListView, forKey = IosUnifiedLibraryListViewDefaultsKey)
+}
+
+private const val IosUnifiedShelfListViewDefaultsKey = "reader_ios_unified_shelf_list_view_v1"
+
+/**
+ * Shelves default to rows, so an absent preference must read as `true`:
+ * `boolForKey` alone would report `false` for a key that was never written.
+ */
+private fun loadIosUnifiedShelfListView(): Boolean {
+    val defaults = NSUserDefaults.standardUserDefaults
+    return defaults.objectForKey(IosUnifiedShelfListViewDefaultsKey) == null ||
+        defaults.boolForKey(IosUnifiedShelfListViewDefaultsKey)
+}
+
+private fun persistIosUnifiedShelfListView(useListView: Boolean) {
+    NSUserDefaults.standardUserDefaults.setBool(useListView, forKey = IosUnifiedShelfListViewDefaultsKey)
 }
 
 private fun loadIosSyncEnabled(): Boolean {
@@ -8506,6 +8528,11 @@ private fun ReaderIosApp(
                                 onListViewChange = { useList ->
                                     bridge.iosUnifiedLibraryListView = useList
                                     persistIosUnifiedLibraryListView(useList)
+                                },
+                                useShelfListView = bridge.iosUnifiedShelfListView,
+                                onShelfListViewChange = { useList ->
+                                    bridge.iosUnifiedShelfListView = useList
+                                    persistIosUnifiedShelfListView(useList)
                                 },
                                 audiobooks = state.audiobooks,
                                 audiobookPlayback = audiobookPlaybackSnapshot,

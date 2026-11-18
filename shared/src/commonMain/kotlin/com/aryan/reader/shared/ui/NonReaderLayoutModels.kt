@@ -669,9 +669,14 @@ enum class MobileUnifiedLibrarySection(val persistedValue: Int) {
     SHELVES(1),
     FOLDERS(2),
     CATALOGS(3),
-    AUDIOBOOKS(4);
+    AUDIOBOOKS(4),
+    // Appended so the values before it stay stable for restored preferences.
+    TAGS(5);
 
     companion object {
+        /** Highest value ever persisted; saved-section restore clamps to this. */
+        val MAX_PERSISTED_VALUE: Int = entries.maxOf { it.persistedValue }
+
         fun fromPersisted(value: Int): MobileUnifiedLibrarySection =
             entries.firstOrNull { it.persistedValue == value } ?: HOME
     }

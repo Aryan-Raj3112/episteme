@@ -20,13 +20,16 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,6 +58,16 @@ fun <S, B> SharedAndroidUnifiedShelves(
     bookKey: (B) -> String,
     onShelfSelected: (S) -> Unit,
     bookCard: @Composable (B) -> Unit,
+    /**
+     * Row variant of [bookCard]. Supplying it enables the shelf layout toggle;
+     * hosts that leave it null keep the historical grid-only behaviour.
+     */
+    bookListItem: (@Composable (B) -> Unit)? = null,
+    /** Shelf books use rows by default; the host owns the persisted preference. */
+    useListView: Boolean = false,
+    onListViewChange: ((Boolean) -> Unit)? = null,
+    listViewDescription: String = "List view",
+    gridViewDescription: String = "Grid view",
     widthClass: SharedAndroidHomeWidthClass = SharedAndroidHomeWidthClass.COMPACT,
     /** Host override (Duo). Null keeps the shared width-class mapping. */
     gridCells: GridCells? = null,
@@ -124,6 +137,21 @@ fun <S, B> SharedAndroidUnifiedShelves(
                         onSortOrderChange = onSortOrderChange,
                     )
                 }
+                if (onListViewChange != null) {
+                    IconButton(
+                        onClick = { onListViewChange(!useListView) },
+                        modifier = Modifier.testTag("ShelfLayoutToggle"),
+                    ) {
+                        Icon(
+                            if (useListView) {
+                                Icons.AutoMirrored.Filled.LibraryBooks
+                            } else {
+                                Icons.Default.FormatListNumbered
+                            },
+                            contentDescription = if (useListView) gridViewDescription else listViewDescription,
+                        )
+                    }
+                }
                 selectedShelfActions(selectedShelf)
             }
             if (childShelves.isEmpty() && selectedBooks.isEmpty()) {
@@ -131,33 +159,61 @@ fun <S, B> SharedAndroidUnifiedShelves(
                     Text(emptyShelfLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                LazyVerticalGrid(
-                    columns = gridCells ?: widthClass.bookGridCells(),
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
-                    contentPadding = PaddingValues(top = density.gridContentTopPadding, bottom = 96.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    if (childShelves.isNotEmpty()) {
-                        if (foldersSectionLabel != null && selectedBooks.isNotEmpty()) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                UnifiedShelfSectionLabel(foldersSectionLabel)
+                val resolvedListItem = bookListItem.takeIf { useListView }
+                if (resolvedListItem != null) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+                        contentPadding = PaddingValues(top = density.gridContentTopPadding, bottom = 96.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        if (childShelves.isNotEmpty()) {
+                            if (foldersSectionLabel != null && selectedBooks.isNotEmpty()) {
+                                item { UnifiedShelfSectionLabel(foldersSectionLabel) }
+                            }
+                            items(childShelves, key = childKey) { child ->
+                                UnifiedShelfCard(
+                                    name = childName(child),
+                                    countLabel = childBookCountLabel(child),
+                                    onClick = { onChildShelfSelected(child) },
+                                )
                             }
                         }
-                        items(childShelves, key = childKey, span = { GridItemSpan(maxLineSpan) }) { child ->
-                            UnifiedShelfCard(
-                                name = childName(child),
-                                countLabel = childBookCountLabel(child),
-                                onClick = { onChildShelfSelected(child) },
-                            )
+                        if (selectedBooks.isNotEmpty() && childShelves.isNotEmpty() && filesSectionLabel != null) {
+                            item { UnifiedShelfSectionLabel(filesSectionLabel) }
+                        }
+                        items(selectedBooks, key = bookKey) { book ->
+                            resolvedListItem(book)
                         }
                     }
-                    if (selectedBooks.isNotEmpty() && childShelves.isNotEmpty() && filesSectionLabel != null) {
-                        item(span = { GridItemSpan(maxLineSpan) }) {
-                            UnifiedShelfSectionLabel(filesSectionLabel)
+                } else {
+                    LazyVerticalGrid(
+                        columns = gridCells ?: widthClass.bookGridCells(),
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+                        contentPadding = PaddingValues(top = density.gridContentTopPadding, bottom = 96.dp),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        if (childShelves.isNotEmpty()) {
+                            if (foldersSectionLabel != null && selectedBooks.isNotEmpty()) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    UnifiedShelfSectionLabel(foldersSectionLabel)
+                                }
+                            }
+                            items(childShelves, key = childKey, span = { GridItemSpan(maxLineSpan) }) { child ->
+                                UnifiedShelfCard(
+                                    name = childName(child),
+                                    countLabel = childBookCountLabel(child),
+                                    onClick = { onChildShelfSelected(child) },
+                                )
+                            }
                         }
+                        if (selectedBooks.isNotEmpty() && childShelves.isNotEmpty() && filesSectionLabel != null) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                UnifiedShelfSectionLabel(filesSectionLabel)
+                            }
+                        }
+                        items(selectedBooks, key = bookKey) { bookCard(it) }
                     }
-                    items(selectedBooks, key = bookKey) { bookCard(it) }
                 }
             }
         }

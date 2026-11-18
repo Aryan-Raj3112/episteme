@@ -76,6 +76,11 @@ data class ReaderScreenState(
     val unifiedLibrarySection: Int = 0,
     /** Android-only display preference for the experimental unified library. */
     val unifiedLibraryListView: Boolean = false,
+    /**
+     * Shelf surfaces default to rows so a shelf keeps the library column layout
+     * it had before Library Beta became the only library destination.
+     */
+    val unifiedShelfListView: Boolean = true,
     val booksAvailableForAdding: List<RecentFileItem> = emptyList(),
     val contextualActionShelfIds: Set<String> = emptySet(),
     val currentUser: UserData? = null,

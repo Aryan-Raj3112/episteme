@@ -31,6 +31,7 @@ class IosUnifiedLibraryParityTest {
                 MobileUnifiedLibraryDrawerDestination.HOME,
                 MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS,
                 MobileUnifiedLibraryDrawerDestination.SHELVES,
+                MobileUnifiedLibraryDrawerDestination.TAGS,
                 MobileUnifiedLibraryDrawerDestination.FOLDERS,
                 MobileUnifiedLibraryDrawerDestination.CATALOGS,
             ),

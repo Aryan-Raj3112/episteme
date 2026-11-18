@@ -9,6 +9,8 @@ interface LibraryMutationStore {
     suspend fun renameShelf(shelfId: String, name: String)
     suspend fun deleteShelf(shelfId: String)
     suspend fun removeBooksFromShelf(shelfId: String, bookIds: Set<String>)
+    /** Case-insensitive lookup so tagging with an existing name reuses that tag. */
+    suspend fun findTagByName(name: String): Tag?
     suspend fun createTag(tag: Tag, createdAt: Long)
     suspend fun assignTagToBooks(tagId: String, bookIds: Set<String>)
     suspend fun removeTagFromBooks(tagId: String, bookIds: Set<String>)
@@ -83,8 +85,12 @@ class LibraryMutationController(
     suspend fun createAndAssignTag(name: String, bookIds: Iterable<String>): String? {
         val books = SharedLibraryEditor.cleanBookIds(bookIds)
         if (books.isEmpty()) return null
-        val tag = SharedLibraryEditor.createTag(name, newId(), selectTagColor()) ?: return null
-        store.createTag(tag, nowMillis())
+        val cleanName = SharedLibraryEditor.cleanTagName(name) ?: return null
+        // Reuse an existing tag instead of creating a duplicate id for the same
+        // name; iOS already resolves this in createAndAssignTagInState.
+        val tag = store.findTagByName(cleanName)
+            ?: (SharedLibraryEditor.createTag(cleanName, newId(), selectTagColor()) ?: return null)
+                .also { store.createTag(it, nowMillis()) }
         store.assignTagToBooks(tag.id, books)
         return tag.id
     }

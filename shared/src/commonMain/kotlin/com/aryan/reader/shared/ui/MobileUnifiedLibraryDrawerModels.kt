@@ -10,6 +10,7 @@ enum class MobileUnifiedLibraryDrawerLabel {
     HOME,
     AUDIOBOOKS,
     SHELVES,
+    TAGS,
     FOLDERS,
     CATALOGS,
     THEME,
@@ -25,6 +26,7 @@ enum class MobileUnifiedLibraryDrawerDestination(
     HOME(MobileUnifiedLibrarySection.HOME, MobileUnifiedLibraryDrawerLabel.HOME),
     AUDIOBOOKS(MobileUnifiedLibrarySection.AUDIOBOOKS, MobileUnifiedLibraryDrawerLabel.AUDIOBOOKS),
     SHELVES(MobileUnifiedLibrarySection.SHELVES, MobileUnifiedLibraryDrawerLabel.SHELVES),
+    TAGS(MobileUnifiedLibrarySection.TAGS, MobileUnifiedLibraryDrawerLabel.TAGS),
     FOLDERS(MobileUnifiedLibrarySection.FOLDERS, MobileUnifiedLibraryDrawerLabel.FOLDERS),
     CATALOGS(MobileUnifiedLibrarySection.CATALOGS, MobileUnifiedLibraryDrawerLabel.CATALOGS),
 }
@@ -59,6 +61,7 @@ fun mobileUnifiedLibraryDrawerModel(
         add(MobileUnifiedLibraryDrawerDestination.HOME)
         add(MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS)
         add(MobileUnifiedLibraryDrawerDestination.SHELVES)
+        add(MobileUnifiedLibraryDrawerDestination.TAGS)
         add(MobileUnifiedLibraryDrawerDestination.FOLDERS)
         if (capabilities.catalogsAvailable) add(MobileUnifiedLibraryDrawerDestination.CATALOGS)
     },

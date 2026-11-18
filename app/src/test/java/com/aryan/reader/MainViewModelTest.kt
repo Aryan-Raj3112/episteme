@@ -1030,6 +1030,40 @@ class MainViewModelTest {
     }
 
     @Test
+    fun `tags unified library section survives restore`() = runTest(testDispatcher) {
+        val tagsSection = com.aryan.reader.shared.ui.MobileUnifiedLibrarySection.TAGS.persistedValue
+        every { mockPrefs.getInt(KEY_UNIFIED_LIBRARY_SECTION, 0) } returns tagsSection
+
+        val restored = TestMainViewModel(mockApplication)
+        try {
+            advanceUntilIdle()
+            assertEquals(tagsSection, restored.uiState.value.unifiedLibrarySection)
+        } finally {
+            restored.clearForTest()
+            testDispatcher.scheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `shelf list layout defaults to rows and survives restore`() = runTest(testDispatcher) {
+        assertTrue(viewModel.uiState.value.unifiedShelfListView)
+
+        viewModel.setUnifiedShelfListView(false)
+        verify { mockEditor.putBoolean(KEY_UNIFIED_LIBRARY_SHELF_LIST_VIEW, false) }
+
+        every { mockPrefs.getBoolean(KEY_UNIFIED_LIBRARY_SHELF_LIST_VIEW, true) } returns false
+
+        val restored = TestMainViewModel(mockApplication)
+        try {
+            advanceUntilIdle()
+            assertFalse(restored.uiState.value.unifiedShelfListView)
+        } finally {
+            restored.clearForTest()
+            testDispatcher.scheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
     fun `unified library list view survives restore and changes persist`() = runTest(testDispatcher) {
         viewModel.setUnifiedLibraryListView(true)
         verify { mockEditor.putBoolean(KEY_UNIFIED_LIBRARY_LIST_VIEW, true) }

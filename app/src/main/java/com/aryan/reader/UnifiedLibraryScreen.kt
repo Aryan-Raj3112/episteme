@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
@@ -202,6 +203,7 @@ fun UnifiedLibraryScreen(
         else -> null
     }
     var selectedShelfId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedTagId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf(UnifiedLibraryFilter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
     // Filtering + sorting is O(n log n) on Main; debounce keystrokes so each
@@ -406,6 +408,10 @@ fun UnifiedLibraryScreen(
         )
     }
     val section = UnifiedLibrarySection.fromPersisted(uiState.unifiedLibrarySection)
+    // Leaving Tags keeps the section list, not a stale tag detail, as the landing view.
+    LaunchedEffect(section) {
+        if (section != UnifiedLibrarySection.TAGS) selectedTagId = null
+    }
     // Keyed on the list identity: recomputes exactly when the library changes
     // (including position writes, which replace the item), but skips the O(n)
     // scan on unrelated recompositions (scroll, drawer, keystrokes).
@@ -419,6 +425,11 @@ fun UnifiedLibraryScreen(
     fun navigateShelfUp() {
         val parentId = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } }?.parentShelfId
         selectedShelfId = parentId
+    }
+
+    val inTagDetail = section == UnifiedLibrarySection.TAGS && selectedTagId != null
+    val navigateBack = {
+        if (inTagDetail) selectedTagId = null else navigateShelfUp()
     }
 
     val focusManager = LocalFocusManager.current
@@ -435,14 +446,14 @@ fun UnifiedLibraryScreen(
         hasSelection = selectedItems.isNotEmpty(),
         isKeyboardOpen = isKeyboardOpen,
         isSearchActive = section == UnifiedLibrarySection.HOME && query.isNotBlank(),
-        inShelf = selectedShelfId != null,
+        inShelf = selectedShelfId != null || inTagDetail,
     )
     BackHandler(enabled = backAction != LibraryBackAction.NONE) {
         when (nextLibraryBackAction(
             hasSelection = selectedItems.isNotEmpty(),
             isKeyboardOpen = isKeyboardOpen,
             isSearchActive = section == UnifiedLibrarySection.HOME && query.isNotBlank(),
-            inShelf = selectedShelfId != null,
+            inShelf = selectedShelfId != null || inTagDetail,
         )) {
             LibraryBackAction.CLEAR_SELECTION -> viewModel.clearContextualAction()
             LibraryBackAction.HIDE_KEYBOARD -> focusManager.clearFocus()
@@ -450,7 +461,7 @@ fun UnifiedLibraryScreen(
                 query = ""
                 focusManager.clearFocus()
             }
-            LibraryBackAction.SHELF_UP -> navigateShelfUp()
+            LibraryBackAction.SHELF_UP -> navigateBack()
             LibraryBackAction.NONE -> Unit
         }
     }
@@ -518,6 +529,7 @@ fun UnifiedLibraryScreen(
                 currentSection = section,
                 onSectionSelected = { destination ->
                     selectedShelfId = null
+                    selectedTagId = null
                     scope.launch {
                         drawerState.close()
                         viewModel.setUnifiedLibrarySection(destination.persistedValue)
@@ -688,7 +700,10 @@ fun UnifiedLibraryScreen(
                         section = section,
                         selectedShelf = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } },
                         onMenuClick = { scope.launch { drawerState.open() } },
-                        onBackFromShelf = ::navigateShelfUp,
+                        onBackFromShelf = navigateBack,
+                        titleOverride = if (section == UnifiedLibrarySection.TAGS) {
+                            selectedTagId?.let { id -> uiState.allTags.find { it.id == id }?.name }
+                        } else null,
                         uiState = uiState,
                         onAccountClick = { scope.launch { accountDrawerState.open() } },
                         searchQuery = if (section == UnifiedLibrarySection.HOME) query else null,
@@ -823,6 +838,8 @@ fun UnifiedLibraryScreen(
                             usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                             widthSizeClass = widthSizeClass,
                             sortOrder = uiState.sortOrder,
+                            useListView = uiState.unifiedShelfListView,
+                            onListViewChange = viewModel::setUnifiedShelfListView,
                             onShelfSelected = { selectedShelfId = it.id },
                             onBreadcrumbNavigate = { shelfId -> selectedShelfId = shelfId },
                             onSortOrderChange = viewModel::setSortOrder,
@@ -834,6 +851,23 @@ fun UnifiedLibraryScreen(
                             )
                     }
                 }
+                UnifiedLibrarySection.TAGS -> UnifiedTagsSection(
+                    modifier = Modifier.padding(padding),
+                    tags = uiState.allTags,
+                    books = uiState.rawLibraryFiles,
+                    selectedTagId = selectedTagId,
+                    selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
+                    downloadingBookIds = uiState.downloadingBookIds,
+                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                    useListView = uiState.unifiedShelfListView,
+                    widthSizeClass = widthSizeClass,
+                    sortOrder = uiState.sortOrder,
+                    onTagSelected = { selectedTagId = it },
+                    onListViewChange = viewModel::setUnifiedShelfListView,
+                    onSortOrderChange = viewModel::setSortOrder,
+                    onBookClick = viewModel::onRecentFileClicked,
+                    onBookLongClick = viewModel::onRecentItemLongPress,
+                )
                 UnifiedLibrarySection.FOLDERS -> UnifiedFoldersSection(
                     modifier = Modifier.padding(padding),
                     folders = uiState.syncedFolders,
@@ -1181,6 +1215,11 @@ private fun UnifiedLibraryDrawer(
                         stringResource(R.string.tab_shelves),
                         currentSection == destination.section,
                         { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) },
+                    ) { onSectionSelected(destination.section) }
+                    MobileUnifiedLibraryDrawerDestination.TAGS -> UnifiedLibraryDestination(
+                        stringResource(R.string.section_tags),
+                        currentSection == destination.section,
+                        { Icon(Icons.Default.Tag, null) },
                     ) { onSectionSelected(destination.section) }
                     MobileUnifiedLibraryDrawerDestination.FOLDERS -> UnifiedLibraryDestination(
                         stringResource(R.string.tab_folders),

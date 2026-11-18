@@ -58,6 +58,12 @@ internal class AndroidLibraryMutationStore(
         }
     }
 
+    override suspend fun findTagByName(name: String): Tag? = withContext(Dispatchers.IO) {
+        tagDao.getAllTagsOnce()
+            .firstOrNull { it.name.equals(name, ignoreCase = true) }
+            ?.toSharedTag()
+    }
+
     override suspend fun createTag(tag: Tag, createdAt: Long) {
         withContext(Dispatchers.IO) { tagDao.insertTag(tag.toTagEntity(createdAt)) }
     }
