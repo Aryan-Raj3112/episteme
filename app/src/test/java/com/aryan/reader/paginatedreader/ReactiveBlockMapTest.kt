@@ -118,5 +118,25 @@ class ReactiveBlockMapTest {
         assertEquals(setOf("cfi_1", "cfi_2"), map.keys)
     }
 
+    @Test
+    fun `repeated redundant registrations across many layout passes never write again`() {
+        // A draw-time layout can dispatch on-positioned callbacks several times per traversal, and
+        // this repeat arrived from `AndroidComposeView.dispatchDraw` -> `measureAndLayout` ->
+        // `dispatchOnPositionedCallbacks` (docs/crashlytics-triage.md#131, repeat). The guard must
+        // hold for every pass, not just the one after the write.
+        val delegate = CountingDelegate()
+        val map = ReactiveBlockMap(delegate.map)
+        val layout = mockk<TextLayoutResult>(relaxed = true)
+        val coordinates = coordinates()
+        val block = mockk<TextContentBlock>(relaxed = true)
+
+        map["cfi_1"] = Triple(layout, coordinates, block)
+        val tickAfterFirstPut = map.tick
+        repeat(5) { map["cfi_1"] = Triple(layout, coordinates, block) }
+
+        assertEquals("only the first registration may reach the delegate", 1, delegate.puts)
+        assertTrue("tick must advance on every pass", map.tick >= tickAfterFirstPut + 5)
+    }
+
     private fun coordinates(): LayoutCoordinates = mockk(relaxed = true)
 }

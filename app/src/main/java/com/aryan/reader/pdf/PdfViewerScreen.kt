@@ -8473,6 +8473,18 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     PdfViewerChromeTts(surfaceState)
 }
 
+/**
+ * Enter/exit motion for the PDF chrome's transient notices (OCR language download, bubble-zoom
+ * download progress). These are constant specs - [slideInVertically]/[fadeIn] and their exit
+ * counterparts capture nothing from composition - so they are hoisted out of the composable instead
+ * of being rebuilt on every recomposition. That matters because the surrounding
+ * `PdfViewerChromeMusicianAndIndicators` recomposes per frame while a musician-mode hold updates
+ * `rightHoldProgress` (~16 ms loop), and each pass used to allocate a fresh `Slide`/`Fade`/
+ * `EnterTransitionImpl` pair per `AnimatedVisibility`.
+ */
+private val pdfChromeNoticeEnter = slideInVertically() + fadeIn()
+private val pdfChromeNoticeExit = slideOutVertically() + fadeOut()
+
 @Composable
 private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerChromeMusicianAndIndicators(
     surfaceState: PdfViewerSurfaceState,
@@ -8656,8 +8668,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     // OCR language download indicator
     AnimatedVisibility(
         visible = isOcrModelDownloading,
-        enter = slideInVertically() + fadeIn(),
-        exit = slideOutVertically() + fadeOut(),
+        enter = pdfChromeNoticeEnter,
+        exit = pdfChromeNoticeExit,
         modifier = Modifier
             .align(Alignment.TopCenter)
             .fillMaxWidth()
@@ -8696,8 +8708,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
     AnimatedVisibility(
         visible = bubbleZoomDownloadProgress != null,
-        enter = slideInVertically() + fadeIn(),
-        exit = slideOutVertically() + fadeOut(),
+        enter = pdfChromeNoticeEnter,
+        exit = pdfChromeNoticeExit,
         modifier = Modifier
             .align(Alignment.TopCenter)
             .fillMaxWidth()

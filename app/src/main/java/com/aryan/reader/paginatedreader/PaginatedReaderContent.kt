@@ -2678,15 +2678,54 @@ internal fun RenderFlexChildBlock(
             color = ttsHighlightColor
         )
 
-        val finalStyle = when (block) {
-            is HeaderBlock -> createHeaderTextStyle(
-                baseStyle = textStyle,
-                level = block.level,
-                textAlign = block.textAlign
-            )
-            is ParagraphBlock -> textStyle.copy(textAlign = block.textAlign ?: textStyle.textAlign)
-            is QuoteBlock -> textStyle.copy(textAlign = block.textAlign ?: textStyle.textAlign)
-            is ListItemBlock -> textStyle
+        // Keyed on cheap values, never on `block` itself: a `TextContentBlock` compares its whole
+        // `AnnotatedString` graph, and this composition path is where the reader spends its frames
+        // (docs/crashlytics-triage.md#131/#138).
+        val headerLevel = (block as? HeaderBlock)?.level
+        val blockTextAlign = when (block) {
+            is HeaderBlock -> block.textAlign
+            is ParagraphBlock -> block.textAlign
+            is QuoteBlock -> block.textAlign
+            is ListItemBlock -> null
+        }
+        val finalStyle = remember(textStyle, headerLevel, blockTextAlign) {
+            when {
+                headerLevel != null -> createHeaderTextStyle(
+                    baseStyle = textStyle,
+                    level = headerLevel,
+                    textAlign = blockTextAlign
+                )
+                // `copy(textAlign = textStyle.textAlign)` when the block has no alignment would be an
+                // equal-but-new instance on every pass; returning the base style is equivalent.
+                blockTextAlign != null -> textStyle.copy(textAlign = blockTextAlign)
+                else -> textStyle
+            }
+        }
+
+        // `onGloballyPositioned` reads this callback during the layout pass, so it has to see the
+        // current block/page — but handing down a freshly allocated lambda made
+        // `TextWithEmphasis`'s group "changed" on every pass (the composer's `changedInstance` on
+        // this argument was where a scroll ANR was sampled) and re-created its
+        // `onGloballyPositioned` modifier node each time. The reads go through
+        // `rememberUpdatedState` instead, so the instance handed down is stable
+        // (docs/crashlytics-triage.md#138).
+        val layoutBlock by rememberUpdatedState(block)
+        val layoutPageIndex by rememberUpdatedState(pageIndex)
+        val layoutMap by rememberUpdatedState(blockLayoutMap)
+        val registerLayout = remember(registerStableLayoutKey) {
+            { layout: TextLayoutResult, coords: LayoutCoordinates ->
+                val currentBlock = layoutBlock
+                val cfi = currentBlock.cfi
+                if (cfi != null) {
+                    val currentPageIndex = layoutPageIndex
+                    val key = if (registerStableLayoutKey) {
+                        textBlockLayoutKey(cfi, currentPageIndex, currentBlock)
+                    } else {
+                        legacyTextBlockLayoutKey(cfi, currentPageIndex)
+                    }
+                    layoutMap[key] = Triple(layout, coords, currentBlock)
+                }
+            }
         }
 
         TextWithEmphasis(
@@ -2706,16 +2745,8 @@ internal fun RenderFlexChildBlock(
             isDarkTheme = isDarkTheme,
             themeBackgroundColor = themeBackgroundColor,
             themeTextColor = themeTextColor,
-            onRegisterLayout = { layout, coords ->
-                block.cfi?.let { cfi ->
-                    val key = if (registerStableLayoutKey) {
-                        textBlockLayoutKey(cfi, pageIndex, block)
-                    } else {
-                        legacyTextBlockLayoutKey(cfi, pageIndex)
-                    }
-                    blockLayoutMap[key] = Triple(layout, coords, block)
-                }
-            })
+            onRegisterLayout = registerLayout
+        )
     }
 
     when (childBlock) {
