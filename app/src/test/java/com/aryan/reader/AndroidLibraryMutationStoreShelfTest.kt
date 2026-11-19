@@ -18,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import java.io.File
 
 /**
  * `book_shelf_cross_ref.bookId` is a foreign key into `recent_files(bookId)`, so a
@@ -178,6 +179,59 @@ class AndroidLibraryMutationStoreShelfTest {
         store.applyRemoteShelf("t", "T", listOf("tombstone"), 5L, isDeleted = false)
 
         assertEquals(listOf("tombstone"), shelfDao.getCrossRefsForShelf("t").map { it.bookId })
+    }
+
+    @Test
+    fun `adding books to a shelf that no longer exists is dropped instead of violating the foreign key`() = runTest {
+        // `book_shelf_cross_ref` has a second foreign key, shelfId -> shelves(id). A caller
+        // holding an id whose shelf row is gone (local-data reset, stale UI selection) would
+        // otherwise abort the insert with the same 787 as a missing book.
+        db.recentFileDao().insertOrUpdateFile(entity("present", 0))
+
+        store.addBooksToShelf("no-such-shelf", setOf("present"))
+
+        assertTrue(shelfDao.getCrossRefsForShelf("no-such-shelf").isEmpty())
+        assertTrue(shelfDao.getShelfById("no-such-shelf") == null)
+    }
+
+    @Test
+    fun `shelf cross ref writes check both foreign keys inside one write transaction`() {
+        // The existence check must share a transaction with the insert, otherwise a book
+        // hard-deleted by sync/folder rescan between the two (deleteFilePermanently) still
+        // produces the reported 787. Behavioural interleaving is not reproducible in a unit
+        // test, so this pins the structure the guarantee depends on.
+        val source = sourceFile("com/aryan/reader/AndroidLibraryMutationStore.kt").readText()
+
+        val addBody = source.substringAfter("override suspend fun addBooksToShelf")
+            .substringBefore("override suspend fun renameShelf")
+        assertTrue(
+            "addBooksToShelf must run its check and insert in one transaction",
+            addBody.contains("database.withTransaction")
+        )
+        assertTrue(addBody.indexOf("database.withTransaction") < addBody.indexOf("insertBookShelfCrossRefs"))
+
+        // `migrateLegacyShelves` is the last declaration in the file.
+        val migrationBody = source.substringAfter("suspend fun migrateLegacyShelves")
+        assertTrue(
+            "migrateLegacyShelves must insert the shelf and its refs atomically",
+            migrationBody.contains("database.withTransaction")
+        )
+
+        val guardBody = source.substringAfter("private suspend fun bookShelfCrossRefsForExistingBooks")
+            .substringBefore("private suspend fun bookTagCrossRefsForExistingBooks")
+        assertTrue(
+            "both parent tables must be checked: shelf row and book rows",
+            guardBody.contains("getShelfById(shelfId)") && guardBody.contains("existingLibraryBookIds()")
+        )
+    }
+
+    private fun sourceFile(relativePath: String): File {
+        val candidates = listOf(
+            File("src/main/java/$relativePath"),
+            File("app/src/main/java/$relativePath"),
+        )
+        return candidates.firstOrNull { it.exists() }
+            ?: error("Source not found: $relativePath (cwd=${File(".").absolutePath})")
     }
 
     private fun entity(bookId: String, index: Int): RecentFileEntity =

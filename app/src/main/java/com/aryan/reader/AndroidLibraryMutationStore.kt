@@ -34,12 +34,19 @@ internal class AndroidLibraryMutationStore(
 
     override suspend fun addBooksToShelf(shelfId: String, bookIds: Set<String>) {
         withContext(Dispatchers.IO) {
-            val timestamp = System.currentTimeMillis()
-            val crossRefs = bookShelfCrossRefsForExistingBooks(shelfId, bookIds, timestamp)
-            if (crossRefs.isNotEmpty()) {
-                shelfDao.insertBookShelfCrossRefs(crossRefs)
+            // The existence check and the insert must share one write transaction: the
+            // book rows can be hard-deleted concurrently (`deleteFilePermanently` runs
+            // from sync and folder rescan), and a check made in an earlier transaction
+            // would not stop the insert from hitting the FK afterwards. Same shape as
+            // `assignTagToBooks`.
+            database.withTransaction {
+                val timestamp = System.currentTimeMillis()
+                val crossRefs = bookShelfCrossRefsForExistingBooks(shelfId, bookIds, timestamp)
+                if (crossRefs.isNotEmpty()) {
+                    shelfDao.insertBookShelfCrossRefs(crossRefs)
+                }
+                shelfDao.touchShelf(shelfId, timestamp)
             }
-            shelfDao.touchShelf(shelfId, timestamp)
         }
     }
 
@@ -124,12 +131,19 @@ internal class AndroidLibraryMutationStore(
     }
 
     /**
-     * Cross-refs for [bookIds] that actually have a `recent_files` row.
+     * Cross-refs for [bookIds] that actually have a `recent_files` row and a parent shelf.
      *
-     * `book_shelf_cross_ref.bookId` is a foreign key into `recent_files(bookId)`, so a
-     * cross-ref for a book with no local row is a hard FK violation that aborts the
-     * entire insert batch, not just that row. `OnConflictStrategy.IGNORE` does not help:
-     * it absorbs primary-key collisions, not referential failures.
+     * `book_shelf_cross_ref` has TWO foreign keys and either one failing aborts the whole
+     * insert batch (see `BookShelfCrossRef`), so both parents are checked here rather than
+     * only the book. `OnConflictStrategy.IGNORE` does not help: it absorbs primary-key
+     * collisions, not referential failures.
+     *
+     * `bookId` -> `recent_files(bookId)`: a cross-ref for a book with no local row is a
+     * hard FK violation.
+     *
+     * `shelfId` -> `shelves(id)`: the same violation when the shelf row is not there -- a
+     * stale shelf id, or a shelf cleared by a local-data reset between the caller reading
+     * the shelf list and this insert.
      *
      * Callers cannot filter this out themselves. Cloud sync filters with
      * `syncableBookIds`, which is built from BOTH local and remote book metadata
@@ -138,8 +152,11 @@ internal class AndroidLibraryMutationStore(
      * merge deliberately skips inserting it, yet the shelf document still lists it.
      *
      * Re-checking here, at the one place that owns this table, keeps every writer to the
-     * same rule. Uses the narrow `SELECT bookId` rather than `SELECT *`
-     * (docs/crashlytics-triage.md#54).
+     * same rule. Uses the narrow `SELECT bookId` and a single primary-key lookup rather
+     * than `SELECT *` (docs/crashlytics-triage.md#54).
+     *
+     * Callers must run this inside their write transaction so the parents cannot disappear
+     * between the check and the insert (docs/crashlytics-triage.md#68, #121).
      */
     private suspend fun bookShelfCrossRefsForExistingBooks(
         shelfId: String,
@@ -147,6 +164,7 @@ internal class AndroidLibraryMutationStore(
         timestamp: Long,
     ): List<BookShelfCrossRef> {
         if (bookIds.isEmpty()) return emptyList()
+        if (shelfDao.getShelfById(shelfId) == null) return emptyList()
         val existingBookIds = existingLibraryBookIds()
         return bookIds.filter { it in existingBookIds }.map { BookShelfCrossRef(it, shelfId, timestamp) }
     }
@@ -197,26 +215,32 @@ internal class AndroidLibraryMutationStore(
             return@withContext
         }
 
-        shelfNames.forEach { name ->
-            val shelfId = UUID.nameUUIDFromBytes(name.toByteArray()).toString()
-            val timestamp = prefs.getLong("shelf_timestamp_$name", System.currentTimeMillis())
-            shelfDao.insertShelf(
-                ShelfEntity(
-                    id = shelfId,
-                    name = name,
-                    isSmart = false,
-                    smartRulesJson = null,
-                    createdAt = timestamp,
-                    updatedAt = timestamp,
-                    isDeleted = prefs.getBoolean("shelf_deleted_$name", false),
-                ),
-            )
-            val crossRefs = bookShelfCrossRefsForExistingBooks(
-                shelfId,
-                prefs.getStringSet("shelf_content_$name", emptySet()).orEmpty(),
-                timestamp,
-            )
-            if (crossRefs.isNotEmpty()) shelfDao.insertBookShelfCrossRefs(crossRefs)
+        // One transaction for the whole migration: the shelf insert and the cross-ref
+        // existence check must be atomic, and an interrupted migration is retried from
+        // scratch on the next launch because the `is_shelves_migrated_to_room` flag is
+        // only written after this commits (the inserts are idempotent: REPLACE / IGNORE).
+        database.withTransaction {
+            shelfNames.forEach { name ->
+                val shelfId = UUID.nameUUIDFromBytes(name.toByteArray()).toString()
+                val timestamp = prefs.getLong("shelf_timestamp_$name", System.currentTimeMillis())
+                shelfDao.insertShelf(
+                    ShelfEntity(
+                        id = shelfId,
+                        name = name,
+                        isSmart = false,
+                        smartRulesJson = null,
+                        createdAt = timestamp,
+                        updatedAt = timestamp,
+                        isDeleted = prefs.getBoolean("shelf_deleted_$name", false),
+                    ),
+                )
+                val crossRefs = bookShelfCrossRefsForExistingBooks(
+                    shelfId,
+                    prefs.getStringSet("shelf_content_$name", emptySet()).orEmpty(),
+                    timestamp,
+                )
+                if (crossRefs.isNotEmpty()) shelfDao.insertBookShelfCrossRefs(crossRefs)
+            }
         }
         prefs.edit { putBoolean("is_shelves_migrated_to_room", true) }
     }
