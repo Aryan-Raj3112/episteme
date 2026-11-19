@@ -795,7 +795,27 @@ class ReactiveBlockMap(
     var tick by mutableIntStateOf(0)
 
     override fun put(key: String, value: Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>): Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>? {
+        // `onGloballyPositioned` fires on every layout pass, with the same `TextLayoutResult` /
+        // `LayoutCoordinates` / `TextContentBlock` instances when nothing actually changed, and the
+        // block is re-registered on every pass. Writing the map in that case is pure cost: the
+        // snapshot write invalidates every reader, and the map's put path compares the incoming
+        // value with the stored one, which reaches the deep `equals` of `TextLayoutResult` /
+        // `ParagraphBlock` (AnnotatedString spans etc.) - measured as an ANR inside
+        // SnapshotStateMap.put (docs/crashlytics-triage.md#131).
+        //
+        // Skipping the write is safe: `tick` still advances, so layer-phase consumers re-read the
+        // live (mutable) `LayoutCoordinates` exactly as before, and the stored triple still holds
+        // those same instances. Only a genuinely different layout/coordinates/block is written.
         tick++
+        val previous = delegate[key]
+        if (
+            previous != null &&
+            previous.first === value.first &&
+            previous.second === value.second &&
+            previous.third === value.third
+        ) {
+            return previous
+        }
         return delegate.put(key, value)
     }
 

@@ -32,6 +32,7 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Fts4(tokenizer = "unicode61")
@@ -145,19 +146,64 @@ abstract class PdfTextDatabase : RoomDatabase() {
     abstract fun pdfMetaDao(): PdfMetaDao
 
     companion object {
+        private const val DATABASE_NAME = "pdf_text_cache_db"
+
         @Volatile
         private var INSTANCE: PdfTextDatabase? = null
 
+        /**
+         * Set once the singleton's connection has actually been opened at least once.
+         *
+         * Room opens lazily, so `isOpen` is false for a freshly built instance and cannot by itself
+         * distinguish "not used yet" from "was closed". Together they can: opened once + not open =
+         * the database was closed under us.
+         */
+        @Volatile
+        private var instanceWasOpened = false
+
+        /**
+         * The process-wide cache database; rebuilt if the previous instance was closed.
+         *
+         * `pdf_text_cache_db` is a rebuildable cache (extracted page text, metadata, FTS index), and
+         * SQLite reports corruption by closing the database: Room's default `onCorruption` closes it
+         * and deletes the files, after which every later call on that instance throws
+         * `IllegalStateException: attempt to re-open an already-closed object` for the rest of the
+         * process (docs/crashlytics-triage.md#137). Rebuilding the closed singleton means the cache
+         * heals as soon as the failure is tolerated once.
+         */
         fun getDatabase(context: Context): PdfTextDatabase {
-            return INSTANCE ?: synchronized(this) {
+            INSTANCE?.let { existing ->
+                if (!instanceWasOpened || existing.isOpen) return existing
+            }
+            return synchronized(this) {
+                val existing = INSTANCE
+                if (existing != null && (!instanceWasOpened || existing.isOpen)) {
+                    return existing
+                }
+                existing?.let { runCatching { it.close() } }
+                instanceWasOpened = false
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     PdfTextDatabase::class.java,
-                    "pdf_text_cache_db"
+                    DATABASE_NAME
                 ).fallbackToDestructiveMigration(true)
+                    .addCallback(object : Callback() {
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            instanceWasOpened = true
+                        }
+                    })
                     .build()
                 INSTANCE = instance
                 instance
+            }
+        }
+
+        /** Drops the singleton after an unrecoverable cache failure so the next access rebuilds it. */
+        internal fun invalidateInstance() {
+            synchronized(this) {
+                INSTANCE?.let { runCatching { it.close() } }
+                INSTANCE = null
+                instanceWasOpened = false
             }
         }
     }

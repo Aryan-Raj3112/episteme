@@ -132,8 +132,18 @@ class SharedLibraryStateProjector(
             viewingShelfId = viewingShelfId,
             isAddingBooksToShelf = current.isAddingBooksToShelf && viewingShelfId != null,
             selectedShelfIds = selectedShelfIds,
-            selectedBookIds = current.selectedBookIds.filterTo(mutableSetOf()) { selectedId ->
-                allLibraryBooks.any { it.id == selectedId }
+            // Membership test against the id index that is already built above. This used to be
+            // `allLibraryBooks.any { it.id == selectedId }`, i.e. O(selected x books): a "select
+            // all" on a large library cost tens of millions of string comparisons on every
+            // projection, and the result set's backing array was the allocation that OOMed under
+            // fragmentation (docs/crashlytics-triage.md#133). Pre-sized so a large selection
+            // allocates its table once instead of through the whole resize chain.
+            selectedBookIds = if (current.selectedBookIds.isEmpty()) {
+                emptySet()
+            } else {
+                current.selectedBookIds.filterTo(LinkedHashSet(current.selectedBookIds.size)) {
+                    it in booksById
+                }
             },
             shelves = shelfProjection.shelves,
             openTabs = openTabs,

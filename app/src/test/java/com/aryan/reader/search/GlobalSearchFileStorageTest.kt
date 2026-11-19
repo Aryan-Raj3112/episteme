@@ -52,6 +52,16 @@ class GlobalSearchFileStorageTest {
     }
 
     @Test
+    fun `storedBookIds lists every saved sidecar and skips corrupt files`() {
+        val store = storage()
+        store.saveBook(persisted("one"))
+        store.saveBook(persisted("two"))
+        store.fileFor("broken").writeText("{not json")
+
+        assertEquals(setOf("one", "two"), store.storedBookIds())
+    }
+
+    @Test
     fun `long book ids stay within sidecar byte cap`() {
         val store = storage()
         val longId = "b".repeat(400)
