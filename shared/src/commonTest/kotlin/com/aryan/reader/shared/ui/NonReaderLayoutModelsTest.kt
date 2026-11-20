@@ -609,15 +609,6 @@ class NonReaderLayoutModelsTest {
                 pinnedHomeBookIds = setOf(pinned.id),
             ).mobileRecentBooks().map { it.id },
         )
-        assertEquals(
-            listOf(pinned.id, inProgress.id),
-            SharedReaderScreenState(
-                rawLibraryBooks = listOf(activeTab.copy(isRecent = false), inProgress, pinned, recent),
-                recentBooks = listOf(inProgress, pinned, recent),
-                pinnedHomeBookIds = setOf(pinned.id),
-                recentFilesLimit = 2,
-            ).mobileRecentBooks().map { it.id },
-        )
         assertEquals(listOf(recent.id), layout.selectedBooks.map { it.id })
         assertTrue(layout.isContextualModeActive)
         assertFalse(layout.isEmpty)

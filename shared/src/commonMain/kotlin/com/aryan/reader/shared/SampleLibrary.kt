@@ -60,7 +60,6 @@ fun sampleReaderScreenState(): SharedReaderScreenState {
         searchQuery = library.searchQuery,
         sortOrder = library.sortOrder,
         libraryFilters = library.filters,
-        recentFilesLimit = library.recentLimit,
         allTags = tags
     )
 }

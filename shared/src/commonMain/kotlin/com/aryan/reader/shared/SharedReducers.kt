@@ -31,7 +31,6 @@ fun LibraryState.reduce(action: LibraryAction): LibraryState {
         )
         LibraryAction.ShelfSelectionCleared -> copy(selectedShelfIds = emptySet())
         is LibraryAction.LibraryPageChanged -> copy(libraryPage = action.page)
-        is LibraryAction.RecentLimitChanged -> copy(recentLimit = action.limit)
     }
 }
 
@@ -125,7 +124,6 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
         selectedBookIds = selectedBookIds,
         selectedShelfIds = selectedShelfIds,
         libraryPage = libraryScreenStartPage,
-        recentLimit = recentFilesLimit,
     ).reduce(action)
     return copy(
         searchQuery = reduced.searchQuery,
@@ -135,7 +133,6 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
         selectedBookIds = reduced.selectedBookIds,
         selectedShelfIds = reduced.selectedShelfIds,
         libraryScreenStartPage = reduced.libraryPage,
-        recentFilesLimit = reduced.recentLimit,
         // Hosts that apply actions straight onto the projected state (iOS) do not run
         // the projector again, so shelf contents have to be re-ordered here or the
         // shelf screens would keep rendering the previous order. Android re-projects

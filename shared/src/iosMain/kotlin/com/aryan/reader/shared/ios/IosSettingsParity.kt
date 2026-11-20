@@ -33,7 +33,6 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.APP_THEME,
     SharedSettingsAction.LANGUAGE,
     SharedSettingsAction.TABS_TOGGLE,
-    SharedSettingsAction.RECENT_LIMIT,
     SharedSettingsAction.STRICT_FILE_FILTER,
     SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,

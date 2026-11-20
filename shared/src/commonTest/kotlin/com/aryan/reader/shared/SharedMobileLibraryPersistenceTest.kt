@@ -47,7 +47,6 @@ class SharedMobileLibraryPersistenceTest {
             libraryBooks = listOf(first, second),
             shelves = listOf(manual, smart, generatedFolder),
             syncedFolders = listOf(folder),
-            recentFilesLimit = 20,
             isTabsEnabled = true,
             isFolderSyncEnabled = true,
             sortOrder = SortOrder.AUTHOR_ASC,
@@ -82,7 +81,6 @@ class SharedMobileLibraryPersistenceTest {
         assertEquals(setOf(first.id), restored.pinnedHomeBookIds)
         assertEquals(setOf(second.id), restored.pinnedLibraryBookIds)
         assertEquals(listOf(folder), restored.syncedFolders)
-        assertEquals(20, restored.recentFilesLimit)
         assertTrue(restored.isFolderSyncEnabled)
         assertEquals(SortOrder.AUTHOR_ASC, restored.sortOrder)
         assertEquals(setOf(FileType.EPUB), restored.libraryFilters.fileTypes)
@@ -107,26 +105,6 @@ class SharedMobileLibraryPersistenceTest {
         assertEquals(smartRules, snapshot.shelfRecords.single { it.id == smart.id }.smartRulesJson)
         assertFalse(snapshot.shelfRefs.any { it.shelfId == smart.id })
         assertFalse(snapshot.shelfRecords.any { it.id == generatedFolder.id })
-    }
-
-    @Test
-    fun unlimitedRecentFilesSurvivesMobileSnapshotRoundTrip() {
-        val snapshot = SharedReaderScreenState(recentFilesLimit = 0)
-            .toSharedMobileLibrarySnapshot()
-        val restored = SharedLibrarySnapshotJson
-            .decodeOrEmpty(SharedLibrarySnapshotJson.encode(snapshot))
-            .toSharedMobileReaderState()
-
-        assertEquals(0, snapshot.recentFilesLimit)
-        assertEquals(0, restored.recentFilesLimit)
-    }
-
-    @Test
-    fun invalidMobileRecentLimitIsNormalizedBeforePersistence() {
-        val snapshot = SharedReaderScreenState(recentFilesLimit = 24)
-            .toSharedMobileLibrarySnapshot()
-
-        assertEquals(20, snapshot.recentFilesLimit)
     }
 
     @Test

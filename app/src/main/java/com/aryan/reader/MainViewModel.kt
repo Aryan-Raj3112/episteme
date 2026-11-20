@@ -741,7 +741,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     KEY_LIBRARY_SCREEN_START_PAGE,
                     0,
                 ).coerceIn(0, if (BuildConfig.IS_OFFLINE) 2 else 3),
-                recentLimit = prefs.getInt(KEY_RECENT_FILES_LIMIT, 0),
                 searchInsideFiles = prefs.getBoolean(KEY_SEARCH_INSIDE_FILES, false),
             ),
             shelfState = AppShelfState(
@@ -7194,11 +7193,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun setRecentFilesLimit(limit: Int) {
-        _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.RecentLimitChanged(limit)) }
-        prefs.edit { putInt(KEY_RECENT_FILES_LIMIT, limit) }
-    }
-
     fun setSortOrder(sortOrder: SortOrder) {
         _internalState.update { it.withSharedLibraryAction(SharedLibraryAction.SortChanged(sortOrder)) }
         prefs.edit { putString(KEY_SORT_ORDER, sortOrder.name) }
@@ -10438,7 +10432,6 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         internal const val KEY_LAST_FOLDER_SCAN_TIME = "last_folder_scan_time"
         internal const val KEY_PINNED_HOME = "pinned_home_books"
         internal const val KEY_PINNED_LIBRARY = "pinned_library_books"
-        private const val KEY_RECENT_FILES_LIMIT = "recent_files_limit"
         private const val MAX_OPEN_PDF_TABS = 20
         private const val KEY_TABS_ENABLED = "tabs_enabled"
         private const val KEY_OPEN_TAB_IDS = "open_tab_ids"

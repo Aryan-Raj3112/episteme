@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Fonts
 import androidx.compose.material.icons.filled.Menu
@@ -1346,7 +1345,6 @@ fun SharedMobileHomeScreen(
                         onDrawerClick = actions::openDrawer,
                         onSettingsClick = actions::openSettings,
                         onAppThemeClick = actions::openAppTheme,
-                        onRecentLimitClick = actions::openRecentLimit,
                         isTabsEnabled = state.isTabsEnabled,
                         useStrictFileFilter = state.useStrictFileFilter,
                         usePdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
@@ -2866,7 +2864,6 @@ private fun SharedMobileHomeTopBar(
     onDrawerClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onAppThemeClick: () -> Unit,
-    onRecentLimitClick: () -> Unit,
     isTabsEnabled: Boolean,
     useStrictFileFilter: Boolean,
     usePdfFileNameAsDisplayName: Boolean,
@@ -2995,12 +2992,6 @@ private fun SharedMobileHomeTopBar(
             }
             IconButton(onClick = onAppThemeClick, modifier = Modifier.testTag("MobileHomeTheme")) {
                 Icon(Icons.Default.Palette, contentDescription = readerString("app_theme_title", "App Theme"))
-            }
-            IconButton(onClick = onRecentLimitClick, modifier = Modifier.testTag("MobileHomeRecentLimit")) {
-                Icon(
-                    Icons.Default.FormatListNumbered,
-                    contentDescription = readerString("options_recent_limit", "Recent files limit"),
-                )
             }
             Box {
                 IconButton(onClick = { showOptionsMenu = true }, modifier = Modifier.testTag("MobileHomeMore")) {

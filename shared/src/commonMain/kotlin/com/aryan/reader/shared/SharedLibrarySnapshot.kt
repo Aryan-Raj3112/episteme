@@ -36,7 +36,6 @@ data class SharedLibrarySnapshot(
     val tags: List<Tag> = emptyList(),
     val customFonts: List<CustomFontItem> = emptyList(),
     val syncedFolders: List<SyncedFolder> = emptyList(),
-    val recentFilesLimit: Int = 0,
     val isTabsEnabled: Boolean = true,
     val isFolderSyncEnabled: Boolean = false,
     val sortOrder: SortOrder = SortOrder.RECENT,
@@ -106,7 +105,6 @@ object SharedLibrarySnapshotJson {
             tags = root.array("tags").mapNotNull { it.asTagOrNull() },
             customFonts = root.array("customFonts").mapNotNull { it.asCustomFontItemOrNull() },
             syncedFolders = root.array("syncedFolders").mapNotNull { it.asSyncedFolderOrNull() },
-            recentFilesLimit = normalizedRecentFilesLimit(root.int("recentFilesLimit", 0)),
             isTabsEnabled = root.boolean("isTabsEnabled", true),
             isFolderSyncEnabled = root.boolean("isFolderSyncEnabled", false),
             sortOrder = root.string("sortOrder")
@@ -198,7 +196,6 @@ object SharedLibrarySnapshotJson {
                 "tags" to JsonArray(snapshot.tags.map { it.toJsonObject() }),
                 "customFonts" to JsonArray(snapshot.customFonts.map { it.toJsonObject() }),
                 "syncedFolders" to JsonArray(snapshot.syncedFolders.map { it.toJsonObject() }),
-                "recentFilesLimit" to JsonPrimitive(snapshot.recentFilesLimit),
                 "isTabsEnabled" to JsonPrimitive(snapshot.isTabsEnabled),
                 "isFolderSyncEnabled" to JsonPrimitive(snapshot.isFolderSyncEnabled),
                 "sortOrder" to JsonPrimitive(snapshot.sortOrder.name),

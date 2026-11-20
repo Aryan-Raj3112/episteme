@@ -29,7 +29,6 @@ data class LibraryFeatureState(
     val syncedFolders: List<SyncedFolder> = emptyList(),
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
-    val recentLimit: Int = 0,
     val tabs: AppTabState = AppTabState(),
     val viewingShelfId: String? = null,
     val isAddingBooksToShelf: Boolean = false,
@@ -99,7 +98,6 @@ class SharedLibraryStateProjector(
             SortOrder.RECENT
         )
             .withPinnedFirst(current.pinnedHomeBookIds) { it.id }
-            .take(if (current.recentLimit > 0) current.recentLimit else Int.MAX_VALUE)
         val booksById = allLibraryBooks.associateBy { it.id }
         val tabState = current.tabs.reconcileAvailableBooks(booksById.keys)
         val openTabs = tabState.openBookIds.mapNotNull(booksById::get)

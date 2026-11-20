@@ -15,7 +15,6 @@ class DesktopLibraryDatabaseTest {
             .toFile()
         val database = DesktopLibraryDatabase(databaseFile)
         val snapshot = SharedLibrarySnapshot(
-            recentFilesLimit = 37,
             openTabIds = listOf("book-a"),
             activeTabBookId = "book-a"
         )
@@ -23,7 +22,6 @@ class DesktopLibraryDatabaseTest {
         database.save(snapshot)
 
         val loaded = database.load()
-        assertEquals(37, loaded.recentFilesLimit)
         assertEquals(listOf("book-a"), loaded.openTabIds)
         assertEquals("book-a", loaded.activeTabBookId)
         assertTrue(databaseFile.isFile)
@@ -36,7 +34,6 @@ class DesktopLibraryDatabaseTest {
             .resolve("library.json")
             .toFile()
         val backupSnapshot = SharedLibrarySnapshot(
-            recentFilesLimit = 19,
             openTabIds = listOf("backup-book"),
             activeTabBookId = "backup-book"
         )
@@ -48,7 +45,6 @@ class DesktopLibraryDatabaseTest {
 
         val loaded = DesktopLibraryDatabase(databaseFile).load()
 
-        assertEquals(19, loaded.recentFilesLimit)
         assertEquals(listOf("backup-book"), loaded.openTabIds)
         assertEquals("backup-book", loaded.activeTabBookId)
     }

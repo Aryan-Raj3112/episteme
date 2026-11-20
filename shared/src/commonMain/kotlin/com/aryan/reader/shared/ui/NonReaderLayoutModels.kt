@@ -396,8 +396,7 @@ internal fun SharedReaderScreenState.mobileRecentBooks(): List<BookItem> {
     val sorted = sortBooks(rawLibraryBooks.filter { it.isRecent }, SortOrder.RECENT)
     val pinned = sorted.filter { it.id in pinnedHomeBookIds }
     val unpinned = sorted.filterNot { it.id in pinnedHomeBookIds }
-    return (pinned + unpinned)
-        .take(if (recentFilesLimit > 0) recentFilesLimit else Int.MAX_VALUE)
+    return pinned + unpinned
 }
 
 fun SharedReaderScreenState.toNonReaderHomeLayoutModel(): NonReaderHomeLayoutModel {

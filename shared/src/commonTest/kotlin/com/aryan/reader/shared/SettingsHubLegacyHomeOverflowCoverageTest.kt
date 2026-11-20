@@ -65,14 +65,14 @@ class SettingsHubLegacyHomeOverflowCoverageTest {
 
     @Test
     fun `fps overlay toggle reports its current state and is debug only`() {
-        val enabled = debugHub().page(SharedSettingsDestination.EXTRA)
+        val enabled = debugHub().page(SharedSettingsDestination.HELP_ABOUT)
             .items
             .single { it.action == SharedSettingsAction.FPS_OVERLAY }
         assertEquals(true, enabled.checked)
 
         val release = sharedSettingsHubModel(
             SharedSettingsHubInput(platform = SharedSettingsPlatform.ANDROID, isDebugBuild = false)
-        ).page(SharedSettingsDestination.EXTRA).items.mapNotNull { it.action }
+        ).page(SharedSettingsDestination.HELP_ABOUT).items.mapNotNull { it.action }
         assertTrue(
             SharedSettingsAction.FPS_OVERLAY !in release,
             "The FPS overlay is a debug diagnostic and must not ship in release builds",
@@ -80,13 +80,18 @@ class SettingsHubLegacyHomeOverflowCoverageTest {
     }
 
     @Test
-    fun `device management moved onto the extra page`() {
-        val extraActions = debugHub().page(SharedSettingsDestination.EXTRA)
+    fun `device management lives with the account rows and appears once`() {
+        val accountActions = debugHub().page(SharedSettingsDestination.SYNC_ACCOUNT)
             .items
             .mapNotNull { it.action }
         assertTrue(
-            SharedSettingsAction.DEVICE_MANAGEMENT in extraActions,
+            SharedSettingsAction.DEVICE_MANAGEMENT in accountActions,
             "Device management was only reachable from the retired Home overflow",
+        )
+        assertEquals(
+            1,
+            accountActions.count { it == SharedSettingsAction.DEVICE_MANAGEMENT },
+            "Device management must not be listed twice now that Account and Sync share a page",
         )
     }
 }

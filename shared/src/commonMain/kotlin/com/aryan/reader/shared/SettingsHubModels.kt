@@ -6,60 +6,33 @@ enum class SharedSettingsPlatform {
     DESKTOP
 }
 
-enum class SharedSettingsSection(
-    val title: String,
-    val summary: String
-) {
-    READER(
-        title = "Reader settings",
-        summary = "Global defaults for text, EPUB, PDF, toolbar, and speech"
-    ),
-    APP_LIBRARY(
-        title = "App & library",
-        summary = "App preferences, imports, tabs, and local library behavior"
-    ),
-    SYNC_ACCOUNTS(
-        title = "Sync",
-        summary = "Cloud sync and folder backup"
-    ),
-    ACCOUNTS(
-        title = "Account",
-        summary = "Sign-in and account management"
-    ),
-    AI_TTS(
-        title = "AI & TTS",
-        summary = "Reader AI, keys, models, voices, and speech preferences"
-    ),
-    STORAGE_ADVANCED(
-        title = "Storage & advanced",
-        summary = "Caches and diagnostic tools"
-    ),
-    HELP(
-        title = "Help",
-        summary = "Feedback, support, and app information"
-    ),
-    EXTRA(
-        title = "Extra",
-        summary = "Overflow options, maintenance, and diagnostics"
-    )
-}
+/**
+ * Settings copy is declared as a [SharedText] key + English fallback so every host translates it
+ * through its own resource catalog. Keys are stable identifiers: changing the English wording never
+ * drops a translation.
+ */
+private fun t(key: String, fallback: String): SharedText =
+    SharedText(name = "settings_hub_$key", fallback = fallback)
 
+/**
+ * Where the settings hub can navigate.
+ *
+ * The root list is derived from the category specs, so order, title, and copy have exactly one
+ * source of truth.
+ */
 enum class SharedSettingsDestination {
     ROOT,
     EPUB_TEXT,
     PDF_COMICS,
-    THEME_APPEARANCE,
+    APP_LIBRARY,
     TTS_AI,
-    LIBRARY_SYNC_STORAGE,
-    SYNC_ACCOUNTS,
-    ACCOUNTS,
-    EXTRA,
+    SYNC_ACCOUNT,
+    STORAGE_PRIVACY,
     HELP_ABOUT,
     EPUB_FORMAT,
     EPUB_THEME_TEXTURE,
     EPUB_VISUAL_DEFAULTS,
     PDF_APPEARANCE_DEFAULTS,
-    PDF_READER_TOOLS,
     READER_TOOLBAR_DEFAULTS,
     GLOBAL_TTS_REPLACEMENTS
 }
@@ -69,72 +42,18 @@ fun SharedSettingsDestination.parentDestination(): SharedSettingsDestination? {
         SharedSettingsDestination.ROOT -> null
         SharedSettingsDestination.EPUB_TEXT,
         SharedSettingsDestination.PDF_COMICS,
-        SharedSettingsDestination.THEME_APPEARANCE,
+        SharedSettingsDestination.APP_LIBRARY,
         SharedSettingsDestination.TTS_AI,
-        SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
-        SharedSettingsDestination.SYNC_ACCOUNTS,
-        SharedSettingsDestination.ACCOUNTS,
-        SharedSettingsDestination.EXTRA,
+        SharedSettingsDestination.SYNC_ACCOUNT,
+        SharedSettingsDestination.STORAGE_PRIVACY,
         SharedSettingsDestination.HELP_ABOUT -> SharedSettingsDestination.ROOT
         SharedSettingsDestination.EPUB_FORMAT,
         SharedSettingsDestination.EPUB_THEME_TEXTURE,
         SharedSettingsDestination.EPUB_VISUAL_DEFAULTS,
         SharedSettingsDestination.READER_TOOLBAR_DEFAULTS -> SharedSettingsDestination.EPUB_TEXT
-        SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS,
-        SharedSettingsDestination.PDF_READER_TOOLS -> SharedSettingsDestination.PDF_COMICS
+        SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS -> SharedSettingsDestination.PDF_COMICS
         SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> SharedSettingsDestination.TTS_AI
     }
-}
-
-enum class SharedSettingsPageKind {
-    ROOT,
-    CATEGORY,
-    DETAIL
-}
-
-data class SharedSettingsCategoryModel(
-    val destination: SharedSettingsDestination,
-    val title: String,
-    val summary: String,
-    val itemCount: Int
-) {
-    fun matches(query: String): Boolean {
-        val normalized = query.trim()
-        if (normalized.isBlank()) return true
-        return title.contains(normalized, ignoreCase = true) ||
-            summary.contains(normalized, ignoreCase = true) ||
-            destination.name.contains(normalized, ignoreCase = true)
-    }
-}
-
-data class SharedSettingsPageModel(
-    val destination: SharedSettingsDestination,
-    val title: String,
-    val summary: String,
-    val kind: SharedSettingsPageKind,
-    val parent: SharedSettingsDestination?,
-    val categories: List<SharedSettingsCategoryModel> = emptyList(),
-    val items: List<SharedSettingsItemModel> = emptyList(),
-    val localOverrideNote: SharedSettingsItemModel? = null
-)
-
-data class SharedSettingsSearchResult(
-    val title: String,
-    val summary: String,
-    val breadcrumb: String,
-    val destination: SharedSettingsDestination? = null,
-    val action: SharedSettingsAction? = null,
-    val kind: SharedSettingsItemKind = SharedSettingsItemKind.NAVIGATION,
-    val enabled: Boolean = true,
-    val checked: Boolean? = null
-)
-
-enum class SharedSettingsItemKind {
-    CONTROL,
-    NAVIGATION,
-    TOGGLE,
-    DESTRUCTIVE,
-    INFO
 }
 
 enum class SharedSettingsAction {
@@ -146,7 +65,6 @@ enum class SharedSettingsAction {
     APP_THEME,
     LANGUAGE,
     TABS_TOGGLE,
-    RECENT_LIMIT,
     STRICT_FILE_FILTER,
     PDF_FILENAME_DISPLAY_NAME,
     EXTERNAL_FILE_BEHAVIOR,
@@ -173,496 +91,251 @@ enum class SharedSettingsAction {
     ABOUT
 }
 
+enum class SharedSettingsPageKind {
+    ROOT,
+    CATEGORY,
+    DETAIL
+}
+
+/**
+ * How a row behaves. The renderer derives the affordance from this, so presentation cannot drift
+ * from behaviour:
+ *
+ * - [NAVIGATION] pushes another settings screen: trailing chevron.
+ * - [CONTROL] opens a dialog, sheet, or platform flow: no chevron, because nothing is pushed.
+ * - [TOGGLE] flips immediately: trailing switch, and the row itself is the switch target.
+ * - [DESTRUCTIVE] removes or disconnects something: moved into a trailing group, error label, no
+ *   chevron, confirmed by the host.
+ * - [INFO] is a static note: not clickable at all.
+ */
+enum class SharedSettingsItemKind {
+    NAVIGATION,
+    CONTROL,
+    TOGGLE,
+    DESTRUCTIVE,
+    INFO
+}
+
+data class SharedSettingsCategoryModel(
+    val destination: SharedSettingsDestination,
+    val title: SharedText,
+    val summary: SharedText
+) {
+    fun matches(query: String): Boolean {
+        val normalized = query.trim()
+        if (normalized.isBlank()) return true
+        return title.fallback.contains(normalized, ignoreCase = true) ||
+            summary.fallback.contains(normalized, ignoreCase = true) ||
+            destination.name.contains(normalized, ignoreCase = true)
+    }
+}
+
+data class SharedSettingsItemGroup(
+    val header: SharedText? = null,
+    val items: List<SharedSettingsItemModel> = emptyList()
+)
+
 data class SharedSettingsItemModel(
+    /**
+     * Stable row identity. A row that navigates uses its destination name, every other row uses its
+     * action name. Several rows can share one action (the EPUB rows default to
+     * [SharedSettingsAction.TEXT_READER_DEFAULTS] and differ by destination), so identity cannot be
+     * the action.
+     */
+    val id: String,
     val action: SharedSettingsAction,
-    val title: String,
-    val summary: String,
+    val title: SharedText,
+    val summary: SharedText,
     val kind: SharedSettingsItemKind = SharedSettingsItemKind.NAVIGATION,
     val enabled: Boolean = true,
     val checked: Boolean? = null,
-    val destination: SharedSettingsDestination? = null
+    val destination: SharedSettingsDestination? = null,
+    /** Current value preview supplied by the host, e.g. "Literata · 100% · Justified". */
+    val value: String? = null,
+    /** Extra search terms so a row is findable by the control names it leads to. */
+    val keywords: List<String> = emptyList()
 ) {
     fun matches(query: String): Boolean {
         val normalized = query.trim()
         if (normalized.isBlank()) return true
-        return title.contains(normalized, ignoreCase = true) ||
-            summary.contains(normalized, ignoreCase = true) ||
-            action.name.contains(normalized, ignoreCase = true)
+        return title.fallback.contains(normalized, ignoreCase = true) ||
+            summary.fallback.contains(normalized, ignoreCase = true) ||
+            id.contains(normalized, ignoreCase = true) ||
+            action.name.contains(normalized, ignoreCase = true) ||
+            keywords.any { it.contains(normalized, ignoreCase = true) }
     }
 }
 
-data class SharedSettingsSectionModel(
-    val section: SharedSettingsSection,
-    val items: List<SharedSettingsItemModel>
+data class SharedSettingsPageModel(
+    val destination: SharedSettingsDestination,
+    val title: SharedText,
+    val summary: SharedText,
+    val kind: SharedSettingsPageKind,
+    val parent: SharedSettingsDestination?,
+    val categories: List<SharedSettingsCategoryModel> = emptyList(),
+    val groups: List<SharedSettingsItemGroup> = emptyList(),
+    val localOverrideNote: SharedSettingsItemModel? = null
 ) {
-    fun matches(query: String): Boolean {
-        val normalized = query.trim()
-        if (normalized.isBlank()) return true
-        return section.title.contains(normalized, ignoreCase = true) ||
-            section.summary.contains(normalized, ignoreCase = true)
-    }
+    val items: List<SharedSettingsItemModel> get() = groups.flatMap { it.items }
+
+    fun item(action: SharedSettingsAction): SharedSettingsItemModel? =
+        items.firstOrNull { it.action == action }
+
+    fun itemById(id: String): SharedSettingsItemModel? = items.firstOrNull { it.id == id }
 }
 
-data class SharedSettingsHubModel(
+/**
+ * A search hit. Results always navigate: the hub never runs a setting's action from a result row,
+ * because a global result list is not the place to silently toggle or delete anything.
+ */
+data class SharedSettingsSearchResult(
+    val title: SharedText,
+    val summary: SharedText,
+    val breadcrumb: List<SharedText>,
+    val destination: SharedSettingsDestination,
+    val kind: SharedSettingsItemKind = SharedSettingsItemKind.NAVIGATION,
+    val enabled: Boolean = true
+)
+
+class SharedSettingsHubModel internal constructor(
     val platform: SharedSettingsPlatform,
-    val sections: List<SharedSettingsSectionModel>
+    private val specs: List<SharedSettingsCategorySpec>
 ) {
-    val rootCategories: List<SharedSettingsCategoryModel>
-        get() = buildRootCategories()
+    val rootCategories: List<SharedSettingsCategoryModel> = specs
+        .filter { spec -> spec.groups.any { it.items.isNotEmpty() } }
+        .map { spec ->
+            SharedSettingsCategoryModel(
+                destination = spec.destination,
+                title = spec.title,
+                summary = spec.summary
+            )
+        }
 
     fun page(destination: SharedSettingsDestination): SharedSettingsPageModel {
-        return when (destination) {
-            SharedSettingsDestination.ROOT -> SharedSettingsPageModel(
+        if (destination == SharedSettingsDestination.ROOT) {
+            return SharedSettingsPageModel(
                 destination = SharedSettingsDestination.ROOT,
-                title = "Settings",
-                summary = "Global defaults, app preferences, and advanced options",
+                title = t("root_title", "Settings"),
+                summary = t("root_summary", "Reading, app, account, and device preferences"),
                 kind = SharedSettingsPageKind.ROOT,
                 parent = null,
                 categories = rootCategories
             )
-            SharedSettingsDestination.EPUB_TEXT -> categoryPage(
-                destination = destination,
-                title = "EPUB & Text",
-                summary = "Defaults for reflowable reading, layout, EPUB themes, and reader tools",
-                items = epubAndTextItems()
-            )
-            SharedSettingsDestination.PDF_COMICS -> categoryPage(
-                destination = destination,
-                title = "PDF & Comics",
-                summary = "Defaults for fixed-layout reading, PDF themes, and PDF-specific tools",
-                items = pdfAndComicItems()
-            )
-            SharedSettingsDestination.THEME_APPEARANCE -> categoryPage(
-                destination = destination,
-                title = "App Preferences",
-                summary = "App theme and general app behavior",
-                items = themeAndAppearanceItems()
-            )
-            SharedSettingsDestination.TTS_AI -> categoryPage(
-                destination = destination,
-                title = ttsAiTitle(),
-                summary = ttsAiSummary(),
-                items = ttsAndAiItems()
-            )
-            SharedSettingsDestination.LIBRARY_SYNC_STORAGE -> categoryPage(
-                destination = destination,
-                title = "Library & Files",
-                summary = "Recent files and local reading fonts",
-                items = libraryAndFileItems()
-            )
-            SharedSettingsDestination.SYNC_ACCOUNTS -> categoryPage(
-                destination = destination,
-                title = "Sync",
-                summary = "Cloud sync and folder backup",
-                items = syncItems()
-            )
-            SharedSettingsDestination.ACCOUNTS -> categoryPage(
-                destination = destination,
-                title = "Account",
-                summary = "Sign-in and account management",
-                items = accountItems()
-            )
-            SharedSettingsDestination.EXTRA -> categoryPage(
-                destination = destination,
-                title = "Extra",
-                summary = "More-menu options, maintenance actions, and diagnostics",
-                items = extraItems()
-            )
-            SharedSettingsDestination.HELP_ABOUT -> categoryPage(
-                destination = destination,
-                title = "Help & About",
-                summary = "Feedback, support, project information, and licenses",
-                items = helpAndAboutItems()
-            )
-            SharedSettingsDestination.EPUB_FORMAT -> detailPage(
-                destination = destination,
-                title = "Format Defaults",
-                summary = "Font, size, spacing, margins, alignment, and reading mode",
-                localOverrideNote = localOverrideItem()
-            )
-            SharedSettingsDestination.EPUB_THEME_TEXTURE -> detailPage(
-                destination = destination,
-                title = "EPUB Theme & Texture",
-                summary = "Default EPUB reading theme, paper texture, and texture strength",
-                localOverrideNote = localOverrideItem()
-            )
-            SharedSettingsDestination.EPUB_VISUAL_DEFAULTS -> detailPage(
-                destination = destination,
-                title = "Visual Defaults",
-                summary = "Page indicators, system UI, images, and chapter-turn behavior",
-                localOverrideNote = localOverrideItem()
-            )
-            SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS -> detailPage(
-                destination = destination,
-                title = "PDF Theme Defaults",
-                summary = "Default PDF and comic theme where fixed-layout appearance is supported",
-                localOverrideNote = localOverrideItem()
-            )
-            SharedSettingsDestination.PDF_READER_TOOLS -> detailPage(
-                destination = destination,
-                title = "PDF Reader Tools",
-                summary = "Auto-scroll, OCR, annotation, and PDF-only tools remain in the PDF reader",
-                localOverrideNote = localOverrideItem()
-            )
-            SharedSettingsDestination.READER_TOOLBAR_DEFAULTS -> detailPage(
-                destination = destination,
-                title = "Reader Toolbar Defaults",
-                summary = "Visible tools, bottom-bar actions, and reader overflow tools",
-                localOverrideNote = localOverrideItem()
-            )
-            SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> detailPage(
-                destination = destination,
-                title = "Global TTS Replacements",
-                summary = "Words and phrases replaced only during speech playback",
-                localOverrideNote = localOverrideItem()
-            )
         }
+
+        val spec = specs.firstOrNull { it.destination == destination }
+            ?: return detailPage(destination)
+
+        return SharedSettingsPageModel(
+            destination = spec.destination,
+            title = spec.title,
+            summary = spec.summary,
+            kind = SharedSettingsPageKind.CATEGORY,
+            parent = spec.destination.parentDestination(),
+            groups = spec.groups.filter { it.items.isNotEmpty() },
+            localOverrideNote = if (spec.destination.showPerBookNote) PER_BOOK_OVERRIDE_NOTE else null
+        )
     }
 
     fun searchResults(query: String): List<SharedSettingsSearchResult> {
         val normalized = query.trim()
         if (normalized.isBlank()) return emptyList()
 
+        val settingsCrumb = t("root_title", "Settings")
         val categoryResults = rootCategories
             .filter { it.matches(normalized) }
             .map { category ->
                 SharedSettingsSearchResult(
                     title = category.title,
                     summary = category.summary,
-                    breadcrumb = "Settings",
+                    breadcrumb = listOf(settingsCrumb),
                     destination = category.destination
                 )
             }
 
-        val itemResults = listOf(
-            SharedSettingsDestination.EPUB_TEXT,
-            SharedSettingsDestination.PDF_COMICS,
-            SharedSettingsDestination.THEME_APPEARANCE,
-            SharedSettingsDestination.TTS_AI,
-            SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
-            SharedSettingsDestination.SYNC_ACCOUNTS,
-            SharedSettingsDestination.ACCOUNTS,
-            SharedSettingsDestination.EXTRA,
-            SharedSettingsDestination.HELP_ABOUT
-        ).flatMap { destination ->
-            val page = page(destination)
-            page.items
-                .filter { it.matches(normalized) }
-                .map { item ->
+        val itemResults = specs.flatMap { spec ->
+            spec.groups.flatMap { group ->
+                group.items.filter { it.matches(normalized) }.map { item ->
                     SharedSettingsSearchResult(
                         title = item.title,
                         summary = item.summary,
-                        breadcrumb = "Settings / ${page.title}",
-                        destination = item.destination,
-                        action = item.action,
+                        breadcrumb = listOf(settingsCrumb, spec.title),
+                        // A row that opens a dialog has no destination of its own, so the result
+                        // lands on its page instead of running the action from a list.
+                        destination = item.destination ?: spec.destination,
                         kind = item.kind,
-                        enabled = item.enabled,
-                        checked = item.checked
+                        enabled = item.enabled
                     )
                 }
+            }
         }
 
         return (categoryResults + itemResults)
-            .distinctBy { result -> result.searchIdentity() }
-    }
-
-    fun filtered(query: String): SharedSettingsHubModel {
-        val normalized = query.trim()
-        if (normalized.isBlank()) return this
-        return copy(
-            sections = sections.mapNotNull { section ->
-                val matchingItems = section.items.filter { it.matches(normalized) }
-                when {
-                    matchingItems.isNotEmpty() -> section.copy(items = matchingItems)
-                    section.matches(normalized) -> section
-                    else -> null
-                }
+            .distinctBy { result ->
+                "${result.destination}|${result.title.fallback}|${result.breadcrumb.size}"
             }
-        )
-    }
-
-    fun itemsIn(section: SharedSettingsSection): List<SharedSettingsItemModel> {
-        return sections.firstOrNull { it.section == section }?.items.orEmpty()
-    }
-
-    private fun buildRootCategories(): List<SharedSettingsCategoryModel> {
-        return listOf(
-            rootCategory(
-                destination = SharedSettingsDestination.EPUB_TEXT,
-                title = "EPUB & Text",
-                summary = "Format, EPUB theme, visual defaults, and reader tools",
-                itemCount = epubAndTextItems().size
-            ),
-            rootCategory(
-                destination = SharedSettingsDestination.PDF_COMICS,
-                title = "PDF & Comics",
-                summary = "Separate PDF theme and fixed-layout reader defaults",
-                itemCount = pdfAndComicItems().size
-            ),
-            rootCategory(
-                destination = SharedSettingsDestination.THEME_APPEARANCE,
-                title = "App Preferences",
-                summary = "App theme and general app behavior",
-                itemCount = themeAndAppearanceItems().size
-            ),
-            rootCategory(
-                destination = SharedSettingsDestination.TTS_AI,
-                title = ttsAiTitle(),
-                summary = ttsAiSummary(),
-                itemCount = ttsAndAiItems().size
-            ),
-            rootCategory(
-                destination = SharedSettingsDestination.LIBRARY_SYNC_STORAGE,
-                title = "Library & Files",
-                summary = "Recent files and local reading fonts",
-                itemCount = libraryAndFileItems().size
-            ),
-            rootCategory(
-                destination = SharedSettingsDestination.ACCOUNTS,
-                title = "Account",
-                summary = "Sign-in and account management",
-                itemCount = accountItems().size
-            ),
-            rootCategory(
-                destination = SharedSettingsDestination.SYNC_ACCOUNTS,
-                title = "Sync",
-                summary = "Cloud sync and folder backup",
-                itemCount = syncItems().size
-            ),
-            rootCategory(
-                destination = SharedSettingsDestination.EXTRA,
-                title = "Extra",
-                summary = "More-menu options, maintenance, and diagnostics",
-                itemCount = extraItems().size
-            ),
-            rootCategory(
-                destination = SharedSettingsDestination.HELP_ABOUT,
-                title = "Help & About",
-                summary = "Feedback, support, project information, and licenses",
-                itemCount = helpAndAboutItems().size
-            )
-        ).filter { it.itemCount > 0 }
-    }
-
-    private fun rootCategory(
-        destination: SharedSettingsDestination,
-        title: String,
-        summary: String,
-        itemCount: Int
-    ): SharedSettingsCategoryModel {
-        return SharedSettingsCategoryModel(
-            destination = destination,
-            title = title,
-            summary = summary,
-            itemCount = itemCount
-        )
-    }
-
-    private fun ttsAiTitle(): String {
-        return if (hasAiSettingsItem()) "TTS & AI" else "TTS"
-    }
-
-    private fun ttsAiSummary(): String {
-        return if (hasAiSettingsItem()) {
-            "Global voice, speech replacements, keys, and reader AI"
-        } else {
-            "Global voice, speech behavior, and TTS replacements"
-        }
-    }
-
-    private fun hasAiSettingsItem(): Boolean {
-        return baseItem(SharedSettingsAction.AI_SETTINGS) != null
-    }
-
-    private fun categoryPage(
-        destination: SharedSettingsDestination,
-        title: String,
-        summary: String,
-        items: List<SharedSettingsItemModel>
-    ): SharedSettingsPageModel {
-        return SharedSettingsPageModel(
-            destination = destination,
-            title = title,
-            summary = summary,
-            kind = SharedSettingsPageKind.CATEGORY,
-            parent = destination.parentDestination(),
-            items = items
-        )
-    }
-
-    private fun detailPage(
-        destination: SharedSettingsDestination,
-        title: String,
-        summary: String,
-        localOverrideNote: SharedSettingsItemModel?
-    ): SharedSettingsPageModel {
-        return SharedSettingsPageModel(
-            destination = destination,
-            title = title,
-            summary = summary,
-            kind = SharedSettingsPageKind.DETAIL,
-            parent = destination.parentDestination(),
-            localOverrideNote = localOverrideNote
-        )
-    }
-
-    private fun epubAndTextItems(): List<SharedSettingsItemModel> {
-        return buildList {
-            baseItem(SharedSettingsAction.TEXT_READER_DEFAULTS)?.let { item ->
-                add(
-                    item.destinationRow(
-                        destination = SharedSettingsDestination.EPUB_FORMAT,
-                        title = "Format defaults",
-                        summary = "Font, size, line spacing, margins, alignment, and reading mode"
-                    )
-                )
-                add(
-                    item.destinationRow(
-                        destination = SharedSettingsDestination.EPUB_THEME_TEXTURE,
-                        title = "Theme and texture",
-                        summary = "Reading theme, texture, and page feel for new books"
-                    )
-                )
-                add(
-                    item.destinationRow(
-                        destination = SharedSettingsDestination.EPUB_VISUAL_DEFAULTS,
-                        title = "Visual defaults",
-                        summary = "System UI, page info, images, and chapter-turn behavior"
-                    )
-                )
-            }
-            baseItem(SharedSettingsAction.READER_TOOLBAR)?.let { item ->
-                add(item.destinationRow(SharedSettingsDestination.READER_TOOLBAR_DEFAULTS))
-            }
-        }
-    }
-
-    private fun pdfAndComicItems(): List<SharedSettingsItemModel> {
-        return buildList {
-            baseItem(SharedSettingsAction.PDF_READER_DEFAULTS)?.let { item ->
-                add(
-                    item.destinationRow(
-                        destination = SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS,
-                        title = "PDF theme defaults",
-                        summary = "PDF and comic theme defaults, separate from EPUB themes"
-                    )
-                )
-                add(
-                    item.destinationRow(
-                        destination = SharedSettingsDestination.PDF_READER_TOOLS,
-                        title = "PDF reader tools",
-                        summary = "Auto-scroll, OCR, annotations, and PDF-only tools"
-                    )
-                )
-            }
-        }
-    }
-
-    private fun themeAndAppearanceItems(): List<SharedSettingsItemModel> {
-        return itemsForActions(
-            SharedSettingsAction.APP_THEME
-        )
-    }
-
-    private fun ttsAndAiItems(): List<SharedSettingsItemModel> {
-        return buildList {
-            addAll(
-                itemsForActions(
-                    SharedSettingsAction.TTS_SETTINGS,
-                    SharedSettingsAction.AI_SETTINGS
-                )
-            )
-            baseItem(SharedSettingsAction.TTS_REPLACEMENTS)?.let { item ->
-                add(item.destinationRow(SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS))
-            }
-        }
-    }
-
-    private fun libraryAndFileItems(): List<SharedSettingsItemModel> {
-        return itemsForActions(
-            SharedSettingsAction.RECENT_LIMIT,
-            SharedSettingsAction.CUSTOM_FONTS
-        )
-    }
-
-    private fun accountItems(): List<SharedSettingsItemModel> {
-        return itemsForActions(
-            SharedSettingsAction.SIGN_IN,
-            SharedSettingsAction.SIGN_OUT,
-            SharedSettingsAction.DELETE_ACCOUNT,
-            SharedSettingsAction.DEVICE_MANAGEMENT
-        )
-    }
-
-    private fun syncItems(): List<SharedSettingsItemModel> {
-        return itemsForActions(
-            SharedSettingsAction.CLOUD_SYNC,
-            SharedSettingsAction.FOLDER_SYNC
-        )
-    }
-
-    private fun extraItems(): List<SharedSettingsItemModel> {
-        return itemsForActions(
-            SharedSettingsAction.LANGUAGE,
-            SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-            SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,
-            SharedSettingsAction.STRICT_FILE_FILTER,
-            SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
-            SharedSettingsAction.TABS_TOGGLE,
-            SharedSettingsAction.HIDE_READER_AI,
-            SharedSettingsAction.CLEAR_BOOK_CACHE,
-            SharedSettingsAction.CLEAR_REFLOW_CACHE,
-            SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
-            SharedSettingsAction.TEST_PANEL_DETECTION,
-            SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-            SharedSettingsAction.EXPORT_LOGS,
-            SharedSettingsAction.FPS_OVERLAY,
-            SharedSettingsAction.DEVICE_MANAGEMENT
-        )
-    }
-
-    private fun helpAndAboutItems(): List<SharedSettingsItemModel> {
-        return itemsForActions(
-            SharedSettingsAction.HELP_FEEDBACK,
-            SharedSettingsAction.SUPPORT,
-            SharedSettingsAction.ABOUT
-        )
-    }
-
-    private fun itemsForActions(vararg actions: SharedSettingsAction): List<SharedSettingsItemModel> {
-        return actions.mapNotNull(::baseItem)
-    }
-
-    private fun localOverrideItem(): SharedSettingsItemModel? {
-        return baseItem(SharedSettingsAction.LOCAL_OVERRIDE_NOTE)
-    }
-
-    private fun baseItem(action: SharedSettingsAction): SharedSettingsItemModel? {
-        return sections.asSequence()
-            .flatMap { it.items.asSequence() }
-            .firstOrNull { it.action == action }
-    }
-
-    private fun SharedSettingsItemModel.destinationRow(
-        destination: SharedSettingsDestination,
-        title: String = this.title,
-        summary: String = this.summary
-    ): SharedSettingsItemModel {
-        return copy(
-            title = title,
-            summary = summary,
-            kind = SharedSettingsItemKind.NAVIGATION,
-            destination = destination
-        )
     }
 }
 
-private fun SharedSettingsSearchResult.searchIdentity(): String {
-    return when (action) {
-        SharedSettingsAction.TTS_REPLACEMENTS -> SharedSettingsAction.TTS_REPLACEMENTS.name
-        else -> destination?.name ?: action?.name ?: title
+private fun detailPage(destination: SharedSettingsDestination): SharedSettingsPageModel {
+    val (title, summary) = when (destination) {
+        SharedSettingsDestination.EPUB_FORMAT -> t("detail_format_title", "Format Defaults") to
+            t("detail_format_summary", "Font, size, spacing, margins, alignment, and reading mode")
+        SharedSettingsDestination.EPUB_THEME_TEXTURE -> t("detail_theme_title", "EPUB Theme & Texture") to
+            t("detail_theme_summary", "Default reading theme, paper texture, and texture strength")
+        SharedSettingsDestination.EPUB_VISUAL_DEFAULTS -> t("detail_visual_title", "Visual Defaults") to
+            t("detail_visual_summary", "Page indicators, system UI, images, and chapter turns")
+        SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS -> t("detail_pdf_title", "PDF Theme Defaults") to
+            t(
+                "detail_pdf_summary",
+                "Default PDF and comic theme where fixed-layout appearance is supported"
+            )
+        SharedSettingsDestination.READER_TOOLBAR_DEFAULTS -> t("detail_toolbar_title", "Reader Toolbar Defaults") to
+            t("detail_toolbar_summary", "Visible tools, bottom-bar actions, and reader overflow tools")
+        SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS -> t("detail_tts_title", "Global TTS Replacements") to
+            t("detail_tts_summary", "Words and phrases replaced only during speech playback")
+        else -> t("unknown_title", "Settings") to t("unknown_summary", "")
     }
+    return SharedSettingsPageModel(
+        destination = destination,
+        title = title,
+        summary = summary,
+        kind = SharedSettingsPageKind.DETAIL,
+        parent = destination.parentDestination(),
+        localOverrideNote = if (destination.showPerBookNote) PER_BOOK_OVERRIDE_NOTE else null
+    )
 }
+
+/**
+ * Everything the hub renders for one category. Built from [SharedSettingsHubInput] once, so the
+ * root list, the page, and search can never disagree about what exists.
+ */
+internal data class SharedSettingsCategorySpec(
+    val destination: SharedSettingsDestination,
+    val title: SharedText,
+    val summary: SharedText,
+    val groups: List<SharedSettingsItemGroup>
+)
+
+private val SharedSettingsDestination.showPerBookNote: Boolean
+    get() = when (this) {
+        SharedSettingsDestination.EPUB_FORMAT,
+        SharedSettingsDestination.EPUB_THEME_TEXTURE,
+        SharedSettingsDestination.EPUB_VISUAL_DEFAULTS,
+        SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS -> true
+        else -> false
+    }
+
+private val PER_BOOK_OVERRIDE_NOTE = SharedSettingsItemModel(
+    id = SharedSettingsAction.LOCAL_OVERRIDE_NOTE.name,
+    action = SharedSettingsAction.LOCAL_OVERRIDE_NOTE,
+    title = t("per_book_title", "Per-book overrides"),
+    summary = t(
+        "per_book_summary",
+        "Defaults apply to new books. Changes made inside the reader still win for that book."
+    ),
+    kind = SharedSettingsItemKind.INFO
+)
 
 data class SharedSettingsHubInput(
     val platform: SharedSettingsPlatform,
@@ -689,7 +362,6 @@ data class SharedSettingsHubInput(
     val includeLanguage: Boolean = true,
     val includeScreenCaptureProtection: Boolean = false,
     val includeExternalFileBehavior: Boolean = true,
-    val includeRecentLimit: Boolean = true,
     val includeCustomFonts: Boolean = true,
     val includeStrictFileFilter: Boolean = true,
     val includePdfFileNameDisplayName: Boolean = false,
@@ -707,421 +379,585 @@ data class SharedSettingsHubInput(
     val includeFpsOverlayToggle: Boolean = false,
     val fpsOverlayEnabled: Boolean = false,
     val supportProjectAvailable: Boolean = true,
-    val languageTitle: String = "Language",
-    val languageSummary: String = "Choose the app language",
     val isTabsEnabled: Boolean = true,
     val isSyncEnabled: Boolean = false,
     val isFolderSyncEnabled: Boolean = false,
     val useStrictFileFilter: Boolean = false,
     val usePdfFileNameAsDisplayName: Boolean = false,
     val isScreenCaptureProtectionEnabled: Boolean = false,
-    val hideReaderAi: Boolean = false
+    val hideReaderAi: Boolean = false,
+    /**
+     * Current-value previews keyed by row id (see [SharedSettingsItemModel.id]), supplied by the
+     * host because only the host knows its persisted state. Missing entries render as a plain row.
+     */
+    val itemValues: Map<String, String> = emptyMap()
 )
 
 fun sharedSettingsHubModel(input: SharedSettingsHubInput): SharedSettingsHubModel {
-    val sections = listOf(
-        SharedSettingsSectionModel(
-            section = SharedSettingsSection.READER,
-            items = buildList {
-                add(
-                    SharedSettingsItemModel(
-                        action = SharedSettingsAction.TEXT_READER_DEFAULTS,
-                        title = "Text and EPUB defaults",
-                        summary = "Format, EPUB theme, texture, visual behavior, and text layout",
-                        kind = SharedSettingsItemKind.CONTROL
-                    )
-                )
-                if (input.includePdfReaderDefaults) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.PDF_READER_DEFAULTS,
-                            title = "PDF and comic defaults",
-                            summary = "PDF theme, visual defaults, tools, auto-scroll, OCR, and annotation behavior where available",
-                            kind = SharedSettingsItemKind.NAVIGATION
-                        )
-                    )
-                }
-                if (input.includeReaderToolbar) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.READER_TOOLBAR,
-                            title = "Reader toolbar and tools",
-                            summary = "Choose visible tools, bottom-bar tools, and reader overflow tools",
-                            kind = SharedSettingsItemKind.CONTROL
-                        )
-                    )
-                }
-                add(
-                    SharedSettingsItemModel(
-                        action = SharedSettingsAction.LOCAL_OVERRIDE_NOTE,
-                        title = "Per-book overrides",
-                        summary = "Local overrides are available from the active reader screen and still win for that book.",
-                        kind = SharedSettingsItemKind.INFO
-                    )
-                )
-            }
-        ),
-        SharedSettingsSectionModel(
-            section = SharedSettingsSection.APP_LIBRARY,
-            items = buildList {
-                add(
-                    SharedSettingsItemModel(
-                        action = SharedSettingsAction.APP_THEME,
-                        title = "App theme",
-                        summary = "Theme mode, contrast, reading text dimming, and custom app colors"
-                    )
-                )
-                if (input.includeCustomFonts) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.CUSTOM_FONTS,
-                            title = "Custom fonts",
-                            summary = "Import, manage, and reuse local reading fonts"
-                        )
-                    )
-                }
-                if (input.includeRecentLimit) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.RECENT_LIMIT,
-                            title = "Recent files limit",
-                            summary = "Control how many recent books appear on Home"
-                        )
-                    )
-                }
-            }
-        ),
-        SharedSettingsSectionModel(
-            section = SharedSettingsSection.ACCOUNTS,
-            items = buildList {
-                if (input.includeAccountAuthActions && input.accountAvailable && input.featurePolicy.aiAndCloud) {
-                    if (input.isSignedIn) {
-                        add(
-                            SharedSettingsItemModel(
-                                action = SharedSettingsAction.SIGN_OUT,
-                                title = "Sign out",
-                                summary = "Disconnect this device from your account",
-                                kind = SharedSettingsItemKind.DESTRUCTIVE
-                            )
-                        )
-                    } else {
-                        add(
-                            SharedSettingsItemModel(
-                                action = SharedSettingsAction.SIGN_IN,
-                                title = "Sign in",
-                                summary = "Connect sync and account features"
-                            )
-                        )
-                    }
-                }
-                // iOS-only for now: Android keeps no deletion entry until its
-                // native re-auth + backend cleanup path is built to match.
-                if (input.includeAccountDeletion && input.isSignedIn &&
-                    input.accountAvailable && input.featurePolicy.aiAndCloud
-                ) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.DELETE_ACCOUNT,
-                            title = "Delete account",
-                            summary = "Permanently delete your account and cloud data. Purchases are not refunded and credits are lost.",
-                            kind = SharedSettingsItemKind.DESTRUCTIVE
-                        )
-                    )
-                }
-                if (input.isDebugBuild && input.featurePolicy.aiAndCloud && input.syncAvailable) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.DEVICE_MANAGEMENT,
-                            title = "Device management",
-                            summary = "Inspect registered devices for this account"
-                        )
-                    )
-                }
-            }
-        ),
-        SharedSettingsSectionModel(
-            section = SharedSettingsSection.SYNC_ACCOUNTS,
-            items = buildList {
-                if (input.syncAvailable && input.featurePolicy.aiAndCloud) {
-                    val setupIntent = input.cloudSyncSetupIntent
-                    val syncEnabled = when (setupIntent) {
-                        null -> input.isProUser
-                        CloudSyncSetupIntent.READY -> input.isProUser
-                        else -> true
-                    }
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.CLOUD_SYNC,
-                            title = "Cloud library sync",
-                            summary = when (setupIntent) {
-                                CloudSyncSetupIntent.NEEDS_PRO,
-                                null -> if (!input.isProUser) {
-                                    "A Pro account is required for cloud sync."
-                                } else {
-                                    "Sync library metadata across signed-in devices."
-                                }
-                                CloudSyncSetupIntent.NEEDS_GOOGLE_LINK ->
-                                    "Link Google to enable cloud sync."
-                                CloudSyncSetupIntent.NEEDS_DRIVE_AUTH ->
-                                    "Authorize Google Drive to enable sync."
-                                CloudSyncSetupIntent.READY ->
-                                    "Sync library metadata across signed-in devices."
-                            },
-                            kind = SharedSettingsItemKind.TOGGLE,
-                            enabled = syncEnabled,
-                            checked = input.isSyncEnabled
-                        )
-                    )
-                }
-                if (input.folderSyncAvailable) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.FOLDER_SYNC,
-                            title = "Folder backup and sync",
-                            summary = "Choose which local folders to back up to Drive",
-                            // Folder sync is an explicit folder selection
-                            // surface, so it opens a secondary screen rather
-                            // than behaving like the single cloud-library
-                            // switch.
-                            kind = SharedSettingsItemKind.CONTROL,
-                        )
-                    )
-                }
-            }
-        ),
-        SharedSettingsSectionModel(
-            section = SharedSettingsSection.AI_TTS,
-            items = buildList {
-                if (input.aiSettingsAvailable && input.featurePolicy.aiAndCloud) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.AI_SETTINGS,
-                            title = "AI keys and models",
-                            summary = "Configure reader AI and cloud TTS model access"
-                        )
-                    )
-                }
-                if (input.ttsSettingsAvailable) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.TTS_SETTINGS,
-                            title = "TTS voice settings",
-                            summary = if (input.platform == SharedSettingsPlatform.IOS) {
-                                "Choose an iOS voice, speech rate, and pitch"
-                            } else {
-                                "Choose cloud or device voices and speech behavior"
-                            }
-                        )
-                    )
-                }
-                add(
-                    SharedSettingsItemModel(
-                        action = SharedSettingsAction.TTS_REPLACEMENTS,
-                        title = "Global TTS replacements",
-                        summary = "Words and phrases replaced only during speech playback",
-                        kind = SharedSettingsItemKind.CONTROL
-                    )
-                )
-            }
-        ),
-        SharedSettingsSectionModel(
-            section = SharedSettingsSection.STORAGE_ADVANCED,
-            items = buildList {
-                if (input.bookCacheMaintenanceAvailable) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.CLEAR_BOOK_CACHE,
-                            title = "Clear book cache",
-                            summary = "Remove generated book cache files and recreate them on demand",
-                            kind = SharedSettingsItemKind.DESTRUCTIVE
-                        )
-                    )
-                }
-                if (input.reflowCacheMaintenanceAvailable) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.CLEAR_REFLOW_CACHE,
-                            title = "Clear reflow cache",
-                            summary = "Remove generated PDF text-view files",
-                            kind = SharedSettingsItemKind.DESTRUCTIVE
-                        )
-                    )
-                }
-                if (input.isDebugBuild && input.platform == SharedSettingsPlatform.ANDROID) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.TEST_PANEL_DETECTION,
-                            title = "Test panel detection",
-                            summary = "Run the local panel-detection diagnostic"
-                        )
-                    )
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
-                            title = "Test speech-bubble detection",
-                            summary = "Run the local speech-bubble detection diagnostic"
-                        )
-                    )
-                }
-                if (input.isDebugBuild) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.EXPORT_LOGS,
-                            title = "Export logs",
-                            summary = "Export recent diagnostic logs",
-                            kind = SharedSettingsItemKind.NAVIGATION
-                        )
-                    )
-                    if (input.includeFpsOverlayToggle) {
-                        add(
-                            SharedSettingsItemModel(
-                                action = SharedSettingsAction.FPS_OVERLAY,
-                                title = "Show FPS overlay",
-                                summary = "Draw a frame-rate meter over the app",
-                                kind = SharedSettingsItemKind.CONTROL,
-                                checked = input.fpsOverlayEnabled
-                            )
-                        )
-                    }
-                    if (input.includeCloudLocalDataClear && input.featurePolicy.aiAndCloud) {
-                        add(
-                            SharedSettingsItemModel(
-                                action = SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
-                                title = "Clear cloud and local data",
-                                summary = "Delete cloud records and matching local library data",
-                                kind = SharedSettingsItemKind.DESTRUCTIVE
-                            )
-                        )
-                    }
-                }
-                if (input.includeDiagnosticLogExport && !input.isDebugBuild) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.EXPORT_LOGS,
-                            title = "Export logs",
-                            summary = "Share recent diagnostic logs collected by the app",
-                            kind = SharedSettingsItemKind.NAVIGATION
-                        )
-                    )
-                }
-            }
-        ),
-        SharedSettingsSectionModel(
-            section = SharedSettingsSection.EXTRA,
-            items = buildList {
-                if (input.includeLanguage) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.LANGUAGE,
-                            title = input.languageTitle,
-                            summary = input.languageSummary
-                        )
-                    )
-                }
-                if (input.includeScreenCaptureProtection) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
-                            title = "Screen capture protection",
-                            summary = "Block screenshots and screen recording on sensitive reader screens",
-                            kind = SharedSettingsItemKind.TOGGLE,
-                            checked = input.isScreenCaptureProtectionEnabled
-                        )
-                    )
-                }
-                if (input.includeExternalFileBehavior) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,
-                            title = "External file behavior",
-                            summary = "Choose whether external opens are copied into the app library"
-                        )
-                    )
-                }
-                if (input.includeStrictFileFilter) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.STRICT_FILE_FILTER,
-                            title = "Strict file filter",
-                            summary = "Use only known reader file types in import pickers",
-                            kind = SharedSettingsItemKind.TOGGLE,
-                            checked = input.useStrictFileFilter
-                        )
-                    )
-                }
-                if (input.includePdfFileNameDisplayName) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
-                            title = "Use PDF filenames",
-                            summary = if (input.usePdfFileNameAsDisplayName) {
-                                "PDF lists and tabs show filenames instead of embedded titles."
-                            } else {
-                                "PDF lists and tabs prefer embedded titles when available."
-                            },
-                            kind = SharedSettingsItemKind.TOGGLE,
-                            checked = input.usePdfFileNameAsDisplayName
-                        )
-                    )
-                }
-                if (input.includeReaderTabs) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.TABS_TOGGLE,
-                            title = "Reader tabs",
-                            summary = if (input.isTabsEnabled) "Opening PDFs keeps active tabs." else "PDFs replace the active reader session.",
-                            kind = SharedSettingsItemKind.TOGGLE,
-                            checked = input.isTabsEnabled
-                        )
-                    )
-                }
-                if (input.includeHideReaderAi && input.featurePolicy.aiAndCloud) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.HIDE_READER_AI,
-                            title = "Reader AI visibility",
-                            summary = if (input.hideReaderAi) "Reader AI tools are hidden." else "Reader AI tools are shown where available.",
-                            kind = SharedSettingsItemKind.TOGGLE,
-                            checked = !input.hideReaderAi
-                        )
-                    )
-                }
-            }
-        ),
-        SharedSettingsSectionModel(
-            section = SharedSettingsSection.HELP,
-            items = buildList {
-                if (input.featurePolicy.projectLinks) {
-                    add(
-                        SharedSettingsItemModel(
-                            action = SharedSettingsAction.HELP_FEEDBACK,
-                            title = "Help and feedback",
-                            summary = "Send feedback or report an issue"
-                        )
-                    )
-                    if (input.supportProjectAvailable) {
-                        add(
-                            SharedSettingsItemModel(
-                                action = SharedSettingsAction.SUPPORT,
-                                title = "Support project",
-                                summary = "Open support options for the project"
-                            )
-                        )
-                    }
-                }
-                add(
-                    SharedSettingsItemModel(
-                        action = SharedSettingsAction.ABOUT,
-                        title = "About",
-                        summary = "Version, source, licenses, and project information"
-                    )
-                )
-            }
-        )
-    ).filter { it.items.isNotEmpty() }
+    val specs = listOf(
+        input.epubTextCategory(),
+        input.pdfComicsCategory(),
+        input.appLibraryCategory(),
+        input.speechAndAiCategory(),
+        input.syncAndAccountCategory(),
+        input.storageAndPrivacyCategory(),
+        input.helpAndAboutCategory()
+    )
+    return SharedSettingsHubModel(platform = input.platform, specs = specs)
+}
 
-    return SharedSettingsHubModel(
-        platform = input.platform,
-        sections = sections
+private fun SharedSettingsHubInput.item(
+    action: SharedSettingsAction,
+    title: SharedText,
+    summary: SharedText,
+    kind: SharedSettingsItemKind = SharedSettingsItemKind.NAVIGATION,
+    enabled: Boolean = true,
+    checked: Boolean? = null,
+    destination: SharedSettingsDestination? = null,
+    keywords: List<String> = emptyList()
+): SharedSettingsItemModel {
+    val id = destination?.name ?: action.name
+    return SharedSettingsItemModel(
+        id = id,
+        action = action,
+        title = title,
+        summary = summary,
+        kind = kind,
+        enabled = enabled,
+        checked = checked,
+        destination = destination,
+        value = itemValues[id]?.takeIf { it.isNotBlank() },
+        keywords = keywords
+    )
+}
+
+private fun SharedSettingsHubInput.epubTextCategory(): SharedSettingsCategorySpec {
+    val textRows = buildList {
+        add(
+            item(
+                action = SharedSettingsAction.TEXT_READER_DEFAULTS,
+                title = t("epub_format_title", "Text and layout"),
+                summary = t("epub_format_summary", "Font, size, spacing, margins, alignment, and reading mode"),
+                destination = SharedSettingsDestination.EPUB_FORMAT,
+                keywords = listOf("font", "font size", "line spacing", "margin", "alignment", "justify", "indent")
+            )
+        )
+        add(
+            item(
+                action = SharedSettingsAction.TEXT_READER_DEFAULTS,
+                title = t("epub_theme_title", "Theme and texture"),
+                summary = t("epub_theme_summary", "Reading theme, paper texture, and texture strength"),
+                destination = SharedSettingsDestination.EPUB_THEME_TEXTURE,
+                keywords = listOf("theme", "texture", "sepia", "dark", "paper")
+            )
+        )
+        add(
+            item(
+                action = SharedSettingsAction.TEXT_READER_DEFAULTS,
+                title = t("epub_visual_title", "Visual behavior"),
+                summary = t("epub_visual_summary", "System UI, page indicators, images, and chapter turns"),
+                destination = SharedSettingsDestination.EPUB_VISUAL_DEFAULTS,
+                keywords = listOf("page number", "status bar", "images", "pull to turn")
+            )
+        )
+    }
+    val toolRows = buildList {
+        if (includeReaderToolbar) {
+            add(
+                item(
+                    action = SharedSettingsAction.READER_TOOLBAR,
+                    title = t("reader_toolbar_title", "Reader toolbar"),
+                    summary = t("reader_toolbar_summary", "Visible tools, bottom-bar actions, and overflow tools"),
+                    destination = SharedSettingsDestination.READER_TOOLBAR_DEFAULTS,
+                    keywords = listOf("toolbar", "tools", "bottom bar", "overflow")
+                )
+            )
+        }
+    }
+    return SharedSettingsCategorySpec(
+        destination = SharedSettingsDestination.EPUB_TEXT,
+        title = t("epub_text_title", "EPUB & Text"),
+        summary = t("epub_text_summary", "Default text layout, EPUB appearance, and reader tools"),
+        groups = listOf(
+            SharedSettingsItemGroup(header = t("section_text", "Text"), items = textRows),
+            SharedSettingsItemGroup(header = t("section_reader_tools", "Reader tools"), items = toolRows),
+            SharedSettingsItemGroup(
+                header = t("section_in_reader", "In the reader"),
+                items = listOf(
+                    item(
+                        action = SharedSettingsAction.LOCAL_OVERRIDE_NOTE,
+                        title = t("epub_reader_note_title", "Per-book overrides"),
+                        summary = t(
+                            "epub_reader_note_summary",
+                            "Font, theme, and layout changes made inside the reader apply to that book only."
+                        ),
+                        kind = SharedSettingsItemKind.INFO,
+                        keywords = listOf("per book", "override", "reader only")
+                    )
+                )
+            )
+        )
+    )
+}
+
+private fun SharedSettingsHubInput.pdfComicsCategory(): SharedSettingsCategorySpec {
+    val appearanceRows = buildList {
+        if (includePdfReaderDefaults) {
+            add(
+                item(
+                    action = SharedSettingsAction.PDF_READER_DEFAULTS,
+                    title = t("pdf_appearance_title", "Theme and appearance"),
+                    summary = t("pdf_appearance_summary", "PDF and comic theme, page gap, and page-number overlay"),
+                    destination = SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS,
+                    keywords = listOf("pdf theme", "page gap", "page number", "right to left")
+                )
+            )
+        }
+    }
+    val noteRows = buildList {
+        if (includePdfReaderDefaults) {
+            add(
+                item(
+                    action = SharedSettingsAction.PDF_READER_DEFAULTS,
+                    title = t("pdf_tools_title", "PDF reader tools"),
+                    summary = t(
+                        "pdf_tools_summary",
+                        "Auto-scroll, OCR, annotations, and PDF-only tools stay inside the PDF reader."
+                    ),
+                    kind = SharedSettingsItemKind.INFO,
+                    keywords = listOf("ocr", "auto scroll", "annotation", "panel detection")
+                )
+            )
+        }
+    }
+    return SharedSettingsCategorySpec(
+        destination = SharedSettingsDestination.PDF_COMICS,
+        title = t("pdf_comics_title", "PDF & Comics"),
+        summary = t("pdf_comics_summary", "Fixed-layout appearance and reader-managed PDF tools"),
+        groups = listOf(
+            SharedSettingsItemGroup(header = t("section_appearance", "Appearance"), items = appearanceRows),
+            SharedSettingsItemGroup(header = t("section_in_reader", "In the reader"), items = noteRows)
+        )
+    )
+}
+
+private fun SharedSettingsHubInput.appLibraryCategory(): SharedSettingsCategorySpec {
+    val appearanceRows = buildList {
+        add(
+            item(
+                action = SharedSettingsAction.APP_THEME,
+                title = t("app_theme_title", "App theme"),
+                summary = t("app_theme_summary", "Theme mode, contrast, text dimming, and custom colors"),
+                kind = SharedSettingsItemKind.CONTROL,
+                keywords = listOf("dark mode", "amoled", "contrast", "seed color", "dynamic color")
+            )
+        )
+    }
+    val libraryRows = buildList {
+        if (includeLanguage) {
+            add(
+                item(
+                    action = SharedSettingsAction.LANGUAGE,
+                    title = t("language_title", "Language"),
+                    summary = t("language_summary", "Choose the app language"),
+                    kind = SharedSettingsItemKind.CONTROL,
+                    keywords = listOf("locale", "translation", "english")
+                )
+            )
+        }
+        if (includeCustomFonts) {
+            add(
+                item(
+                    action = SharedSettingsAction.CUSTOM_FONTS,
+                    title = t("custom_fonts_title", "Custom fonts"),
+                    summary = t("custom_fonts_summary", "Import, manage, and reuse reading fonts"),
+                    keywords = listOf("font", "typeface", "import")
+                )
+            )
+        }
+        if (includeReaderTabs) {
+            add(
+                item(
+                    action = SharedSettingsAction.TABS_TOGGLE,
+                    title = t("tabs_title", "Reader tabs"),
+                    summary = t("tabs_summary", "Keep multiple PDFs open instead of replacing the reader"),
+                    kind = SharedSettingsItemKind.TOGGLE,
+                    checked = isTabsEnabled,
+                    keywords = listOf("tabs", "sessions")
+                )
+            )
+        }
+        if (includeExternalFileBehavior) {
+            add(
+                item(
+                    action = SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,
+                    title = t("external_file_title", "External file behavior"),
+                    summary = t("external_file_summary", "Whether files opened from other apps are copied into the library"),
+                    kind = SharedSettingsItemKind.CONTROL,
+                    keywords = listOf("open with", "import", "copy")
+                )
+            )
+        }
+        if (includeStrictFileFilter) {
+            add(
+                item(
+                    action = SharedSettingsAction.STRICT_FILE_FILTER,
+                    title = t("strict_filter_title", "Strict file filter"),
+                    summary = t("strict_filter_summary", "Limit import pickers to known reader file types"),
+                    kind = SharedSettingsItemKind.TOGGLE,
+                    checked = useStrictFileFilter,
+                    keywords = listOf("import", "file types", "extensions")
+                )
+            )
+        }
+        if (includePdfFileNameDisplayName) {
+            add(
+                item(
+                    action = SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
+                    title = t("pdf_filenames_title", "Use PDF filenames"),
+                    summary = t("pdf_filenames_summary", "Show filenames instead of embedded PDF titles"),
+                    kind = SharedSettingsItemKind.TOGGLE,
+                    checked = usePdfFileNameAsDisplayName,
+                    keywords = listOf("title", "metadata", "filename")
+                )
+            )
+        }
+    }
+    return SharedSettingsCategorySpec(
+        destination = SharedSettingsDestination.APP_LIBRARY,
+        title = t("app_library_title", "App & Library"),
+        summary = t("app_library_summary", "Appearance, language, and how the library handles files"),
+        groups = listOf(
+            SharedSettingsItemGroup(header = t("section_appearance", "Appearance"), items = appearanceRows),
+            SharedSettingsItemGroup(header = t("section_library_files", "Library & files"), items = libraryRows)
+        )
+    )
+}
+
+private fun SharedSettingsHubInput.speechAndAiCategory(): SharedSettingsCategorySpec {
+    val speechRows = buildList {
+        if (ttsSettingsAvailable) {
+            add(
+                item(
+                    action = SharedSettingsAction.TTS_SETTINGS,
+                    title = t("tts_title", "Voice and speech"),
+                    summary = if (platform == SharedSettingsPlatform.IOS) {
+                        t("tts_summary_ios", "Choose an iOS voice, speech rate, and pitch")
+                    } else {
+                        t("tts_summary_android", "Choose cloud or device voices and speech behavior")
+                    },
+                    kind = SharedSettingsItemKind.CONTROL,
+                    keywords = listOf("tts", "voice", "speech rate", "pitch", "read aloud")
+                )
+            )
+        }
+        add(
+            item(
+                action = SharedSettingsAction.TTS_REPLACEMENTS,
+                title = t("tts_replacements_title", "Speech replacements"),
+                summary = t("tts_replacements_summary", "Words and phrases replaced only during speech playback"),
+                destination = SharedSettingsDestination.GLOBAL_TTS_REPLACEMENTS,
+                keywords = listOf("pronunciation", "replace", "tts dictionary")
+            )
+        )
+    }
+    val aiRows = buildList {
+        if (aiSettingsAvailable && featurePolicy.aiAndCloud) {
+            add(
+                item(
+                    action = SharedSettingsAction.AI_SETTINGS,
+                    title = t("ai_settings_title", "AI keys and models"),
+                    summary = t("ai_settings_summary", "Configure reader AI and cloud TTS model access"),
+                    keywords = listOf("api key", "model", "gemini", "openai", "cloud tts")
+                )
+            )
+        }
+        if (includeHideReaderAi && featurePolicy.aiAndCloud) {
+            add(
+                item(
+                    action = SharedSettingsAction.HIDE_READER_AI,
+                    title = t("show_reader_ai_title", "Show reader AI"),
+                    summary = t("show_reader_ai_summary", "Reader AI tools appear where the book supports them"),
+                    kind = SharedSettingsItemKind.TOGGLE,
+                    checked = !hideReaderAi,
+                    keywords = listOf("ai", "assistant", "hide")
+                )
+            )
+        }
+    }
+    return SharedSettingsCategorySpec(
+        destination = SharedSettingsDestination.TTS_AI,
+        title = if (aiRows.isNotEmpty()) {
+            t("speech_ai_title", "Speech & AI")
+        } else {
+            t("speech_title", "Speech")
+        },
+        summary = if (aiRows.isNotEmpty()) {
+            t("speech_ai_summary", "Voice, speech replacements, and reader AI")
+        } else {
+            t("speech_summary", "Voice, speech behavior, and replacements")
+        },
+        groups = listOf(
+            SharedSettingsItemGroup(header = t("section_speech", "Speech"), items = speechRows),
+            SharedSettingsItemGroup(header = t("section_reader_ai", "Reader AI"), items = aiRows)
+        )
+    )
+}
+
+private fun SharedSettingsHubInput.syncAndAccountCategory(): SharedSettingsCategorySpec {
+    val syncRows = buildList {
+        if (syncAvailable && featurePolicy.aiAndCloud) {
+            val setupIntent = cloudSyncSetupIntent
+            // Entitlement never disables the row: a disabled switch with no action is a dead end.
+            // Tapping always reaches the host, which either toggles sync or opens the upgrade flow.
+            add(
+                item(
+                    action = SharedSettingsAction.CLOUD_SYNC,
+                    title = t("cloud_sync_title", "Cloud library sync"),
+                    summary = when (setupIntent) {
+                        CloudSyncSetupIntent.NEEDS_PRO,
+                        null -> if (!isProUser) {
+                            t("cloud_sync_pro_required", "Included with Pro. Tap to see plans.")
+                        } else {
+                            t("cloud_sync_ready", "Sync library metadata across signed-in devices.")
+                        }
+                        CloudSyncSetupIntent.NEEDS_GOOGLE_LINK ->
+                            t("cloud_sync_link_google", "Link Google to enable cloud sync.")
+                        CloudSyncSetupIntent.NEEDS_DRIVE_AUTH ->
+                            t("cloud_sync_drive_auth", "Authorize Google Drive to enable sync.")
+                        CloudSyncSetupIntent.READY ->
+                            t("cloud_sync_ready", "Sync library metadata across signed-in devices.")
+                    },
+                    kind = SharedSettingsItemKind.TOGGLE,
+                    enabled = true,
+                    checked = isSyncEnabled,
+                    keywords = listOf("cloud", "drive", "backup", "sync")
+                )
+            )
+        }
+        if (folderSyncAvailable) {
+            add(
+                item(
+                    action = SharedSettingsAction.FOLDER_SYNC,
+                    title = t("folder_sync_title", "Folder backup and sync"),
+                    summary = t("folder_sync_summary", "Choose which local folders back up to Drive"),
+                    kind = SharedSettingsItemKind.CONTROL,
+                    keywords = listOf("folder", "drive", "backup")
+                )
+            )
+        }
+    }
+    val accountRows = buildList {
+        if (includeAccountAuthActions && accountAvailable && featurePolicy.aiAndCloud) {
+            if (isSignedIn) {
+                add(
+                    item(
+                        action = SharedSettingsAction.SIGN_OUT,
+                        title = t("sign_out_title", "Sign out"),
+                        summary = t("sign_out_summary", "Disconnect this device from your account"),
+                        kind = SharedSettingsItemKind.DESTRUCTIVE,
+                        keywords = listOf("logout", "account")
+                    )
+                )
+            } else {
+                add(
+                    item(
+                        action = SharedSettingsAction.SIGN_IN,
+                        title = t("sign_in_title", "Sign in"),
+                        summary = t("sign_in_summary", "Connect sync and account features"),
+                        kind = SharedSettingsItemKind.CONTROL,
+                        keywords = listOf("login", "account", "google")
+                    )
+                )
+            }
+        }
+        if (isDebugBuild && featurePolicy.aiAndCloud && syncAvailable) {
+            add(
+                item(
+                    action = SharedSettingsAction.DEVICE_MANAGEMENT,
+                    title = t("devices_title", "Device management"),
+                    summary = t("devices_summary", "Inspect registered devices for this account"),
+                    keywords = listOf("devices", "sessions", "login")
+                )
+            )
+        }
+        // iOS-only for now: Android keeps no deletion entry until its native re-auth + backend
+        // cleanup path is built to match.
+        if (includeAccountDeletion && isSignedIn && accountAvailable && featurePolicy.aiAndCloud) {
+            add(
+                item(
+                    action = SharedSettingsAction.DELETE_ACCOUNT,
+                    title = t("delete_account_title", "Delete account"),
+                    summary = t(
+                        "delete_account_summary",
+                        "Permanently delete your account and cloud data. Purchases are not refunded and credits are lost."
+                    ),
+                    kind = SharedSettingsItemKind.DESTRUCTIVE,
+                    keywords = listOf("delete", "remove", "account")
+                )
+            )
+        }
+    }
+    return SharedSettingsCategorySpec(
+        destination = SharedSettingsDestination.SYNC_ACCOUNT,
+        title = t("sync_account_title", "Sync & Account"),
+        summary = t("sync_account_summary", "Cloud sync, folder backup, and account management"),
+        groups = listOf(
+            SharedSettingsItemGroup(header = t("section_sync", "Sync"), items = syncRows),
+            SharedSettingsItemGroup(header = t("section_account", "Account"), items = accountRows)
+        )
+    )
+}
+
+private fun SharedSettingsHubInput.storageAndPrivacyCategory(): SharedSettingsCategorySpec {
+    val maintenanceRows = buildList {
+        if (bookCacheMaintenanceAvailable) {
+            add(
+                item(
+                    action = SharedSettingsAction.CLEAR_BOOK_CACHE,
+                    title = t("clear_book_cache_title", "Clear book cache"),
+                    summary = t(
+                        "clear_book_cache_summary",
+                        "Remove generated book cache files and recreate them on demand"
+                    ),
+                    kind = SharedSettingsItemKind.DESTRUCTIVE,
+                    keywords = listOf("cache", "storage", "clean")
+                )
+            )
+        }
+        if (reflowCacheMaintenanceAvailable) {
+            add(
+                item(
+                    action = SharedSettingsAction.CLEAR_REFLOW_CACHE,
+                    title = t("clear_reflow_cache_title", "Clear reflow cache"),
+                    summary = t("clear_reflow_cache_summary", "Remove generated PDF text-view files"),
+                    kind = SharedSettingsItemKind.DESTRUCTIVE,
+                    keywords = listOf("cache", "pdf", "reflow")
+                )
+            )
+        }
+        if (isDebugBuild && includeCloudLocalDataClear && featurePolicy.aiAndCloud) {
+            add(
+                item(
+                    action = SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA,
+                    title = t("clear_cloud_data_title", "Clear cloud and local data"),
+                    summary = t("clear_cloud_data_summary", "Delete cloud records and matching local library data"),
+                    kind = SharedSettingsItemKind.DESTRUCTIVE,
+                    keywords = listOf("reset", "delete", "cloud")
+                )
+            )
+        }
+    }
+    val privacyRows = buildList {
+        if (includeScreenCaptureProtection) {
+            add(
+                item(
+                    action = SharedSettingsAction.SCREEN_CAPTURE_PROTECTION,
+                    title = t("screen_capture_title", "Screen capture protection"),
+                    summary = t("screen_capture_summary", "Block screenshots and screen recording on reader screens"),
+                    kind = SharedSettingsItemKind.TOGGLE,
+                    checked = isScreenCaptureProtectionEnabled,
+                    keywords = listOf("screenshot", "privacy", "recording")
+                )
+            )
+        }
+    }
+    val diagnosticsRows = buildList {
+        if (isDebugBuild || includeDiagnosticLogExport) {
+            add(
+                item(
+                    action = SharedSettingsAction.EXPORT_LOGS,
+                    title = t("export_logs_title", "Export logs"),
+                    summary = t("export_logs_summary", "Share recent diagnostic logs collected by the app"),
+                    kind = SharedSettingsItemKind.CONTROL,
+                    keywords = listOf("logs", "diagnostics", "support")
+                )
+            )
+        }
+    }
+    return SharedSettingsCategorySpec(
+        destination = SharedSettingsDestination.STORAGE_PRIVACY,
+        title = t("storage_privacy_title", "Storage & Privacy"),
+        summary = t("storage_privacy_summary", "Cache maintenance, privacy, and diagnostics"),
+        groups = listOf(
+            SharedSettingsItemGroup(header = t("section_storage", "Storage"), items = maintenanceRows),
+            SharedSettingsItemGroup(header = t("section_privacy", "Privacy"), items = privacyRows),
+            SharedSettingsItemGroup(header = t("section_diagnostics", "Diagnostics"), items = diagnosticsRows)
+        )
+    )
+}
+
+private fun SharedSettingsHubInput.helpAndAboutCategory(): SharedSettingsCategorySpec {
+    val helpRows = buildList {
+        if (featurePolicy.projectLinks) {
+            add(
+                item(
+                    action = SharedSettingsAction.HELP_FEEDBACK,
+                    title = t("help_feedback_title", "Help and feedback"),
+                    summary = t("help_feedback_summary", "Send feedback or report an issue"),
+                    keywords = listOf("feedback", "bug", "issue")
+                )
+            )
+            if (supportProjectAvailable) {
+                add(
+                    item(
+                        action = SharedSettingsAction.SUPPORT,
+                        title = t("support_title", "Support the project"),
+                        summary = t("support_summary", "Open support options for the project"),
+                        keywords = listOf("donate", "support")
+                    )
+                )
+            }
+        }
+        add(
+            item(
+                action = SharedSettingsAction.ABOUT,
+                title = t("about_title", "About"),
+                summary = t("about_summary", "Version, source, licenses, and project information"),
+                keywords = listOf("version", "licenses", "open source")
+            )
+        )
+    }
+    val developerRows = buildList {
+        if (isDebugBuild) {
+            if (platform == SharedSettingsPlatform.ANDROID) {
+                add(
+                    item(
+                        action = SharedSettingsAction.TEST_PANEL_DETECTION,
+                        title = t("test_panel_title", "Test panel detection"),
+                        summary = t("test_panel_summary", "Run the local panel-detection diagnostic"),
+                        kind = SharedSettingsItemKind.CONTROL
+                    )
+                )
+                add(
+                    item(
+                        action = SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION,
+                        title = t("test_speech_bubble_title", "Test speech-bubble detection"),
+                        summary = t("test_speech_bubble_summary", "Run the local speech-bubble detection diagnostic"),
+                        kind = SharedSettingsItemKind.CONTROL
+                    )
+                )
+            }
+            if (includeFpsOverlayToggle) {
+                add(
+                    item(
+                        action = SharedSettingsAction.FPS_OVERLAY,
+                        title = t("fps_overlay_title", "Show FPS overlay"),
+                        summary = t("fps_overlay_summary", "Draw a frame-rate meter over the app"),
+                        kind = SharedSettingsItemKind.TOGGLE,
+                        checked = fpsOverlayEnabled
+                    )
+                )
+            }
+        }
+    }
+    return SharedSettingsCategorySpec(
+        destination = SharedSettingsDestination.HELP_ABOUT,
+        title = t("help_about_title", "Help & About"),
+        summary = t("help_about_summary", "Feedback, support, and app information"),
+        groups = listOf(
+            SharedSettingsItemGroup(items = helpRows),
+            SharedSettingsItemGroup(header = t("section_developer", "Developer"), items = developerRows)
+        )
     )
 }

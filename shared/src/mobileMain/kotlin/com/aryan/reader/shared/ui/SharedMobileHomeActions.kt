@@ -36,7 +36,6 @@ interface SharedMobileHomeActions {
     fun deleteTag(tagId: String) {}
     fun openSettings()
     fun openAppTheme()
-    fun openRecentLimit()
     fun openAbout()
     fun openLanguage()
     fun toggleTabs()

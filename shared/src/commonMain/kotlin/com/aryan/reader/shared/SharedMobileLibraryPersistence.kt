@@ -10,7 +10,6 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
         audiobooks = audiobooks,
         pinnedHomeBookIds = pinnedHomeBookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds,
-        recentFilesLimit = recentFilesLimit,
         isTabsEnabled = isTabsEnabled,
         isFolderSyncEnabled = isFolderSyncEnabled,
         sortOrder = sortOrder,
@@ -102,7 +101,6 @@ fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureState(
     syncedFolders = syncedFolders,
     pinnedHomeBookIds = pinnedHomeBookIds,
     pinnedLibraryBookIds = pinnedLibraryBookIds,
-    recentLimit = recentFilesLimit,
     tabs = AppTabState(isTabsEnabled, openTabIds, activeTabBookId),
 )
 
@@ -122,7 +120,6 @@ fun SharedReaderScreenState.withLibraryFeatureState(feature: LibraryFeatureState
     pinnedHomeBookIds = feature.pinnedHomeBookIds,
     pinnedLibraryBookIds = feature.pinnedLibraryBookIds,
     libraryFilters = feature.filters,
-    recentFilesLimit = feature.recentLimit,
     isTabsEnabled = feature.tabs.isEnabled,
     openTabIds = feature.tabs.openBookIds,
     openTabs = feature.openTabs,
@@ -166,7 +163,6 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
         tags = allTags,
         customFonts = customFonts,
         syncedFolders = syncedFolders,
-        recentFilesLimit = normalizedRecentFilesLimit(recentFilesLimit),
         isTabsEnabled = isTabsEnabled,
         isFolderSyncEnabled = isFolderSyncEnabled,
         sortOrder = sortOrder,

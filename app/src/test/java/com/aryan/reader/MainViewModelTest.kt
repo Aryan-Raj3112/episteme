@@ -543,23 +543,6 @@ class MainViewModelTest {
     }
 
     @Test
-    fun `setRecentFilesLimit persists and limits visible home recents`() = runTest(testDispatcher) {
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-            viewModel.uiState.collect {}
-        }
-        val first = recentFile("first", isRecent = true)
-        val second = recentFile("second", isRecent = true)
-        recentFilesFlow.value = listOf(first, second)
-        viewModel.uiState.first { it.rawLibraryFiles.size == 2 }
-
-        viewModel.setRecentFilesLimit(1)
-        val state = viewModel.uiState.first { it.recentFiles.bookIds() == setOf("first") }
-
-        assertEquals(listOf("first"), state.recentFiles.map { it.bookId })
-        verify { mockEditor.putInt("recent_files_limit", 1) }
-    }
-
-    @Test
     fun `strict file filter pdf filename display and external file behavior persist preferences`() = runTest(testDispatcher) {
         backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
             viewModel.uiState.collect {}

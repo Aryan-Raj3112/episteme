@@ -70,7 +70,6 @@ internal fun SharedLibrarySnapshot.toDesktopReaderScreenState(): SharedReaderScr
     val readableBooks = books.filter { it.type in DesktopReadableFileTypes }
     return SharedReaderScreenState(
         rawLibraryBooks = readableBooks,
-        recentFilesLimit = recentFilesLimit,
         allTags = tags.ifEmpty { readableBooks.collectTags() },
         syncedFolders = syncedFolders,
         isTabsEnabled = isTabsEnabled,
@@ -137,7 +136,6 @@ internal fun SharedReaderScreenState.toDesktopLibrarySnapshot(
         tags = allTags,
         customFonts = customFonts,
         syncedFolders = syncedFolders,
-        recentFilesLimit = recentFilesLimit,
         isTabsEnabled = isTabsEnabled,
         openTabIds = openTabIds,
         activeTabBookId = activeTabBookId,

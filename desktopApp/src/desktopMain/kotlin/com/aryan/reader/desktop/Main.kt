@@ -4264,10 +4264,12 @@ internal fun EpistemeDesktopApp(
                                     isSyncEnabled = state.isSyncEnabled,
                                     isFolderSyncEnabled = state.isFolderSyncEnabled,
                                     hideReaderAi = false,
-                                    languageTitle = desktopString("options_language", "Language"),
-                                    languageSummary = selectedDesktopLanguageOption(desktopLanguageTag).let { option ->
-                                        desktopString(option.labelKey, option.fallbackLabel)
-                                    }
+                                    itemValues = mapOf(
+                                        SharedSettingsAction.LANGUAGE.name to
+                                            selectedDesktopLanguageOption(desktopLanguageTag).let { option ->
+                                                desktopString(option.labelKey, option.fallbackLabel)
+                                            },
+                                    )
                                 )
                             ),
                             query = settingsQuery,
@@ -4334,7 +4336,6 @@ internal fun EpistemeDesktopApp(
                                     SharedSettingsAction.EXPORT_LOGS,
                                     SharedSettingsAction.FPS_OVERLAY,
                                     SharedSettingsAction.DEVICE_MANAGEMENT,
-                                    SharedSettingsAction.RECENT_LIMIT,
                                     SharedSettingsAction.STRICT_FILE_FILTER,
                                     SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
                                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,

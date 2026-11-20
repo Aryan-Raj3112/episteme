@@ -96,9 +96,6 @@
     <string name="library_title">کتابخانه</string>
     <string name="search_placeholder">جست‌و‌جوی عنوان یا نویسنده…</string>
     <string name="drawer_sign_out">خروج از حساب</string>
-    <string name="options_recent_limit">محدودیت تعداد فایل‌های اخیر</string>
-    <string name="options_no_limit">بدون محدودیت</string>
-    <string name="options_files_limit">%1$d فایل</string>
     <string name="filter_types">نوع: %1$s</string>
     <string name="filter_folders">پوشه: %1$d</string>
     <string name="filter_status">وضعیت: %1$s</string>

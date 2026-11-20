@@ -21,7 +21,6 @@ class SharedLibrarySnapshotJsonTest {
     fun `missing settings use android recent and external-file defaults`() {
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty("""{"schemaVersion":26}""")
 
-        assertEquals(0, decoded.recentFilesLimit)
         assertEquals("ASK", decoded.externalFileBehavior)
         assertFalse(decoded.isFolderSyncEnabled)
         assertEquals(SortOrder.RECENT, decoded.sortOrder)
@@ -40,21 +39,6 @@ class SharedLibrarySnapshotJsonTest {
         assertEquals("KEEP", decoded.externalFileBehavior)
     }
 
-    @Test
-    fun `legacy ios recent limits migrate to nearest android option`() {
-        assertEquals(
-            10,
-            SharedLibrarySnapshotJson.decodeOrEmpty(
-                """{"schemaVersion":26,"recentFilesLimit":12}"""
-            ).recentFilesLimit
-        )
-        assertEquals(
-            20,
-            SharedLibrarySnapshotJson.decodeOrEmpty(
-                """{"schemaVersion":26,"recentFilesLimit":24}"""
-            ).recentFilesLimit
-        )
-    }
     @Test
     fun `cloud book tombstones survive snapshot round trip`() {
         val tombstone = CloudBookTombstone(
@@ -219,7 +203,6 @@ class SharedLibrarySnapshotJsonTest {
                 )
             ),
             syncedFolders = listOf(SyncedFolder("C:/Books", "Books", lastScanTime = 12L, allowedFileTypes = setOf(FileType.EPUB, FileType.PDF))),
-            recentFilesLimit = 20,
             isTabsEnabled = true,
             openTabIds = listOf("book"),
             activeTabBookId = "book",

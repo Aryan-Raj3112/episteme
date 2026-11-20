@@ -5,7 +5,6 @@ import androidx.compose.ui.input.pointer.PointerEvent
 class LibraryProjector {
     fun home(state: LibraryState): HomeScreenModel {
         val recentBooks = sortBooks(state.books.filter { it.isRecent }, SortOrder.RECENT)
-            .take(state.recentLimit)
         return HomeScreenModel(
             recentBooks = recentBooks,
             selectedBooks = state.books.filter { it.id in state.selectedBookIds },

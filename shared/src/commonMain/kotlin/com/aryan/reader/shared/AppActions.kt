@@ -17,7 +17,6 @@ sealed interface LibraryAction {
     data class ShelfSelectionToggled(val shelfId: String) : LibraryAction
     data object ShelfSelectionCleared : LibraryAction
     data class LibraryPageChanged(val page: Int) : LibraryAction
-    data class RecentLimitChanged(val limit: Int) : LibraryAction
 }
 
 sealed interface ReaderAction {

@@ -354,6 +354,7 @@ import com.aryan.reader.shared.ui.formatSharedMobileDateTime
 import com.aryan.reader.shared.ui.mobileRecentBooks
 import com.aryan.reader.shared.ui.readerBannerMessage
 import com.aryan.reader.shared.ui.readerLiteral
+import com.aryan.reader.shared.ui.readerSharedText
 import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.ui.openSharedMobileExternalUrl
 import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
@@ -4052,7 +4053,6 @@ private fun ReaderIosApp(
     // Debug-only FPS meter (Android DebugFpsOverlay parity): persisted toggle,
     // shown on every route beneath the status bar when this is a debug build.
     var fpsOverlayEnabled by remember { mutableStateOf(IosDebugFpsStore.isEnabled()) }
-    var showRecentLimitDialog by remember { mutableStateOf(false) }
     var annotationExportBook by remember { mutableStateOf<BookItem?>(null) }
     var customSleepTimerMinutes by remember { mutableStateOf(loadIosCustomSleepTimerMinutes()) }
     var showExternalFileBehaviorDialog by remember { mutableStateOf(false) }
@@ -7250,9 +7250,11 @@ private fun ReaderIosApp(
                                 includePdfFileNameDisplayName = true,
                                 usePdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
                                 hideReaderAi = state.hideReaderAi,
-                                // Android parity: the settings summary shows the
-                                // translated language name, not the English one.
-                                languageSummary = languageSummary,
+                                // Android parity: the row shows the translated language name as
+                                // its current value instead of overwriting the shared copy.
+                                itemValues = mapOf(
+                                    SharedSettingsAction.LANGUAGE.name to languageSummary,
+                                ),
                             )
                           )
                         }
@@ -7262,7 +7264,7 @@ private fun ReaderIosApp(
                          Scaffold(
                              topBar = {
                                  SharedMobileTopAppBar(
-                                     title = { Text(readerLiteral(settingsPage.title)) },
+                                     title = { Text(readerSharedText(settingsPage.title)) },
                                      navigationIcon = {
                                          IconButton(onClick = ::navigateIosSettingsUp) {
                                              Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("action_back", "Back"))
@@ -7276,7 +7278,6 @@ private fun ReaderIosApp(
                             model = settingsModel,
                             query = settingsQuery,
                             onQueryChange = { settingsQuery = it },
-                            showTopBar = false,
                             modifier = Modifier.fillMaxSize().padding(settingsPadding),
                             readerDefaultSettings = state.readerDefaultSettings,
                             onReaderDefaultSettingsChange = {
@@ -7391,7 +7392,6 @@ private fun ReaderIosApp(
                                     SharedSettingsAction.ABOUT -> utilityScreen = IosUtilityScreen.ABOUT
                                     SharedSettingsAction.AI_SETTINGS -> utilityScreen = IosUtilityScreen.AI_SETTINGS
                                     SharedSettingsAction.DEVICE_MANAGEMENT -> utilityScreen = IosUtilityScreen.DEVICES
-                                    SharedSettingsAction.RECENT_LIMIT -> showRecentLimitDialog = true
                                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> {
                                         showExternalFileBehaviorDialog = true
                                     }
@@ -7861,9 +7861,6 @@ private fun ReaderIosApp(
                                     }
                                     override fun openAppTheme() {
                                         showAppThemePanel = true
-                                    }
-                                    override fun openRecentLimit() {
-                                        showRecentLimitDialog = true
                                     }
                                     override fun openAbout() {
                                         utilityScreen = IosUtilityScreen.ABOUT
@@ -8695,16 +8692,6 @@ private fun ReaderIosApp(
             }
         }
     }
-    if (showRecentLimitDialog) {
-        IosRecentLimitDialog(
-            currentLimit = state.recentFilesLimit,
-            onSelect = {
-                state = state.copy(recentFilesLimit = it)
-                showRecentLimitDialog = false
-            },
-            onDismiss = { showRecentLimitDialog = false },
-        )
-    }
     annotationExportBook?.let { book ->
         SharedAnnotationExportFormatDialog(
             title = readerString("dialog_export_annotations_title", "Export annotations"),
@@ -8982,45 +8969,6 @@ private fun iosAppBuildLabel(): String {
     val buildNumber = (NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleVersion") as? String)
         ?.takeIf(String::isNotBlank)
     return if (buildNumber == null) "Standard edition" else "Standard edition · Build $buildNumber"
-}
-
-@Composable
-private fun IosRecentLimitDialog(
-    currentLimit: Int,
-    onSelect: (Int) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(readerString("options_recent_limit", "Recent Files Limit")) },
-        text = {
-            Column {
-                listOf(0, 10, 20, 50, 100).forEach { limit ->
-                    val label = if (limit == 0) {
-                        readerString("options_no_limit", "No limit")
-                    } else {
-                        readerString("options_files_limit", "%1\$d files", limit)
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onSelect(limit) }
-                            .padding(vertical = 10.dp),
-                    ) {
-                        RadioButton(selected = currentLimit == limit, onClick = null)
-                        Spacer(Modifier.width(16.dp))
-                        Text(label)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(readerString("action_cancel", "Cancel"))
-            }
-        },
-    )
 }
 
 @Composable

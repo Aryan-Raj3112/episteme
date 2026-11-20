@@ -26,7 +26,6 @@ internal fun ReaderScreenState.toSharedLibraryFeatureState(
         syncedFolders = syncedFolders,
         pinnedHomeBookIds = pinnedHomeBookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds,
-        recentLimit = recentFilesLimit,
         tabs = tabState,
         viewingShelfId = viewingShelfId,
         isAddingBooksToShelf = isAddingBooksToShelf,
@@ -78,7 +77,6 @@ internal fun LibraryFeatureState.applyToAndroidLibraryState(
             filters = filters,
             selectedBookIds = selectedBookIds,
             selectedShelfIds = selectedShelfIds,
-            recentLimit = recentLimit,
         ),
         shelfState = base.shelfState.copy(
             viewingShelfId = viewingShelfId,

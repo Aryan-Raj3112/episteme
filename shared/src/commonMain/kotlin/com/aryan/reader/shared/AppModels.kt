@@ -393,7 +393,6 @@ data class SharedReaderScreenState(
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val libraryFilters: LibraryFilters = LibraryFilters(),
-    val recentFilesLimit: Int = 0,
     val isTabsEnabled: Boolean = true,
     val openTabIds: List<String> = emptyList(),
     val openTabs: List<BookItem> = emptyList(),
@@ -426,13 +425,6 @@ data class SharedReaderScreenState(
 )
 
 val AndroidExternalFileBehaviors: Set<String> = setOf("ASK", "KEEP", "DELETE", "TEMPORARY")
-val AndroidRecentFilesLimits: List<Int> = listOf(0, 10, 20, 50, 100)
-
-fun normalizedRecentFilesLimit(value: Int): Int {
-    if (value <= 0) return 0
-    return AndroidRecentFilesLimits.drop(1).minBy { kotlin.math.abs(it - value) }
-}
-
 fun normalizedExternalFileBehavior(value: String?): String {
     val normalized = value?.trim()?.uppercase()
     return when (normalized) {

@@ -45,7 +45,7 @@ data class ReaderScreenState(
     val tabState: AppTabState = AppTabState(),
     val shelfState: AppShelfState = AppShelfState(),
     val pinState: AppPinState = AppPinState(),
-    val libraryState: LibraryState = LibraryState(recentLimit = 0),
+    val libraryState: LibraryState = LibraryState(),
     val isLoading: Boolean = false,
     val isTemporaryExternalOpen: Boolean = false,
     val errorMessage: String? = null,
@@ -137,7 +137,6 @@ data class ReaderScreenState(
     val sortOrder: SortOrder get() = libraryState.sortOrder
     val libraryFilters: LibraryFilters get() = libraryState.filters
     val libraryScreenStartPage: Int get() = libraryState.libraryPage
-    val recentFilesLimit: Int get() = libraryState.recentLimit
     val appThemeMode: AppThemeMode get() = appAppearance.themeMode
     val appContrastOption: AppContrastOption get() = appAppearance.contrastOption
     val appTextDimFactorLight: Float get() = appAppearance.textDimFactorLight

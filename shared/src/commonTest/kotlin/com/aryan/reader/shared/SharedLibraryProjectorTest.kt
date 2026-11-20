@@ -70,7 +70,7 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
-    fun `LibraryProjector home limits sorted recent books and keeps selected books`() {
+    fun `LibraryProjector home sorts recent books and keeps selected books`() {
         val model = LibraryProjector().home(
             LibraryState(
                 books = listOf(
@@ -79,12 +79,11 @@ class SharedLibraryProjectorTest {
                     book("archived", timestamp = 2L, isRecent = false)
                 ),
                 selectedBookIds = setOf("old", "archived"),
-                recentLimit = 1,
                 sortOrder = SortOrder.TITLE_ASC
             )
         )
 
-        assertEquals(listOf("new"), model.recentBooks.ids())
+        assertEquals(listOf("new", "old"), model.recentBooks.ids())
         assertEquals(listOf("old", "archived"), model.selectedBooks.ids())
         assertFalse(model.isEmpty)
     }

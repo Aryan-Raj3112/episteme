@@ -206,7 +206,7 @@ class LibraryStateProjectorTest {
         val manualShelf = shelfEntity("manual", "Manual")
 
         val state = ReaderScreenState(
-            libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC, recentLimit = 1),
+            libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC),
             tabState = AppTabState(openBookIds = listOf("beta", "missing"), activeBookId = "missing"),
             contextualActionItems = setOf(recentFile("beta"), recentFile("missing")),
             shelfState = AppShelfState(viewingShelfId = "manual"),
@@ -226,7 +226,8 @@ class LibraryStateProjectorTest {
 
         assertEquals(listOf("beta", "gamma", "alpha"), result.allRecentFiles.ids())
         assertEquals(listOf("alpha", "beta", "gamma"), result.rawLibraryFiles.ids())
-        assertEquals(listOf("alpha"), result.recentFiles.ids())
+        // Recents are no longer capped: every recent book is projected.
+        assertEquals(listOf("alpha", "beta"), result.recentFiles.ids())
         assertEquals(listOf("beta"), result.openTabs.ids())
         assertEquals(listOf("beta"), result.openTabIds)
         assertNull(result.activeTabBookId)
