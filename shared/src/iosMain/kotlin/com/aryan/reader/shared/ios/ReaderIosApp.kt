@@ -138,6 +138,7 @@ import com.aryan.reader.shared.mobilePdfLifecycleAction
 import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibrarySnapshotJson
 import com.aryan.reader.shared.SharedSummaryCache
+import com.aryan.reader.shared.withoutTags
 import com.aryan.reader.shared.SharedLegalProfile
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportPlanner
@@ -333,6 +334,7 @@ import com.aryan.reader.shared.ui.SharedMobileHomeScreen
 import com.aryan.reader.shared.ui.SharedMobileHomeActions
 import com.aryan.reader.shared.ui.SharedMobileHomeOverflowCapabilities
 import com.aryan.reader.shared.ui.SharedMobileLibraryScreen
+import com.aryan.reader.shared.ui.SharedMobileTagSheet
 import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryScreen
 import com.aryan.reader.shared.ui.SharedMobileUnifiedLibraryActions
 import com.aryan.reader.shared.ui.SharedMobileTtsBookPickerSheet
@@ -2030,6 +2032,10 @@ class ReaderIosBridge internal constructor(
         listOf(
             "reader_ios_library_snapshot_v1",
             "reader_ios_reader_preferences_v1",
+            // Reset the one-time default-tag seed with the library, matching the
+            // fresh-install state Android's `KEY_DEFAULT_TAGS_SEEDED` ends in when
+            // its data is cleared.
+            "reader_ios_default_tags_seeded_v1",
             IosSyncEnabledDefaultsKey,
         ).forEach(defaults::removeObjectForKey)
         val perBookPrefixes = listOf(
@@ -3553,7 +3559,7 @@ private fun ReaderIosApp(
     onImportCover: () -> Unit,
     onRemoveFolder: (String) -> Unit,
 ) {
-    val persistedLibrary = remember { loadIosLibrarySnapshot() }
+    val persistedLibrary = remember { loadIosLibrarySnapshotWithDefaultTags() }
     val loadedState = remember {
         persistedLibrary.toSharedMobileReaderState()
             .withoutLegacyIosImportsFolder()
@@ -4055,6 +4061,8 @@ private fun ReaderIosApp(
     // shown on every route beneath the status bar when this is a debug build.
     var fpsOverlayEnabled by remember { mutableStateOf(IosDebugFpsStore.isEnabled()) }
     var annotationExportBook by remember { mutableStateOf<BookItem?>(null) }
+    /** Books the shared tag sheet currently edits; empty hides it. */
+    var tagEditorBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var customSleepTimerMinutes by remember { mutableStateOf(loadIosCustomSleepTimerMinutes()) }
     var showExternalFileBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterConfirmation by remember { mutableStateOf(false) }
@@ -4278,6 +4286,54 @@ private fun ReaderIosApp(
     fun showMessage(message: String) {
         state = state.withMessage(message)
         bridge.recordNativeEvent(message)
+    }
+
+    /**
+     * One host-level tag editor, matching Android's `showTagSelectionDialogFor`.
+     * Library info, the selection bar and both readers all open this instance, so
+     * create/toggle/delete behave identically wherever tagging starts.
+     */
+    fun openTagEditorForBooks(bookIds: Set<String>) {
+        val available = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
+        val clean = bookIds.filterTo(linkedSetOf()) { it in available }
+        if (clean.isNotEmpty()) tagEditorBookIds = clean
+    }
+
+    /**
+     * The reader is rendered from [activeReaderBook], not from `state`, so tag changes
+     * must also refresh that copy or reopening the reader's info dialog would show the
+     * tags it had before the sheet opened.
+     */
+    fun applyTagEditorState(next: SharedReaderScreenState) {
+        state = next
+        val activeId = activeReaderBook?.id ?: return
+        if (activeId !in tagEditorBookIds) return
+        next.rawLibraryBooks.firstOrNull { it.id == activeId }?.let { updated ->
+            if (updated != activeReaderBook) activeReaderBook = updated
+        }
+    }
+
+    fun createTagForEditor(name: String) {
+        if (tagEditorBookIds.isEmpty()) return
+        SharedLibraryEditor.createAndAssignTagInState(
+            state = state,
+            name = name,
+            bookIds = tagEditorBookIds,
+        )?.let(::applyTagEditorState)
+    }
+
+    fun toggleTagForEditor(tagId: String, assign: Boolean) {
+        if (tagEditorBookIds.isEmpty()) return
+        SharedLibraryEditor.toggleTagForBooksInState(
+            state = state,
+            tagId = tagId,
+            bookIds = tagEditorBookIds,
+            assign = assign,
+        )?.let(::applyTagEditorState)
+    }
+
+    fun deleteTagForEditor(tagId: String) {
+        SharedLibraryEditor.deleteTagInState(state, tagId)?.let(::applyTagEditorState)
     }
 
     val cloudLocalDataClearStatus = bridge.cloudLocalDataClearStatus
@@ -4639,7 +4695,10 @@ private fun ReaderIosApp(
                 pendingUnavailableBookId = book.id
                 bridge.requestCloudSync(
                     SharedLibrarySnapshotJson.encode(
-                        state.toIosCloudSnapshot().withStableIosBookPaths()
+                        state.toIosCloudSnapshot()
+                            .withStableIosBookPaths()
+                            // Android never uploads tags; keep them device-local.
+                            .withoutTags()
                     )
                 )
                 showMessage("Downloading ${book.displayName}")
@@ -5027,6 +5086,7 @@ private fun ReaderIosApp(
                 state.toIosCloudSnapshot()
                     .withStableIosBookPaths()
                     .withStableIosAudiobookPaths()
+                    .withoutTags()
             )
         )
     }
@@ -5046,6 +5106,7 @@ private fun ReaderIosApp(
                 state.toIosCloudSnapshot()
                     .withStableIosBookPaths()
                     .withStableIosAudiobookPaths()
+                    .withoutTags()
             )
         )
     }
@@ -5728,6 +5789,7 @@ private fun ReaderIosApp(
                     mergedSnapshot
                         .withStableIosBookPaths()
                         .withStableIosAudiobookPaths()
+                        .withoutTags()
                 )
             )
         }
@@ -6410,6 +6472,7 @@ private fun ReaderIosApp(
                 if (activeReaderBook?.id == paneBook.id) activeReaderBook = persisted
             },
             knownTags = state.allTags,
+            onOpenTags = { book -> openTagEditorForBooks(setOf(book.id)) },
             pdfToolbarPreferences = pdfToolbarPreferences,
             onPdfToolbarPreferencesChange = { preferences ->
                 if (!acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
@@ -6886,6 +6949,7 @@ private fun ReaderIosApp(
                                 updateIosBookMetadata(updated)
                             },
                             knownTags = state.allTags,
+                            onOpenTags = { book -> openTagEditorForBooks(setOf(book.id)) },
                             onKeepScreenOnChange = bridge::setKeepScreenOn,
                             appIsActive = bridge.appLifecycleState.isActive,
                             appLifecycleEventId = bridge.appLifecycleState.eventId,
@@ -8270,6 +8334,7 @@ private fun ReaderIosApp(
                                 onTogglePinned = { book -> state = state.toggleLibraryPinned(book.id) },
                                 onUpdateBook = { book -> updateIosBookMetadata(book) },
                                 selectionCapabilities = iosUnifiedLibrarySelectionCapabilities(),
+                                onOpenTagEditor = { bookIds -> openTagEditorForBooks(bookIds) },
                                 // Inside-files search: toggle + results +
                                 // keystroke mirror ride the shared screen;
                                 // snippet taps deep-link, header/cover resume.
@@ -8696,6 +8761,17 @@ private fun ReaderIosApp(
                 )
             }
         }
+    }
+    if (tagEditorBookIds.isNotEmpty()) {
+        SharedMobileTagSheet(
+            allTags = state.allTags,
+            selectedBookIds = tagEditorBookIds,
+            books = state.rawLibraryBooks,
+            onCreateAndAssign = { name -> createTagForEditor(name) },
+            onToggleTag = { tagId, assign -> toggleTagForEditor(tagId, assign) },
+            onDeleteTag = { tagId -> deleteTagForEditor(tagId) },
+            onDismiss = { tagEditorBookIds = emptySet() },
+        )
     }
     annotationExportBook?.let { book ->
         SharedAnnotationExportFormatDialog(

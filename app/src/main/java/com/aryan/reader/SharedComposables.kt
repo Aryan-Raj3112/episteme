@@ -41,14 +41,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.state.ToggleableState
-import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import com.aryan.reader.data.TagEntity
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,7 +76,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -1027,138 +1021,6 @@ fun ReadingProgressSection(
                 .height(if (compact) 5.dp else 6.dp),
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun TagSelectionBottomSheet(
-    allTags: List<TagEntity>,
-    selectedBookIds: Set<String>,
-    booksWithTags: List<RecentFileItem>,
-    onCreateAndAssign: (String) -> Unit,
-    onToggleTag: (String, Boolean) -> Unit,
-    onDeleteTag: (TagEntity) -> Unit = {},
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var searchQuery by remember { mutableStateOf("") }
-    var tagPendingDeletion by remember { mutableStateOf<TagEntity?>(null) }
-
-    val filteredTags = remember(allTags, searchQuery) {
-        if (searchQuery.isBlank()) allTags else allTags.filter { it.name.contains(searchQuery, ignoreCase = true) }
-    }
-
-    val exactMatch = remember(allTags, searchQuery) {
-        allTags.any { it.name.equals(searchQuery.trim(), ignoreCase = true) }
-    }
-
-    // Membership precomputed once per selection/library change: the per-row
-    // loop below used to run an O(selectedBooks * library) find for every
-    // visible row on every recomposition (scroll, keystroke).
-    val tagMembership = remember(selectedBookIds, booksWithTags) {
-        val byBookId = booksWithTags.associateBy { it.bookId }
-        selectedBookIds.mapNotNull { bookId ->
-            byBookId[bookId]?.let { book ->
-                bookId to book.tags.mapTo(mutableSetOf()) { it.id }
-            }
-        }.toMap()
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(max = 500.dp)) {
-            Text(stringResource(R.string.title_apply_tags), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
-
-            androidx.compose.material3.OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(stringResource(R.string.placeholder_search_create_tag)) },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                leadingIcon = { Icon(Icons.Default.Search, null) }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
-                if (searchQuery.isNotBlank() && !exactMatch) {
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp).clickable {
-                                onCreateAndAssign(searchQuery)
-                                searchQuery = ""
-                            },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(stringResource(R.string.action_create_tag, searchQuery.trim()), color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                }
-
-                items(filteredTags, key = { it.id }) { tag ->
-                    val checkedCount = tagMembership.values.count { tag.id in it }
-
-                    val state = when (checkedCount) {
-                        0 -> ToggleableState.Off
-                        selectedBookIds.size -> ToggleableState.On
-                        else -> ToggleableState.Indeterminate
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
-                            val assign = state != ToggleableState.On
-                            onToggleTag(tag.id, assign)
-                        },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TriStateCheckbox(state = state, onClick = null)
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Surface(shape = androidx.compose.foundation.shape.CircleShape, color = Color(tag.color ?: 0xFF64B5F6.toInt()).copy(alpha = 0.2f), modifier = Modifier.size(24.dp)) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Icon(painterResource(id = R.drawable.tag), contentDescription = null, modifier = Modifier.size(12.dp), tint = Color(tag.color ?: 0xFF64B5F6.toInt()))
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            tag.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = { tagPendingDeletion = tag }) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = stringResource(R.string.menu_delete_tag),
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    tagPendingDeletion?.let { tag ->
-        AlertDialog(
-            onDismissRequest = { tagPendingDeletion = null },
-            title = { Text(stringResource(R.string.menu_delete_tag)) },
-            text = { Text(stringResource(R.string.dialog_delete_tag_desc, tag.name)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeleteTag(tag)
-                    tagPendingDeletion = null
-                }) {
-                    Text(stringResource(R.string.action_delete))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { tagPendingDeletion = null }) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            }
         )
     }
 }

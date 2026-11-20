@@ -37,6 +37,7 @@ import androidx.navigation.NavHostController
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.ui.SharedAddToShelfDialog
 import com.aryan.reader.shared.ui.SharedMobileMainScaffold
+import com.aryan.reader.shared.ui.SharedMobileTagSheet
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -70,17 +71,17 @@ fun MainScreen(
         }
 
         if (uiState.showTagSelectionDialogFor.isNotEmpty()) {
-            TagSelectionBottomSheet(
-                allTags = uiState.allTags,
+            SharedMobileTagSheet(
+                allTags = uiState.allTags.map { it.toSharedTag() },
                 selectedBookIds = uiState.showTagSelectionDialogFor,
-                booksWithTags = uiState.rawLibraryFiles,
+                books = uiState.rawLibraryFiles.map { it.toSharedBookItem() },
                 onCreateAndAssign = { name ->
                     viewModel.createAndAssignTag(name, uiState.showTagSelectionDialogFor)
                 },
                 onToggleTag = { tagId, assign ->
                     viewModel.toggleTagForBooks(tagId, uiState.showTagSelectionDialogFor, assign)
                 },
-                onDeleteTag = { tag -> viewModel.deleteTag(tag.id) },
+                onDeleteTag = { tagId -> viewModel.deleteTag(tagId) },
                 onDismiss = viewModel::closeTagSelection
             )
         }

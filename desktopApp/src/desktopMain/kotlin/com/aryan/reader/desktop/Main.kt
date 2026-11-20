@@ -3246,7 +3246,7 @@ internal fun EpistemeDesktopApp(
     }
 
     fun tagSelectedBooks(tagName: String) {
-        SharedLibraryEditor.tagSelectedBooks(state, shelfRecords, shelfRefs, tagName, System.currentTimeMillis())?.let {
+        SharedLibraryEditor.tagSelectedBooks(state, shelfRecords, shelfRefs, tagName)?.let {
             replaceLibrary(it.state, records = it.shelfRecords, refs = it.shelfRefs)
         }
     }

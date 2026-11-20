@@ -79,16 +79,26 @@ class RecompositionPolicyTest {
 
     @Test
     fun `tag membership is precomputed outside item composition`() {
-        val source = readMain("SharedComposables.kt")
-        assertTrue(source.contains("val tagMembership = remember(selectedBookIds, booksWithTags)"))
+        // The sheet now lives in shared so Android and iOS cannot drift again.
+        val source = readShared("src/mobileMain/kotlin/com/aryan/reader/shared/ui/SharedMobileTagSheet.kt")
+        assertTrue(source.contains("val tagCounts = remember(books, selectedBookIds)"))
         val itemsBody = source.substringAfter("items(filteredTags, key = { it.id })")
-        assertFalse(itemsBody.substringBefore("TriStateCheckbox").contains("booksWithTags.find"))
+        val rowBeforeCheckbox = itemsBody.substringBefore("TriStateCheckbox")
+        assertFalse(rowBeforeCheckbox.contains("books.find"))
+        assertFalse(rowBeforeCheckbox.contains(".count {"))
     }
 
     private fun readMain(relativePath: String): String {
         return listOf(
             File("src/main/java/com/aryan/reader/$relativePath"),
             File("app/src/main/java/com/aryan/reader/$relativePath")
+        ).first { it.isFile }.readText()
+    }
+
+    private fun readShared(relativePath: String): String {
+        return listOf(
+            File("../shared/$relativePath"),
+            File("shared/$relativePath")
         ).first { it.isFile }.readText()
     }
 }

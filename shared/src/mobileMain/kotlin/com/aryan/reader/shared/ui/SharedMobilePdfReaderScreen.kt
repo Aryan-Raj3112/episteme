@@ -384,6 +384,8 @@ fun SharedMobilePdfReaderScreen(
     onClosePdfTab: (BookItem) -> Unit = {},
     onBookInfoChange: (BookItem) -> Unit = {},
     knownTags: List<Tag> = emptyList(),
+    /** Opens the same tag editor the library uses; null keeps the info dialog read-only. */
+    onOpenTags: ((BookItem) -> Unit)? = null,
     pdfToolbarPreferences: PdfToolbarPreferences = PdfToolbarPreferences(),
     onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
     ocrLanguage: SharedPdfOcrLanguage = SharedPdfOcrLanguage.LATIN,
@@ -484,6 +486,7 @@ fun SharedMobilePdfReaderScreen(
         onClosePdfTab = onClosePdfTab,
         onBookInfoChange = onBookInfoChange,
         knownTags = knownTags,
+        onOpenTags = onOpenTags,
         pdfToolbarPreferences = pdfToolbarPreferences,
         onPdfToolbarPreferencesChange = onPdfToolbarPreferencesChange,
         initialShowTopToolbar = initialShowTopToolbar,
@@ -589,6 +592,8 @@ fun SharedMobilePdfReaderHost(
     onClosePdfTab: (BookItem) -> Unit = {},
     onBookInfoChange: (BookItem) -> Unit = {},
     knownTags: List<Tag> = emptyList(),
+    /** Opens the same tag editor the library uses; null keeps the info dialog read-only. */
+    onOpenTags: ((BookItem) -> Unit)? = null,
     pdfToolbarPreferences: PdfToolbarPreferences = PdfToolbarPreferences(),
     onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
     ocrLanguage: SharedPdfOcrLanguage = SharedPdfOcrLanguage.LATIN,
@@ -5060,6 +5065,18 @@ fun SharedMobilePdfReaderHost(
             canEditEmbeddedMetadata = false,
             canRenameDisplayName = true,
             canRestoreEmbeddedMetadata = false,
+            // Android benchmark: the reader's book info shows tag chips and opens
+            // the tri-state tag sheet instead of a comma-separated text field.
+            editLibraryTags = false,
+            tagChipsContent = book.tags.takeIf { it.isNotEmpty() }?.let { tags ->
+                { SharedMobileBookTagChipsRow(tags = tags) }
+            },
+            onOpenTags = onOpenTags?.let { open ->
+                {
+                    showFileInformation = false
+                    open(book)
+                }
+            },
             onDismiss = { showFileInformation = false },
             onSave = { updated ->
                 onBookInfoChange(updated)

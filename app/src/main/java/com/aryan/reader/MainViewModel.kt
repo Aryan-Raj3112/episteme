@@ -188,6 +188,7 @@ import com.aryan.reader.shared.shouldUploadLocalCloudBookMetadataUpdate
 import com.aryan.reader.shared.sharedCloudBookContentFileName
 import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
+import com.aryan.reader.shared.LibraryTagPolicy
 import com.aryan.reader.shared.NavigationEvent
 import com.aryan.reader.shared.reduce
 import kotlinx.coroutines.CompletableDeferred
@@ -1521,13 +1522,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
     private fun buildDefaultTags(): List<TagEntity> {
         val now = System.currentTimeMillis()
-        return listOf(
-            TagEntity(id = "default_to_read", name = "To Read", color = 0xFF64B5F6.toInt(), createdAt = now),
-            TagEntity(id = "default_reading", name = "Reading", color = 0xFF81C784.toInt(), createdAt = now + 1),
-            TagEntity(id = "default_finished", name = "Finished", color = 0xFFFFB74D.toInt(), createdAt = now + 2),
-            TagEntity(id = "default_favorites", name = "Favorites", color = 0xFFF06292.toInt(), createdAt = now + 3),
-            TagEntity(id = "default_reference", name = "Reference", color = 0xFF9575CD.toInt(), createdAt = now + 4)
-        )
+        // Shared with iOS (`LibraryTagPolicy.DEFAULT_TAGS`) so a fresh install seeds the
+        // same ids, names and colours on both platforms.
+        return LibraryTagPolicy.DEFAULT_TAGS.mapIndexed { index, tag ->
+            tag.toTagEntity(createdAt = now + index)
+        }
     }
 
     private var googleFontsCache: List<String> = emptyList()

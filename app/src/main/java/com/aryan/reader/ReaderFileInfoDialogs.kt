@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.ui.SharedMobileTagSheet
 
 @Composable
 private fun rememberReaderFileInfoItem(
@@ -80,17 +81,17 @@ internal fun ReaderFileInfoDialogs(
     )
 
     if (uiState.showTagSelectionDialogFor.isNotEmpty()) {
-        TagSelectionBottomSheet(
-            allTags = uiState.allTags,
+        SharedMobileTagSheet(
+            allTags = uiState.allTags.map { it.toSharedTag() },
             selectedBookIds = uiState.showTagSelectionDialogFor,
-            booksWithTags = uiState.rawLibraryFiles,
+            books = uiState.rawLibraryFiles.map { it.toSharedBookItem() },
             onCreateAndAssign = { name ->
                 viewModel.createAndAssignTag(name, uiState.showTagSelectionDialogFor)
             },
             onToggleTag = { tagId, assign ->
                 viewModel.toggleTagForBooks(tagId, uiState.showTagSelectionDialogFor, assign)
             },
-            onDeleteTag = { tag -> viewModel.deleteTag(tag.id) },
+            onDeleteTag = { tagId -> viewModel.deleteTag(tagId) },
             onDismiss = viewModel::closeTagSelection
         )
     }

@@ -177,6 +177,12 @@ fun booksRemovedByCloudTombstones(
     return local.books.filter { it.id in tombstonedIds }
 }
 
+/**
+ * Merges the cloud snapshot into the local one.
+ *
+ * Tags are deliberately not merged: both platforms keep them device-local, so
+ * `local.tags` wins and remote-only books arrive untagged.
+ */
 fun mergeCloudLibrarySnapshotWithDownloadedBooks(
     local: SharedLibrarySnapshot,
     remote: SharedLibrarySnapshot,
@@ -205,7 +211,9 @@ fun mergeCloudLibrarySnapshotWithDownloadedBooks(
     val downloadedBooks = remote.books.mapNotNull { remoteBook ->
         val path = downloadedBookPaths[remoteBook.id] ?: return@mapNotNull null
         if (remoteBook.id in localBookIds || remoteBook.id in deletedIds) return@mapNotNull null
-        remoteBook.copy(path = path, sourceFolder = null, isAvailable = true)
+        // Tags are device-local on every platform (Android never syncs them), so a
+        // book that arrives from the cloud must not carry another device's tags.
+        remoteBook.copy(path = path, sourceFolder = null, isAvailable = true, tags = emptyList())
     }
     val mergedShelfRecords = mergeCloudShelfRecords(
         local = local.shelfRecords,
@@ -220,7 +228,10 @@ fun mergeCloudLibrarySnapshotWithDownloadedBooks(
             activeBookIds = (mergedReadingState.books + downloadedBooks).mapTo(mutableSetOf(), BookItem::id),
             activeShelfIds = mergedShelfRecords.mapTo(mutableSetOf(), ShelfRecord::id),
         ),
-        tags = mergeCloudTags(local.tags, remote.tags),
+        // Tags never leave the device. Keeping the local list also stops a remote
+        // list from resurrecting tags this device deleted. Use `.withoutTags()` on
+        // outbound snapshots so the cloud copy cannot carry them either.
+        tags = LibraryTagPolicy.sortTags(local.tags),
         customFonts = mergeCloudCustomFonts(local.customFonts, remote.customFonts, downloadedFontPaths),
         // Folder provider identifiers are intentionally device-scoped. A remote
         // folder entry is safe to apply only when this device already has the
@@ -329,18 +340,6 @@ private fun mergeCloudShelfRefs(
         .mapNotNull { refs -> refs.maxByOrNull(BookShelfRef::addedAt) }
         .sortedWith(compareBy<BookShelfRef> { it.shelfId }.thenBy { it.addedAt }.thenBy { it.bookId })
         .toList()
-}
-
-private fun mergeCloudTags(
-    local: List<Tag>,
-    remote: List<Tag>,
-): List<Tag> {
-    // Tags have no modification clock in the Android schema. Remote wins on
-    // an ID collision, matching the Android Firestore read/replace behavior.
-    return (local + remote)
-        .associateBy(Tag::id)
-        .values
-        .sortedWith(compareByNatural { it.name })
 }
 
 private fun mergeCloudCustomFonts(

@@ -46,7 +46,9 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
     return SharedLibraryStateProjector().project(
         SharedLibraryProjectionInput(
             state = base.toLibraryFeatureState(),
-            booksFromStore = books,
+            // Older snapshots stored tags in whatever order they were assigned. The
+            // chips and pickers show natural tag order on both platforms.
+            booksFromStore = books.map { it.withNaturallySortedTags() },
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs,
             tags = tags,

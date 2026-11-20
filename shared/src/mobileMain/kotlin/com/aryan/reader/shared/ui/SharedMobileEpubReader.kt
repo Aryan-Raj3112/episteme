@@ -251,6 +251,8 @@ fun SharedMobileEpubReaderScreen(
     onMetadataLoaded: (title: String, author: String?) -> Unit = { _, _ -> },
     onBookInfoChange: (BookItem) -> Unit = {},
     knownTags: List<Tag> = emptyList(),
+    /** Opens the same tag editor the library uses; null keeps the info dialog read-only. */
+    onOpenTags: ((BookItem) -> Unit)? = null,
     onKeepScreenOnChange: (Boolean) -> Unit = {},
     appIsActive: Boolean = true,
     appLifecycleEventId: Long = 0L,
@@ -4351,6 +4353,18 @@ fun SharedMobileEpubReaderScreen(
                 opdsLabel = readerString("source_opds", "Source: OPDS Stream"),
                 inAppLabel = readerString("source_in_app", "In-App Storage"),
             ),
+            // Android benchmark: the reader's book info shows tag chips and opens
+            // the tri-state tag sheet instead of a comma-separated text field.
+            editLibraryTags = false,
+            tagChipsContent = book.tags.takeIf { it.isNotEmpty() }?.let { tags ->
+                { SharedMobileBookTagChipsRow(tags = tags) }
+            },
+            onOpenTags = onOpenTags?.let { open ->
+                {
+                    showFileInfo = false
+                    open(book)
+                }
+            },
             onDismiss = { showFileInfo = false },
             onSave = { updated ->
                 onBookInfoChange(updated)

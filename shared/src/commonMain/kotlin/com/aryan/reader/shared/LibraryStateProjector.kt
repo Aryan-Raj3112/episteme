@@ -147,7 +147,10 @@ class SharedLibraryStateProjector(
             openTabs = openTabs,
             tabs = tabState,
             booksAvailableForAdding = booksAvailableForAdding,
-            tags = input.tags,
+            // Tag order is user-visible in the Tags section, filter sheet and pickers.
+            // Natural (case-insensitive) order is the Android benchmark now that both
+            // platforms share one policy.
+            tags = LibraryTagPolicy.sortTags(input.tags),
             syncedFolders = syncedFolders
         )
     }

@@ -29,20 +29,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Ai
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
@@ -86,9 +83,7 @@ import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.rememberDrawerState
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -111,7 +106,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.state.ToggleableState
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.AddBooksSource
 import com.aryan.reader.shared.FileType
@@ -267,6 +261,13 @@ fun SharedMobileUnifiedLibraryScreen(
     selectionCapabilities: SharedMobileUnifiedLibrarySelectionCapabilities =
         SharedMobileUnifiedLibrarySelectionCapabilities(),
     selectionActions: SharedMobileUnifiedLibraryActions? = null,
+    /**
+     * Host-owned tag sheet. Android and the iOS app host one shared
+     * [SharedMobileTagSheet] above the whole UI so the info dialog and the
+     * selection bar open the same editor. When null the screen falls back to
+     * its own sheet (tests and previews).
+     */
+    onOpenTagEditor: ((Set<String>) -> Unit)? = null,
     /** Pull-to-sync trigger; hosts own the sync pipeline. */
     onRefreshLibrary: () -> Unit = {},
     /**
@@ -303,7 +304,7 @@ fun SharedMobileUnifiedLibraryScreen(
     var showCreateShelf by remember { mutableStateOf(false) }
     var showCreateShelfFromSelection by remember { mutableStateOf(false) }
     var showAddToShelf by remember { mutableStateOf(false) }
-    var showTagDialog by remember { mutableStateOf(false) }
+    var tagDialogBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showDeleteBooks by remember { mutableStateOf(false) }
     var playerBook by remember { mutableStateOf<SharedAudiobook?>(null) }
     var showPlayerSheet by remember { mutableStateOf(false) }
@@ -379,6 +380,20 @@ fun SharedMobileUnifiedLibraryScreen(
     }
     val contextualActions = selectionActions?.takeIf { selectionCapabilities.selectionActions }
     val isContextualMode = contextualActions != null && selectedIds.isNotEmpty()
+
+    // The Tags destination owns its detail state; leaving it must not leave a
+    // book-less tag detail behind (Android clears this in UnifiedLibraryScreen).
+    LaunchedEffect(section) {
+        if (section != MobileUnifiedLibrarySection.TAGS) selectedTagId = null
+    }
+
+    fun requestTagEditor(bookIds: Set<String>) {
+        val available = state.rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
+        val clean = bookIds.filterTo(linkedSetOf()) { it in available }
+        if (clean.isEmpty()) return
+        val external = onOpenTagEditor
+        if (external != null) external(clean) else tagDialogBookIds = clean
+    }
 
     fun applyUnifiedLibraryFilters(filters: LibraryFilters) {
         filter = filters.readStatus.toMobileUnifiedLibraryFilter()
@@ -510,7 +525,7 @@ fun SharedMobileUnifiedLibraryScreen(
                         { showAddToShelf = true }
                     } else null,
                     onTag = if (selectionCapabilities.tag) {
-                        { showTagDialog = true }
+                        { requestTagEditor(selectedIds) }
                     } else null,
                     onInfo = if (selectionCapabilities.info) selectedBook?.let { book -> { infoBook = book } } else null,
                     onSave = if (selectionCapabilities.save) {
@@ -1059,6 +1074,20 @@ fun SharedMobileUnifiedLibraryScreen(
                 opdsLabel = readerString("source_opds", "Source: OPDS Stream"),
                 inAppLabel = readerString("source_in_app", "In-App Storage"),
             ),
+            // Android benchmark: info shows chips plus a tri-state tag editor,
+            // never the free-text comma field.
+            editLibraryTags = false,
+            tagChipsContent = book.tags.takeIf { it.isNotEmpty() }?.let { tags ->
+                { SharedMobileBookTagChipsRow(tags = tags) }
+            },
+            onOpenTags = if (onOpenTagEditor != null || contextualActions != null) {
+                {
+                    infoBook = null
+                    requestTagEditor(setOf(book.id))
+                }
+            } else {
+                null
+            },
             onDismiss = { infoBook = null },
             onSave = { updated -> onUpdateBook(updated); infoBook = null },
             onRestore = { restored -> onUpdateBook(restored); infoBook = null },
@@ -1147,17 +1176,17 @@ fun SharedMobileUnifiedLibraryScreen(
             )
         }
     }
-    if (showTagDialog) {
+    if (tagDialogBookIds.isNotEmpty()) {
         val actions = contextualActions
         if (actions != null) {
-            SharedMobileTagSelectionSheet(
+            SharedMobileTagSheet(
                 allTags = state.allTags,
-                selectedBookIds = selectedIds,
+                selectedBookIds = tagDialogBookIds,
                 books = state.rawLibraryBooks,
                 onCreateAndAssign = actions::createAndAssignTag,
                 onToggleTag = actions::toggleTagForSelectedBooks,
                 onDeleteTag = actions::deleteTag,
-                onDismiss = { showTagDialog = false },
+                onDismiss = { tagDialogBookIds = emptySet() },
             )
         }
     }
@@ -1526,7 +1555,7 @@ fun SharedMobileHomeScreen(
         )
     }
     if (showTagDialog) {
-        SharedMobileTagSelectionSheet(
+        SharedMobileTagSheet(
             allTags = state.allTags,
             selectedBookIds = selectedIds,
             books = state.rawLibraryBooks,
@@ -2067,7 +2096,7 @@ fun SharedMobileLibraryScreen(
         )
     }
     if (showTagDialog) {
-        SharedMobileTagSelectionSheet(
+        SharedMobileTagSheet(
             allTags = state.allTags,
             selectedBookIds = selectedIds,
             books = state.rawLibraryBooks,
@@ -2462,7 +2491,7 @@ private fun SharedMobileShelfDetail(
         )
     }
     if (showTagDialog) {
-        SharedMobileTagSelectionSheet(
+        SharedMobileTagSheet(
             allTags = knownTags,
             selectedBookIds = selectedShelfBooks.mapTo(mutableSetOf()) { it.id },
             books = selectedShelfBooks,
@@ -2636,154 +2665,6 @@ private fun SharedMobileAddBooksToShelfScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun SharedMobileTagSelectionSheet(
-    allTags: List<Tag>,
-    selectedBookIds: Set<String>,
-    books: List<BookItem>,
-    onCreateAndAssign: (String) -> Unit,
-    onToggleTag: (String, Boolean) -> Unit,
-    onDeleteTag: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var searchQuery by remember { mutableStateOf("") }
-    var tagPendingDeletion by remember { mutableStateOf<Tag?>(null) }
-    val filteredTags = remember(allTags, searchQuery) {
-        if (searchQuery.isBlank()) {
-            allTags
-        } else {
-            allTags.filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
-        }
-    }
-    val exactMatch = allTags.any { it.name.equals(searchQuery.trim(), ignoreCase = true) }
-    val selectedBooks = remember(books, selectedBookIds) {
-        books.filter { it.id in selectedBookIds }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 500.dp)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-        ) {
-            Text(
-                readerString("title_apply_tags", "Apply tags"),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 16.dp),
-            )
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(readerString("placeholder_search_create_tag", "Search or create a tag")) },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            )
-            Spacer(Modifier.height(16.dp))
-            LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                if (searchQuery.isNotBlank() && !exactMatch) {
-                    item("create_tag") {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    onCreateAndAssign(searchQuery.trim())
-                                    searchQuery = ""
-                                }
-                                .padding(vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Text(
-                                readerString("action_create_tag", "Create \"%1\$s\"", searchQuery.trim()),
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        }
-                    }
-                }
-                items(filteredTags, key = { it.id }) { tag ->
-                    val tagColor = Color(tag.color ?: 0xFF64B5F6.toInt())
-                    val checkedCount = selectedBooks.count { book -> book.tags.any { it.id == tag.id } }
-                    val toggleState = when (checkedCount) {
-                        0 -> ToggleableState.Off
-                        selectedBookIds.size -> ToggleableState.On
-                        else -> ToggleableState.Indeterminate
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                            .clickable { onToggleTag(tag.id, toggleState != ToggleableState.On) },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TriStateCheckbox(state = toggleState, onClick = null)
-                        Surface(
-                            shape = CircleShape,
-                            color = tagColor.copy(alpha = 0.2f),
-                            modifier = Modifier.size(24.dp),
-                        ) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Box(
-                                    Modifier
-                                        .size(10.dp)
-                                        .background(tagColor, CircleShape)
-                                )
-                            }
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Text(tag.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                        IconButton(onClick = { tagPendingDeletion = tag }) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = readerString("menu_delete_tag", "Delete tag"),
-                                tint = MaterialTheme.colorScheme.error,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    tagPendingDeletion?.let { tag ->
-        AlertDialog(
-            onDismissRequest = { tagPendingDeletion = null },
-            title = { Text(readerString("menu_delete_tag", "Delete tag")) },
-            text = {
-                Text(
-                    readerString(
-                        "dialog_delete_tag_desc",
-                        "Delete \"%1\$s\"? It will be removed from every book.",
-                        tag.name,
-                    )
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onDeleteTag(tag.id)
-                        tagPendingDeletion = null
-                    }
-                ) {
-                    Text(readerString("action_delete", "Delete"))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { tagPendingDeletion = null }) {
-                    Text(readerString("action_cancel", "Cancel"))
-                }
-            },
-        )
-    }
-}
 internal fun <T> Set<T>.toggleMember(value: T): Set<T> = if (value in this) this - value else this + value
 
 @Composable
