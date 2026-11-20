@@ -114,6 +114,7 @@ import com.aryan.reader.shared.pdf.pdfCommentChildren
 import com.aryan.reader.shared.pdf.visiblePdfAnnotationComments
 import com.aryan.reader.shared.pdf.withoutPdfCommentThread
 import com.aryan.reader.shared.ui.SharedReaderNoteAutosave
+import com.aryan.reader.shared.ui.sharedMobileAnnotationSheetLayout
 import timber.log.Timber
 import java.text.DateFormat
 import java.util.Date
@@ -728,10 +729,12 @@ fun PdfAnnotationBottomSheet(
         autosave.flush(noteText)
         onDismiss()
     }
-    // Delete/Done step aside while the keyboard is up so the scrolling body gets the room (in
-    // landscape the space above the IME is a strip). Nothing depends on them: the note is committed
-    // as it is typed and on dismissal, and the row returns when the keyboard closes.
+    // Delete/Done are the only part of the editor that steps aside while the keyboard is up; the
+    // styling rows, the snippet, the tools and the note field keep the resting layout (see
+    // `sharedMobileAnnotationSheetLayout`). Nothing depends on the row: the note is committed as it
+    // is typed and on dismissal, and it returns when the keyboard closes.
     val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val annotationLayout = sharedMobileAnnotationSheetLayout(isImeVisible)
 
     ModalBottomSheet(
         onDismissRequest = dismissWithFlush,
@@ -819,20 +822,7 @@ fun PdfAnnotationBottomSheet(
 
                 Spacer(Modifier.height(12.dp))
 
-                if (selectedSection == PdfAnnotationSheetSection.NOTE) {
-                    OutlinedTextField(
-                        value = noteText,
-                        onValueChange = {
-                            noteText = it
-                            autosave.onTextChanged(it)
-                        },
-                        placeholder = { Text(stringResource(R.string.placeholder_add_note), color = effectiveText.copy(alpha = 0.5f)) },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                        maxLines = 5,
-                        colors = pdfAnnotationTextFieldColors(effectiveText),
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                } else {
+                if (selectedSection == PdfAnnotationSheetSection.COMMENTS) {
                     PdfHighlightCommentsEditor(
                         comments = comments,
                         commentText = commentText,
@@ -906,9 +896,31 @@ fun PdfAnnotationBottomSheet(
                 }
             }
 
+            // Pinned below the scrolling body like the EPUB sheet: the keyboard may shrink the sheet,
+            // but it can neither scroll the note field out of the editor nor grow it over the styling
+            // rows above it.
+            if (selectedSection == PdfAnnotationSheetSection.NOTE) {
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = {
+                        noteText = it
+                        autosave.onTextChanged(it)
+                    },
+                    placeholder = { Text(stringResource(R.string.placeholder_add_note), color = effectiveText.copy(alpha = 0.5f)) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .padding(bottom = 16.dp)
+                        .heightIn(min = 100.dp),
+                    maxLines = annotationLayout.noteFieldMaxLines,
+                    colors = pdfAnnotationTextFieldColors(effectiveText),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+
             // Pinned outside the scrolling body, so Done is never the row the keyboard hides... and
-            // hidden outright while the keyboard is open, so the editor gets that space back.
-            if (!isImeVisible) {
+            // hidden outright while the keyboard is open, the one thing it takes away.
+            if (annotationLayout.bottomActionsVisible) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()

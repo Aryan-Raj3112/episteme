@@ -163,6 +163,44 @@ class SharedMobileEpubAnnotationSheetTest {
         composeTestRule.onNodeWithText("Save Note").assertIsDisplayed()
     }
 
+    @Test
+    fun typingKeepsTheEditorChromeInPlace() {
+        // Reported: focusing the note field collapsed the editor to the field alone — the styling
+        // rows, the snippet and the tools disappeared and the field grew until it covered the whole
+        // sheet. Only the Delete/Save row may step aside for the keyboard.
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedMobileEpubAnnotationSheet(
+                    highlight = highlight,
+                    palette = ReaderHighlightPalette(),
+                    effectiveBg = MaterialTheme.colorScheme.surface,
+                    effectiveText = MaterialTheme.colorScheme.onSurface,
+                    labels = labels(),
+                    onColorChange = {},
+                    onStyleChange = {},
+                    onCopy = {},
+                    onDictionary = {},
+                    onTranslate = {},
+                    onSearch = {},
+                    onDismiss = {},
+                    onSave = {},
+                    onDelete = {},
+                )
+            }
+        }
+
+        val noteField = composeTestRule.onNodeWithText("Add a note…")
+        noteField.performClick()
+        noteField.performTextInput("Still writing")
+        composeTestRule.waitForIdle()
+
+        // Everything above the field is still there, in the same place, while the note has focus.
+        composeTestRule.onNodeWithText("\"${highlight.text}\"").assertIsDisplayed()
+        composeTestRule.onNodeWithContentDescription(HighlightStyle.UNDERLINE.id).assertIsDisplayed()
+        composeTestRule.onNodeWithText("Copy").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Still writing").assertIsDisplayed()
+    }
+
     private fun labels() = SharedMobileEpubAnnotationLabels(
         copy = "Copy",
         speak = "Speak",

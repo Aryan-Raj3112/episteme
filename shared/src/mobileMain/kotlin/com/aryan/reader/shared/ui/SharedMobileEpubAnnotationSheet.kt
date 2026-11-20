@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -317,26 +316,23 @@ fun SharedMobileEpubAnnotationSheet(
         autosave.flush(noteText)
         onDismiss()
     }
-    // While the keyboard is open the sheet has very little room — in landscape only a strip between
-    // the status bar and the IME — so the editor collapses to the note field itself: the styling and
-    // the action rows step aside and the field takes the whole sheet. Nothing is reachable only
-    // through them (the draft is committed as it is typed and again on dismissal) and closing the
-    // keyboard brings the full editor back.
+    // What the keyboard may take away is deliberately narrow: only the Delete/Save row, see
+    // `sharedMobileAnnotationSheetLayout`. The styling rows, the snippet, the tools, the drag handle
+    // and the note field itself keep their resting layout — collapsing the editor to the field alone
+    // is what made the input cover the whole sheet.
     //
     // `WindowInsets.isImeVisible` is Android-only in this Compose version, so visibility comes from a
     // non-zero IME inset instead: equivalent for open/closed, and gracefully false where IME insets
     // are unsupported.
     val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val annotationLayout = sharedMobileAnnotationSheetLayout(isImeVisible)
 
     ModalBottomSheet(
         onDismissRequest = dismissWithFlush,
         sheetState = sheetState,
         containerColor = effectiveBg, // Matches user theme
         contentColor = effectiveText,
-        contentWindowInsets = { WindowInsets.navigationBars },
-        // The drag handle is 48dp of the little room a landscape keyboard leaves; while typing, the
-        // sheet is the note field and nothing else. It returns with the keyboard.
-        dragHandle = if (isImeVisible) null else { { BottomSheetDefaults.DragHandle() } }
+        contentWindowInsets = { WindowInsets.navigationBars }
     ) {
         Column(
             modifier = Modifier
@@ -349,10 +345,10 @@ fun SharedMobileEpubAnnotationSheet(
         ) {
             // The styling/tools header scrolls, the note field does not: a Column measures its
             // children with the height that is left, so keeping everything in one body is exactly
-            // what let the keyboard squeeze the field and then the Save button to nothing. With the
-            // keyboard open the header is gone entirely and the field owns the sheet (see
-            // `isImeVisible`).
-            if (!isImeVisible) {
+            // what let the keyboard squeeze the field and then the Save button to nothing. The
+            // header stays while typing — the policy says the keyboard takes nothing but the action
+            // row — and gives the field room by scrolling.
+            if (annotationLayout.editorChromeVisible) {
                 Column(
                     modifier = Modifier
                         .weight(1f, fill = false)
@@ -449,9 +445,8 @@ fun SharedMobileEpubAnnotationSheet(
             }
 
             // Note field. Outside the scrolling header so it can never be the row that gets measured
-            // away, and the only child with weight while the keyboard is open — where it is the
-            // whole editor, so it is allowed to grow past the five lines it gets when the styling
-            // and action rows are sharing the sheet with it.
+            // away, and the same height with or without a keyboard: growing it past these five lines
+            // is what let the input cover the rest of the editor.
             OutlinedTextField(
                 value = noteText,
                 onValueChange = {
@@ -462,14 +457,8 @@ fun SharedMobileEpubAnnotationSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)
-                    .then(
-                        if (isImeVisible) {
-                            Modifier.weight(1f).padding(top = 8.dp, bottom = 8.dp)
-                        } else {
-                            Modifier.heightIn(min = 100.dp)
-                        }
-                    ),
-                maxLines = if (isImeVisible) Int.MAX_VALUE else 5,
+                    .heightIn(min = 100.dp),
+                maxLines = annotationLayout.noteFieldMaxLines,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
                     unfocusedContainerColor = Color.Transparent,
@@ -483,8 +472,9 @@ fun SharedMobileEpubAnnotationSheet(
 
             // Bottom Actions. Outside the scrolling region on purpose: with the keyboard up, Save
             // sitting at the bottom of a scrolling body is a Save the user has to scroll to. While
-            // the keyboard is actually open the row is hidden outright — see `isImeVisible` above.
-            if (!isImeVisible) {
+            // the keyboard is actually open the row is hidden outright — the one thing the keyboard
+            // takes away (see `sharedMobileAnnotationSheetLayout`).
+            if (annotationLayout.bottomActionsVisible) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -519,6 +509,10 @@ fun SharedMobileEpubAnnotationSheet(
                         Text(labels.saveNote)
                     }
                 }
+            } else {
+                // The action row stepped aside, but the field keeps the same gap below it instead of
+                // sitting flush against the keyboard.
+                Spacer(Modifier.height(16.dp))
             }
         }
     }

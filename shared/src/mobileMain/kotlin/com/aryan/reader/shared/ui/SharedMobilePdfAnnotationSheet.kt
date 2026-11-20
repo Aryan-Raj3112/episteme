@@ -124,11 +124,13 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
         autosave.flush(noteText)
         onDismiss()
     }
-    // Delete/Done step aside while the keyboard is up so the scrolling body gets the room — in
-    // landscape the space above the IME is a strip. Nothing depends on them: the note is committed
-    // as it is typed and on dismissal, and the row returns when the keyboard closes. Visibility
-    // comes from a non-zero IME inset because `WindowInsets.isImeVisible` is Android-only here.
+    // Delete/Done are the only part of the editor that steps aside while the keyboard is up; the
+    // styling rows, the snippet, the tools and the note field keep the resting layout (see
+    // `sharedMobileAnnotationSheetLayout`). Nothing depends on the row: the note is committed as it
+    // is typed and on dismissal, and it returns when the keyboard closes. Visibility comes from a
+    // non-zero IME inset because `WindowInsets.isImeVisible` is Android-only here.
     val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val annotationLayout = sharedMobileAnnotationSheetLayout(isImeVisible)
 
     ModalBottomSheet(
         onDismissRequest = dismissWithFlush,
@@ -192,19 +194,7 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
                 Spacer(Modifier.height(16.dp))
                 SharedMobilePdfAnnotationTabs(section, comments.count { it.contents.isNotBlank() }) { section = it }
                 Spacer(Modifier.height(12.dp))
-                if (section == SharedMobilePdfAnnotationSection.NOTE) {
-                    OutlinedTextField(
-                        value = noteText,
-                        onValueChange = {
-                            noteText = it
-                            autosave.onTextChanged(it)
-                        },
-                        placeholder = { Text("Add a note") },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                        maxLines = 5,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                } else {
+                if (section == SharedMobilePdfAnnotationSection.COMMENTS) {
                     SharedMobilePdfCommentsEditor(
                         comments = comments,
                         commentText = commentText,
@@ -238,7 +228,28 @@ internal fun SharedMobilePdfAnnotationBottomSheet(
                 }
             }
 
-            if (!isImeVisible) {
+            // Pinned below the scrolling header, exactly like the EPUB sheet: the keyboard may shrink
+            // the sheet, but it can neither scroll the note field out of the editor nor grow it over
+            // the styling rows above it.
+            if (section == SharedMobilePdfAnnotationSection.NOTE) {
+                OutlinedTextField(
+                    value = noteText,
+                    onValueChange = {
+                        noteText = it
+                        autosave.onTextChanged(it)
+                    },
+                    placeholder = { Text("Add a note") },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .padding(bottom = 16.dp)
+                        .heightIn(min = 100.dp),
+                    maxLines = annotationLayout.noteFieldMaxLines,
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+
+            if (annotationLayout.bottomActionsVisible) {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 8.dp, bottom = 24.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
