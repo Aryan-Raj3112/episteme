@@ -1,5 +1,9 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION
+import com.aryan.reader.shared.ui.SHARED_STICKY_NOTE_2_PATH_DATA
+
 internal fun readerHtmlAnnotationScript(): String = """
               function wrapRangeTextSegments(range, markerFactory, shiftContext) {
                 var segments = textSegmentsInRange(range);
@@ -1213,6 +1217,10 @@ internal fun readerHtmlAnnotationScript(): String = """
                   }
                 } catch (error) {}
                 window.scrollTo({ top: previousY, left: previousX, behavior: 'auto' });
+                // Which highlights carry a note travels with this payload, so the marks are rebuilt
+                // here rather than tracked separately: a note added, edited or cleared arrives as a
+                // new payload and the marks follow without any other hook.
+                if (window.readerScheduleNoteBadgeUpdate) window.readerScheduleNoteBadgeUpdate();
               };
               function scheduleReaderHighlightReconcile() {
                 if (readerHighlightReconcileTimer !== null) window.clearTimeout(readerHighlightReconcileTimer);
@@ -2002,5 +2010,261 @@ internal fun readerHtmlAnnotationScript(): String = """
               window.addEventListener('load', reportVisiblePage, { once: true });
               window.addEventListener('load', function () { readerPaginationLayoutLog('window_load'); }, { once: true });
             })();
+              // Note marks.
+              //
+              // A highlight that carries a note gets the sticky-note glyph pinned to its end. The mark
+              // is an overlay element and never part of the text: wrapping text perturbs justified
+              // line breaking (the HIGHLIGHT_SHIFT logging exists for exactly that), so the mark is
+              // positioned from the highlight's own rects and only ever moves.
+              //
+              // Placement is the rule the Compose surfaces use
+              // (shared/src/commonMain/kotlin/com/aryan/reader/shared/pdf/HighlightNoteBadge.kt):
+              // right-aligned with the highlight's last line, most of the glyph inside the highlight's
+              // fill and the rest in the leading above that line -- never more leading than the line
+              // actually has, so it cannot touch the line above, and it needs no slot of its own.
+              var readerNoteBadges = {};
+              var readerNoteBadgeUpdateHandle = null;
+              /**
+               * Inline `!important`, so no stylesheet can re-size what this layer draws.
+               *
+               * The reader's own CSS and, more importantly, publisher CSS are injected into this same
+               * document and routinely constrain `svg`. Those rules (`max-width: 100% !important`,
+               * `height: auto !important`) beat a plain inline style, and a mark whose containing
+               * block is 0 wide then resolves to 0x0 — in the DOM, painted as nothing. The highlight
+               * markers are pinned the same way for the same reason.
+               */
+              function readerNoteBadgeSetImportant(element, property, value) {
+                try {
+                  element.style.setProperty(property, value, 'important');
+                } catch (error) {
+                  element.style[property] = value;
+                }
+              }
+              function readerNoteBadgeLayer() {
+                var existing = document.getElementById('reader-note-badge-layer');
+                if (existing) return existing;
+                var element = document.createElement('div');
+                element.id = 'reader-note-badge-layer';
+                // Fixed to the viewport so a mark keeps its place through scrolling and pagination
+                // without ever joining the chapter's layout. The layer ignores pointer events; the
+                // marks opt back in so they can be tapped. Above the text but below the selection
+                // menu (99999) and its handles (99998): those must stay tappable over a mark.
+                //
+                // Full viewport rather than 0x0: percentage constraints resolve against the
+                // containing block, and against a 0-wide layer they collapse every mark to nothing.
+                readerNoteBadgeSetImportant(element, 'position', 'fixed');
+                readerNoteBadgeSetImportant(element, 'left', '0');
+                readerNoteBadgeSetImportant(element, 'top', '0');
+                readerNoteBadgeSetImportant(element, 'width', '100%');
+                readerNoteBadgeSetImportant(element, 'height', '100%');
+                readerNoteBadgeSetImportant(element, 'overflow', 'visible');
+                readerNoteBadgeSetImportant(element, 'pointer-events', 'none');
+                readerNoteBadgeSetImportant(element, 'z-index', '9990');
+                document.body.appendChild(element);
+                return element;
+              }
+              function readerNoteBadgeList() {
+                return readerCurrentHighlights.filter(function (highlight) {
+                  return highlight && highlight.hasNote === true && (highlight.id || highlight.cfi);
+                });
+              }
+              function readerCreateNoteBadge(highlight) {
+                var badge = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                badge.setAttribute('viewBox', '0 0 24 24');
+                badge.setAttribute('class', 'reader-note-badge');
+                badge.setAttribute('data-reader-note-highlight-id', highlight.id || highlight.cfi || '');
+                badge.setAttribute('aria-hidden', 'true');
+                readerNoteBadgeSetImportant(badge, 'position', 'absolute');
+                readerNoteBadgeSetImportant(badge, 'left', '0');
+                readerNoteBadgeSetImportant(badge, 'top', '0');
+                readerNoteBadgeSetImportant(badge, 'display', 'none');
+                // Zero-sized until the placement pass sizes it: an svg with a viewBox and no width
+                // renders at the width of its containing block, which for this layer is the page.
+                readerNoteBadgeSetImportant(badge, 'width', '0');
+                readerNoteBadgeSetImportant(badge, 'height', '0');
+                readerNoteBadgeSetImportant(badge, 'overflow', 'visible');
+                readerNoteBadgeSetImportant(badge, 'pointer-events', 'auto');
+                readerNoteBadgeSetImportant(badge, 'margin', '0');
+                readerNoteBadgeSetImportant(badge, 'min-width', '0');
+                readerNoteBadgeSetImportant(badge, 'min-height', '0');
+                readerNoteBadgeSetImportant(badge, 'max-width', 'none');
+                readerNoteBadgeSetImportant(badge, 'max-height', 'none');
+                var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                path.setAttribute('d', '${SHARED_STICKY_NOTE_2_PATH_DATA}');
+                badge.appendChild(path);
+                badge.readerNoteHighlight = highlight;
+                readerNoteBadgeLayer().appendChild(badge);
+                return badge;
+              }
+              // One tap handler for every mark, on the window in the capture phase.
+              //
+              // The document's own tap handler also captures clicks, and a mark overlaps the text it
+              // belongs to: without priority here, the document would resolve the tap by position and
+              // could open the highlight under the glyph — a neighbour's, when the mark sits in the
+              // leading above its own line. The window's capture phase runs first, so a tap on a mark
+              // always opens the mark's highlight, and stops the tap from also starting a selection.
+              window.addEventListener('click', function (event) {
+                var target = event.target;
+                if (!target || !target.closest) return;
+                var badge = target.closest('.reader-note-badge');
+                var current = badge ? badge.readerNoteHighlight : null;
+                if (!current) return;
+                event.preventDefault();
+                event.stopPropagation();
+                if (window.getSelection) window.getSelection().removeAllRanges();
+                var id = current.id || '';
+                if (id && typeof sendReaderHighlightClick === 'function') sendReaderHighlightClick(id);
+              }, true);
+              function readerNoteBadgeFor(highlight) {
+                var key = highlight.id || highlight.cfi;
+                var badge = readerNoteBadges[key];
+                if (!badge) {
+                  badge = readerCreateNoteBadge(highlight);
+                  readerNoteBadges[key] = badge;
+                }
+                badge.readerNoteHighlight = highlight;
+                var path = badge.querySelector('path');
+                if (path) path.setAttribute('fill', highlight.badgeCss || '#000000');
+                return badge;
+              }
+              function readerPaintedEntryFor(highlight) {
+                // The painter keys entries by the highlight's id, or by 'cfi:<cfi>' when it has none,
+                // and re-keys them on adoption. Looking the entry up by id alone would miss the
+                // registry's own ranges and leave the mark measuring a span that may not exist.
+                var id = highlight.id || '';
+                if (id && readerUserHighlightsPainted[id]) return readerUserHighlightsPainted[id];
+                var cfi = (highlight.locator || {}).cfi || highlight.cfi || '';
+                var keys = Object.keys(readerUserHighlightsPainted);
+                for (var i = 0; i < keys.length; i++) {
+                  var entry = readerUserHighlightsPainted[keys[i]];
+                  if (!entry) continue;
+                  if (id && entry.id === id) return entry;
+                  if (cfi && entry.cfi === cfi) return entry;
+                }
+                return null;
+              }
+              function readerNoteRectList(highlight) {
+                var rects = [];
+                var painted = readerPaintedEntryFor(highlight);
+                // Registry-painted highlights have no DOM element to measure: their ranges are kept
+                // by the painter, which is what the tap hit test already reads too.
+                if (painted && painted.ranges) {
+                  painted.ranges.forEach(function (range) {
+                    try {
+                      var list = range.getClientRects ? range.getClientRects() : null;
+                      for (var i = 0; list && i < list.length; i++) {
+                        if (list[i] && list[i].height > 0) rects.push(list[i]);
+                      }
+                    } catch (error) {}
+                  });
+                }
+                if (!rects.length) {
+                  var markers = document.querySelectorAll('span[data-reader-highlight-id]');
+                  for (var m = 0; m < markers.length; m++) {
+                    if (markers[m].getAttribute('data-reader-highlight-id') !== highlight.id) continue;
+                    var markerRects = markers[m].getClientRects ? markers[m].getClientRects() : null;
+                    for (var r = 0; markerRects && r < markerRects.length; r++) {
+                      if (markerRects[r] && markerRects[r].height > 0) rects.push(markerRects[r]);
+                    }
+                  }
+                }
+                return rects;
+              }
+              function readerNoteLineHeight(highlight, rect) {
+                var element = null;
+                var painted = readerPaintedEntryFor(highlight);
+                if (painted && painted.ranges && painted.ranges.length) {
+                  // The mark sits at the highlight's end, so that is the element whose line metrics
+                  // decide its size: a heading and a paragraph in one highlight set different ones.
+                  var container = painted.ranges[painted.ranges.length - 1].endContainer;
+                  element = container && container.nodeType === Node.TEXT_NODE
+                    ? container.parentElement
+                    : container;
+                }
+                if (!element) {
+                  element = document.querySelector('span[data-reader-highlight-id="' + highlight.id + '"]');
+                }
+                var lineHeight = NaN;
+                try {
+                  if (element && window.getComputedStyle) {
+                    lineHeight = parseFloat(window.getComputedStyle(element).lineHeight);
+                  }
+                } catch (error) {}
+                if (!isFinite(lineHeight) || lineHeight <= 0) lineHeight = rect.height * 1.3;
+                return lineHeight;
+              }
+              function readerUpdateNoteBadges() {
+                readerNoteBadgeUpdateHandle = null;
+                if (!document.body) return;
+                var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+                var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+                var seen = {};
+                readerNoteBadgeList().forEach(function (highlight) {
+                  var key = highlight.id || highlight.cfi;
+                  seen[key] = true;
+                  var badge = readerNoteBadgeFor(highlight);
+                  var rects = readerNoteRectList(highlight);
+                  if (!rects.length) {
+                    readerNoteBadgeSetImportant(badge, 'display', 'none');
+                    return;
+                  }
+                  // The highlight's last line: the rect furthest down, right-most among equals.
+                  var last = rects[0];
+                  for (var i = 1; i < rects.length; i++) {
+                    var candidate = rects[i];
+                    var lower = candidate.top > last.top + 0.5;
+                    var sameLineFurtherRight =
+                      Math.abs(candidate.top - last.top) <= 0.5 && candidate.right > last.right;
+                    if (lower || sameLineFurtherRight) last = candidate;
+                  }
+                  var lineHeight = readerNoteLineHeight(highlight, last);
+                  // Only the leading that exists: an inline background box is shorter than its line
+                  // box, and the mark never takes more than the room above the text.
+                  var leadingAbove = Math.max(0, (lineHeight - last.height) / 2);
+                  // Sized from the line, not from the highlight's own inline box, so the mark keeps
+                  // its weight against the type. Same basis as the shared geometry the canvas
+                  // surfaces use.
+                  var size = lineHeight * ${HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION};
+                  if (!isFinite(size) || size < 4) {
+                    readerNoteBadgeSetImportant(badge, 'display', 'none');
+                    return;
+                  }
+                  var protrusion = Math.min(size * ${HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION}, leadingAbove);
+                  var left = last.right - size;
+                  var top = last.top - protrusion;
+                  if (viewportWidth > 0 && (left + size < 0 || left > viewportWidth)) {
+                    readerNoteBadgeSetImportant(badge, 'display', 'none');
+                    return;
+                  }
+                  if (viewportHeight > 0 && (top + size < 0 || top > viewportHeight)) {
+                    readerNoteBadgeSetImportant(badge, 'display', 'none');
+                    return;
+                  }
+                  readerNoteBadgeSetImportant(badge, 'display', 'block');
+                  readerNoteBadgeSetImportant(badge, 'width', size + 'px');
+                  readerNoteBadgeSetImportant(badge, 'height', size + 'px');
+                  readerNoteBadgeSetImportant(badge, 'transform', 'translate(' + left + 'px,' + top + 'px)');
+                });
+                // A highlight whose note was cleared, or is no longer present, loses its mark.
+                Object.keys(readerNoteBadges).forEach(function (key) {
+                  if (seen[key]) return;
+                  var stale = readerNoteBadges[key];
+                  if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+                  delete readerNoteBadges[key];
+                });
+              }
+              window.readerScheduleNoteBadgeUpdate = function () {
+                // setTimeout rather than requestAnimationFrame: the frame callback does not run while
+                // the view is hidden, which would leave the guard set and stop every later update.
+                if (readerNoteBadgeUpdateHandle !== null) return;
+                readerNoteBadgeUpdateHandle = window.setTimeout(readerUpdateNoteBadges, 0);
+              };
+              window.addEventListener('scroll', window.readerScheduleNoteBadgeUpdate, { passive: true });
+              window.addEventListener('resize', window.readerScheduleNoteBadgeUpdate, { passive: true });
+              if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', window.readerScheduleNoteBadgeUpdate, { once: true });
+              } else {
+                window.readerScheduleNoteBadgeUpdate();
+              }
           </script>
 """.trimIndent()

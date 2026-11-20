@@ -1031,7 +1031,8 @@ internal fun PaginatedReaderContent(
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
                                                 userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1085,7 +1086,8 @@ internal fun PaginatedReaderContent(
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
                                                 userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1142,7 +1144,8 @@ internal fun PaginatedReaderContent(
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
                                                 userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1230,7 +1233,8 @@ internal fun PaginatedReaderContent(
                                                     onGeneralTap = onGeneralTapCallback,
                                                     block = block,
                                                     userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                    highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                    noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                     activeSelection = activeSelection,
                                                     onSelectionChange = { sel ->
                                                         activeSelection = sel
@@ -1298,6 +1302,7 @@ internal fun PaginatedReaderContent(
                                                             onGeneralTapCallback = onGeneralTapCallback,
                                                             userHighlights = pageUserHighlights.highlights,
                                                             highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                            noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                             activeSelection = activeSelection,
                                                             onSelectionChange = { sel ->
                                                                 activeSelection =
@@ -1360,6 +1365,7 @@ internal fun PaginatedReaderContent(
                                                             onGeneralTapCallback = onGeneralTapCallback,
                                                             userHighlights = pageUserHighlights.highlights,
                                                             highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                            noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                             activeSelection = activeSelection,
                                                             onSelectionChange = { sel ->
                                                                 activeSelection =
@@ -2654,6 +2660,13 @@ internal fun RenderFlexChildBlock(
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
     highlightRanges: Map<String, List<IntRange>>,
+    /**
+     * Exclusive end offset, in this block's own coordinates, of each highlight that *ends* here. A
+     * highlight that merely passes through this block gets nothing, so a note mark never lands in the
+     * middle of a paragraph it is still crossing. See
+     * [com.aryan.reader.paginatedreader.PaginatedPageHighlights.noteBadgeEndsForBlock].
+     */
+    noteBadgeEndOffsets: Map<String, Int> = emptyMap(),
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -2739,6 +2752,7 @@ internal fun RenderFlexChildBlock(
             block = block,
             userHighlights = userHighlights,
             highlightRanges = highlightRanges,
+            noteBadgeEndOffsets = noteBadgeEndOffsets,
             activeSelection = activeSelection,
             onSelectionChange = onSelectionChange,
             onHighlightClick = onHighlightClick,
@@ -2987,6 +3001,7 @@ internal fun RenderFlexChildBlock(
                         onGeneralTapCallback = onGeneralTapCallback,
                         userHighlights = userHighlights,
                         highlightRanges = highlightRanges,
+                        noteBadgeEndOffsets = noteBadgeEndOffsets,
                         activeSelection = activeSelection,
                         onSelectionChange = onSelectionChange,
                         onHighlightClick = onHighlightClick,

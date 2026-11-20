@@ -178,7 +178,7 @@ internal fun readerDocumentStyles(
              * taps on it. Both layers are transient overlays, never chapter content.
              */
             body.reader-vertical > .chapter,
-            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
+            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-note-badge-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
             body.reader-vertical > .chapter > :not(.reader-content),
             body.reader-vertical > .chapter > .chapter-title,
             body.reader-vertical > .chapter > .reader-content {
@@ -190,7 +190,7 @@ internal fun readerDocumentStyles(
               max-width: none !important;
               margin: 0 !important;
             }
-            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
+            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-note-badge-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
             body.reader-vertical > .chapter > :not(.reader-content),
             body.reader-vertical > .chapter > .chapter-title,
             body.reader-vertical > .chapter > .reader-content {
@@ -199,7 +199,7 @@ internal fun readerDocumentStyles(
               margin-left: auto !important;
               margin-right: auto !important;
             }
-            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
+            body.reader-vertical > :not(.chapter):not(#reader-selection-menu):not(.reader-selection-handle):not(#reader-tts-highlight-layer):not(#reader-note-badge-layer):not(#reader-media-overlay-highlight-layer):not(script):not(style),
             body.reader-vertical > .chapter > :not(.reader-content) {
               position: static !important;
               left: auto !important;

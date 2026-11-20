@@ -92,6 +92,7 @@ import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.getReaderTextureDataUri
 import com.aryan.reader.readerFontDiagnosticSummary
 import com.aryan.reader.shared.fillCssColor
+import com.aryan.reader.shared.highlightNoteBadgeCss
 import com.aryan.reader.shared.highlightFillCss
 import com.aryan.reader.shared.detectFontVariant
 import com.aryan.reader.shared.familyFilenameSignature
@@ -749,6 +750,12 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
         // it the WebView painted stored colours fully opaque and palette colours tinted, which is how
         // the same book showed one highlight at two different tones.
         obj.put("fillCss", highlight.fillCssColor())
+        // The note mark is drawn by the document, so it has to be told which highlights carry one and
+        // which colour to paint it with. The note text itself never leaves the app.
+        if (!highlight.note.isNullOrBlank()) {
+            obj.put("hasNote", true)
+            obj.put("badgeCss", highlight.effectiveArgb.highlightNoteBadgeCss())
+        }
         obj.put("chapterIndex", highlight.chapterIndex)
         obj.put(
             "locator",

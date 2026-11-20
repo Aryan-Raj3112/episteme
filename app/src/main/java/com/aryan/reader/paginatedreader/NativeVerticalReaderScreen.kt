@@ -70,6 +70,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageShader
@@ -157,7 +158,10 @@ import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
+import com.aryan.reader.shared.pdf.HighlightNoteBadgeBounds
+import com.aryan.reader.shared.pdf.highlightNoteBadgeBounds
 import com.aryan.reader.shared.ui.PaintableHighlight
+import com.aryan.reader.shared.ui.drawHighlightNoteBadge
 import com.aryan.reader.shared.ui.highlightHitsAt
 import com.aryan.reader.shared.ui.SharedNativeHighlightPaintPlan
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
@@ -1110,6 +1114,7 @@ fun NativeVerticalReaderScreen(
                                     onGeneralTapCallback = onGeneralTapCallback,
                                     userHighlights = pageUserHighlights.highlights,
                                     highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                    noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                     activeSelection = activeSelection,
                                     onSelectionChange = { activeSelection = it },
                                     onHighlightClick = { highlight, _ ->
@@ -1493,6 +1498,13 @@ internal fun NativeVerticalPage(
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
     highlightRanges: Map<String, List<IntRange>>,
+    /**
+     * Exclusive end offset, in this block's own coordinates, of each highlight that *ends* here. A
+     * highlight that merely passes through this block gets nothing, so a note mark never lands in the
+     * middle of a paragraph it is still crossing. See
+     * [com.aryan.reader.paginatedreader.PaginatedPageHighlights.noteBadgeEndsForBlock].
+     */
+    noteBadgeEndOffsets: Map<String, Int> = emptyMap(),
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -1531,6 +1543,7 @@ internal fun NativeVerticalPage(
                 onGeneralTapCallback = onGeneralTapCallback,
                 userHighlights = userHighlights,
                 highlightRanges = highlightRanges,
+                noteBadgeEndOffsets = noteBadgeEndOffsets,
                 activeSelection = activeSelection,
                 onSelectionChange = onSelectionChange,
                 onHighlightClick = onHighlightClick,
@@ -1563,6 +1576,13 @@ internal fun NativeVerticalContentBlock(
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
     highlightRanges: Map<String, List<IntRange>>,
+    /**
+     * Exclusive end offset, in this block's own coordinates, of each highlight that *ends* here. A
+     * highlight that merely passes through this block gets nothing, so a note mark never lands in the
+     * middle of a paragraph it is still crossing. See
+     * [com.aryan.reader.paginatedreader.PaginatedPageHighlights.noteBadgeEndsForBlock].
+     */
+    noteBadgeEndOffsets: Map<String, Int> = emptyMap(),
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -1634,6 +1654,7 @@ internal fun NativeVerticalContentBlock(
                     onGeneralTapCallback = onGeneralTapCallback,
                     userHighlights = userHighlights,
                     highlightRanges = highlightRanges,
+                    noteBadgeEndOffsets = noteBadgeEndOffsets,
                     activeSelection = activeSelection,
                     onSelectionChange = onSelectionChange,
                     onHighlightClick = onHighlightClick,
@@ -1690,6 +1711,7 @@ internal fun NativeVerticalContentBlock(
                     onGeneralTapCallback = onGeneralTapCallback,
                     userHighlights = userHighlights,
                     highlightRanges = highlightRanges,
+                    noteBadgeEndOffsets = noteBadgeEndOffsets,
                     activeSelection = activeSelection,
                     onSelectionChange = onSelectionChange,
                     onHighlightClick = onHighlightClick,
@@ -2458,6 +2480,13 @@ internal fun TextWithEmphasis(
     block: TextContentBlock,
     highlightRanges: Map<String, List<IntRange>>,
     userHighlights: List<UserHighlight>,
+    /**
+     * Exclusive end offset, in this block's own coordinates, of each highlight that *ends* here. A
+     * highlight that merely passes through this block gets nothing, so a note mark never lands in the
+     * middle of a paragraph it is still crossing. See
+     * [com.aryan.reader.paginatedreader.PaginatedPageHighlights.noteBadgeEndsForBlock].
+     */
+    noteBadgeEndOffsets: Map<String, Int> = emptyMap(),
     activeSelection: PaginatedSelection?,
     @Suppress("unused") onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -2583,6 +2612,50 @@ internal fun TextWithEmphasis(
             Timber.tag("DecorationsDiag").w("Calculated highlight paths for block ${block.blockIndex} in ${duration}ms")
         }
         paths
+    }
+
+    // The note mark. A highlight that carries a note is marked where it ends, at the top of its own
+    // line box and right-aligned with its last character. The line box is what the highlight fills
+    // here, so the mark stays inside the highlight: it needs no room of its own, cannot reach the
+    // line above, and covers only the band above the glyphs it marks.
+    val noteBadgeDraws = remember(textLayoutResult, noteBadgeEndOffsets, highlightById) {
+        val layout = textLayoutResult
+        if (layout == null || noteBadgeEndOffsets.isEmpty()) {
+            emptyList<Pair<HighlightNoteBadgeBounds, Color>>()
+        } else {
+            val layoutTextLength = layout.layoutInput.text.length
+            if (layoutTextLength == 0) {
+                emptyList()
+            } else {
+                noteBadgeEndOffsets.mapNotNull { (highlightId, endOffset) ->
+                    val highlight = highlightById[highlightId]
+                    if (highlight == null || highlight.note.isNullOrBlank()) {
+                        null
+                    } else {
+                        try {
+                            val lastIndex = (endOffset - 1).coerceIn(0, layoutTextLength - 1)
+                            val characterBox = layout.getBoundingBox(lastIndex)
+                            val line = layout.getLineForOffset(lastIndex)
+                            val lineTop = layout.getLineTop(line)
+                            val lineHeight = layout.getLineBottom(line) - lineTop
+                            highlightNoteBadgeBounds(
+                                right = characterBox.right,
+                                lineTop = lineTop,
+                                lineHeight = lineHeight,
+                                // The highlight's fill covers the whole line box, so there is no
+                                // leading above it to borrow: the mark stays inside the fill.
+                                leadingAbove = 0f,
+                            )?.let { bounds ->
+                                bounds to Color(highlight.effectiveArgb or 0xFF000000.toInt())
+                            }
+                        } catch (error: Exception) {
+                            Timber.tag("DecorationsDiag").e(error, "Note badge out of bounds")
+                            null
+                        }
+                    }
+                }
+            }
+        }
     }
 
     val cachedEmphasisMarks = remember(textLayoutResult, text, style.color, density) {
@@ -2758,6 +2831,11 @@ internal fun TextWithEmphasis(
             ?: style.fontSize
     )
 
+    val noteBadgeDrawer = Modifier.drawWithContent {
+        drawContent()
+        noteBadgeDraws.forEach { (bounds, color) -> drawHighlightNoteBadge(bounds, color) }
+    }
+
     val customDrawer = Modifier.drawBehind {
         val drawStartTime = System.currentTimeMillis()
 
@@ -2931,6 +3009,7 @@ internal fun TextWithEmphasis(
             }
         }
         .then(customDrawer)
+        .then(noteBadgeDrawer)
         .pointerInput(displayText, viewConfiguration.touchSlop) {
             awaitEachGesture {
                 awaitReaderLinkTap(

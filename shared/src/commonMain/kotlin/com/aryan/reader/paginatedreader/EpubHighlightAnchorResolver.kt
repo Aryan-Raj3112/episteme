@@ -164,7 +164,14 @@ class EpubChapterTextIndex private constructor(
 
         val quote = highlight.locator.textQuote?.takeIf { it.isNotBlank() } ?: highlight.text
         if (quote.isBlank()) return null
-        if (storedRangeAgreesWithQuote(highlight.locator, quote)) return null
+        // Offsets that agree with the text are only half a position when a structural CFI names the
+        // block but not the characters inside it: each surface then guesses them, and the guesses
+        // differ by however much text precedes the highlight in its own paragraph. Rewriting is what
+        // gets those highlights onto a CFI that says where they start. A highlight with no structural
+        // CFI at all is left alone — it has never claimed to have one, and its offsets still place it.
+        val cfi = highlight.locator.cfi
+        val cfiNeedsStart = !cfi.isNullOrBlank() && cfi.startsWith("/") && !storedCfiNamesStart(cfi)
+        if (storedRangeAgreesWithQuote(highlight.locator, quote) && !cfiNeedsStart) return null
 
         val anchor = resolve(quote) ?: return null
         if (anchor.confidence != HighlightAnchorConfidence.QuoteMatched) return null
@@ -200,14 +207,35 @@ class EpubChapterTextIndex private constructor(
      * The first and last parts carry the start and end offsets of the range, matching the form a selection
      * produces, so the document sees the same shape of CFI whichever wrote it.
      */
+    /**
+     * Whether [cfi] names the highlight's starting characters, not merely the block holding them.
+     *
+     * A structural CFI without a `:offset` part points at an element. Surfaces can only paint a range
+     * from it by guessing where inside that element the highlight begins, and they guess differently:
+     * one starts at the element, the other searches the element for the stored text. This is the test
+     * that decides whether repair has anything to add, so it has to mean "the position is complete"
+     * rather than "the position looks plausible".
+     */
+    private fun storedCfiNamesStart(cfi: String?): Boolean {
+        val value = cfi?.takeIf { it.isNotBlank() } ?: return false
+        if (!value.startsWith("/")) return false
+        val first = value.split('|').firstOrNull() ?: return false
+        return first.substringAfterLast(':', "").toIntOrNull() != null
+    }
+
     private fun anchorCfi(anchor: HighlightAnchor): String? {
         val segments = anchor.segments.filter { !it.blockCfi.isNullOrBlank() }
         if (segments.isEmpty()) return null
-        // One block needs no list. The element alone says where the highlight is, and a lone part would
-        // have to pick between the block's start and its end to carry an offset, and neither is more
-        // right than the element on its own. Keeping the single-block form unchanged also keeps the
-        // document's host matching reading exactly what it read before.
-        if (segments.size == 1) return segments.first().blockCfi
+        // A single block still carries its start offset. The element alone only says *which* block,
+        // and a surface has to guess the characters from there: it either starts at the block's
+        // beginning, painting the paragraph from its first letter, or searches the block for the
+        // stored text and takes the first copy of it. Both are guesses, and the second one is wrong
+        // whenever the passage repeats a phrase from earlier in its own paragraph. The offset is the
+        // part of the position that says where in the block the highlight actually begins, so it is
+        // written for one block exactly as it is for the first block of several.
+        if (segments.size == 1) {
+            return "${segments.first().blockCfi}:${segments.first().localStart}"
+        }
         val lastIndex = segments.lastIndex
         val parts = segments.mapIndexed { index, segment ->
             // The document takes a range's extent from the first part's offset and the last part's, and

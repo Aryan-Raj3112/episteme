@@ -59,6 +59,7 @@ import com.aryan.reader.shared.HighlightColor
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.fillCssColor
+import com.aryan.reader.shared.highlightNoteBadgeCss
 import com.aryan.reader.shared.readerWordStartMatchOffsets
 import com.aryan.reader.shared.readerSearchHtmlToText
 import com.aryan.reader.shared.readerSearchMatchQuote
@@ -473,6 +474,15 @@ internal fun sharedMobileEpubHighlightsApplyScript(highlights: List<UserHighligh
             // stylesheet looked tinted, and the same highlight turned opaque the moment it was
             // recoloured. readerUserHighlightPaintColor prefers this value when it is present.
             append(",\"fillCss\":").append(JsonPrimitive(highlight.fillCssColor()))
+            // The note mark is drawn by the document, so it has to be told which highlights carry a
+            // note and which colour to paint the mark with: the highlight's own colour at full
+            // opacity, because the fill under it is already a tint of that colour. The note text
+            // itself never leaves the app.
+            if (!highlight.note.isNullOrBlank()) {
+                append(",\"hasNote\":true")
+                append(",\"badgeCss\":")
+                    .append(JsonPrimitive(highlight.effectiveArgb.highlightNoteBadgeCss()))
+            }
             append(",\"chapterIndex\":").append(highlight.chapterIndex)
             append(",\"locator\":{")
             val locator = highlight.locator

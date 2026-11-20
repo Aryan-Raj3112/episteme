@@ -137,6 +137,32 @@ class SharedMobileEpubHighlightBridgeTest {
     }
 
     @Test
+    fun `apply script marks highlights that carry a note in the highlight's own colour`() {
+        // The mark is drawn by the document, so the payload has to say which highlights have a note
+        // and which colour to paint the mark with. It is the highlight's own colour at full opacity:
+        // the fill under it is already a tint, and a tint of a tint is unreadable at mark size.
+        val withNote = UserHighlight(
+            id = "h1",
+            cfi = "/4/2",
+            text = "alpha",
+            color = HighlightColor.BLUE,
+            colorArgb = 0xFF1976D2.toInt(),
+            chapterIndex = 0,
+            note = "a thought"
+        )
+        val withoutNote = withNote.copy(id = "h2", note = null)
+
+        val script = sharedMobileEpubHighlightsApplyScript(listOf(withNote, withoutNote))
+
+        assertTrue(script.contains("\"hasNote\":true"))
+        assertTrue(script.contains("\"badgeCss\":\"rgba(25,118,210,1.0)\""))
+        // The note body itself never leaves the app.
+        assertFalse(script.contains("a thought"))
+        // Exactly one highlight carries the mark.
+        assertEquals(1, script.split("\"hasNote\":true").size - 1)
+    }
+
+    @Test
     fun `apply script carries the recoloured name so the webview does not skip the repaint`() {
         // The WebView reconciles by colorId. A recolour that wrote only the ARGB left colorId on the
         // old colour, so the reconcile judged the existing marker current and never repainted it.

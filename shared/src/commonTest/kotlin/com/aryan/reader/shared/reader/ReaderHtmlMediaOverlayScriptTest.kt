@@ -231,10 +231,12 @@ class ReaderHtmlMediaOverlayScriptTest {
         assertTrue(
             styles.contains(
                 "$chapterContentBodyChildSelector:not(.reader-selection-handle)" +
-                    ":not(#reader-tts-highlight-layer):not(#reader-media-overlay-highlight-layer)" +
-                    ":not(script):not(style)"
+                    ":not(#reader-tts-highlight-layer):not(#reader-note-badge-layer)" +
+                    ":not(#reader-media-overlay-highlight-layer):not(script):not(style)"
             ),
-            "both playback layers are reader chrome and belong in the exclusion list together"
+            "every layer the reader owns is chrome and belongs in the exclusion list together; " +
+                "the note marks are the newest, and being laid out as chapter content would pin " +
+                "them into the flowing text"
         )
     }
 

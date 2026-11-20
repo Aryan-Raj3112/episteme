@@ -154,8 +154,10 @@ class EpubHighlightRepairTest {
         val repaired = assertNotNull(index().anchorMissingOffsets(stored))
 
         // "0:4:2:9:1" is a WebView child-index path. Nothing in a paginated page can resolve it, so
-        // keeping it would mean the highlight stayed unaddressable there.
-        assertEquals("/4/0", repaired.locator.cfi)
+        // keeping it would mean the highlight stayed unaddressable there. The replacement names the
+        // block *and* where in it the selection starts, which is what lets a surface place the
+        // characters without guessing.
+        assertEquals("/4/0:0", repaired.locator.cfi)
     }
 
     @Test
@@ -379,6 +381,66 @@ class EpubHighlightRepairTest {
                 "blocks 0..$last: cfi=$cfi segments=${anchor.segments}"
             )
         }
+    }
+
+    /**
+     * A single-block CFI has to say where inside the block the highlight starts.
+     *
+     * The element alone is a guess: one surface paints from the block's first character, another
+     * searches the block for the stored text and takes the first copy of it, which is the wrong copy
+     * whenever the passage repeats a phrase used earlier in the same paragraph. The offset part is
+     * the only thing in the position that names the actual characters.
+     */
+    @Test
+    fun `a repaired cfi names where in the block the highlight starts`() {
+        // "epsilon" begins six characters into "delta epsilon zeta", so the offset is neither zero
+        // nor the block's start, and a reader can tell the two apart.
+        val repaired = assertNotNull(
+            index().anchorMissingOffsets(legacy(ReaderLocator(chapterIndex = 0, textQuote = "epsilon")))
+        )
+
+        val cfi = repaired.locator.cfi.orEmpty()
+        assertEquals(1, cfi.split('|').size)
+        assertEquals("/4/4", cfi.substringBefore(':'))
+        assertEquals("6", cfi.substringAfter(':'))
+    }
+
+    @Test
+    fun `a structural cfi that only names the block is rewritten to name the characters`() {
+        // The shape the previous version of repair wrote: offsets that agree with the text, and a CFI
+        // pointing at the paragraph. Every surface then had to guess the characters, and they guessed
+        // differently, which is how a highlight ended up painted over the start of its paragraph.
+        val start = laidOutStart(2) + "delta ".length
+        val stored = legacy(
+            ReaderLocator(
+                chapterIndex = 0,
+                startOffset = start,
+                endOffset = start + "epsilon".length,
+                textQuote = "epsilon",
+                cfi = "/4/4"
+            )
+        )
+
+        val repaired = assertNotNull(index().anchorMissingOffsets(stored))
+
+        assertEquals("/4/4:6", repaired.locator.cfi)
+        assertEquals(start, repaired.locator.startOffset)
+    }
+
+    @Test
+    fun `a cfi that already names the characters is left alone`() {
+        val start = laidOutStart(2) + "delta ".length
+        val stored = legacy(
+            ReaderLocator(
+                chapterIndex = 0,
+                startOffset = start,
+                endOffset = start + "epsilon".length,
+                textQuote = "epsilon",
+                cfi = "/4/4:6"
+            )
+        )
+
+        assertNull(index().anchorMissingOffsets(stored))
     }
 
     /**
