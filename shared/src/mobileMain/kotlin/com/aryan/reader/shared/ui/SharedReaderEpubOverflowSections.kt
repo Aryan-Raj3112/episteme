@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.Text
@@ -477,7 +478,6 @@ private fun SharedReaderOverflowItem(
     selectedContentDescription: String = "",
 ) {
     val textColor = if (errorColored) MaterialTheme.colorScheme.error else Color.Unspecified
-    val iconTint = if (errorColored) MaterialTheme.colorScheme.error else Color.Unspecified
     DropdownMenuItem(
         text = { Text(label, color = textColor) },
         enabled = enabled,
@@ -489,7 +489,12 @@ private fun SharedReaderOverflowItem(
                 Icon(
                     imageVector = leadingIcon,
                     contentDescription = null,
-                    tint = iconTint,
+                    // Never `Color.Unspecified`: `Icon` reads it as "do not tint" and paints the
+                    // vector's own fill, which is black for every Material icon — that is what made
+                    // these rows black-on-black in a dark reader. Inside this slot `LocalContentColor`
+                    // is already the menu's leading-icon colour; the destructive row keeps its
+                    // error colour.
+                    tint = if (errorColored) MaterialTheme.colorScheme.error else LocalContentColor.current,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -505,7 +510,14 @@ private fun SharedReaderOverflowItem(
         } else {
             null
         },
-        colors = MenuDefaults.itemColors(textColor = textColor)
+        colors = if (errorColored) {
+            MenuDefaults.itemColors(
+                textColor = MaterialTheme.colorScheme.error,
+                leadingIconColor = MaterialTheme.colorScheme.error,
+            )
+        } else {
+            MenuDefaults.itemColors()
+        }
     )
 }
 
