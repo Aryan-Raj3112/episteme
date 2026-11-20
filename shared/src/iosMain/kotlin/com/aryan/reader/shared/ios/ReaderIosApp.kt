@@ -297,6 +297,7 @@ import com.aryan.reader.shared.pdf.SharedPdfReaderSessionKey
 import com.aryan.reader.shared.pdf.PdfAutoScrollProfile
 import com.aryan.reader.shared.pdf.generateIosPdfReflowHtml
 import com.aryan.reader.shared.ui.SharedAppTheme
+import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.ui.SharedAppThemeBottomSheet
 import com.aryan.reader.shared.ui.SharedGoogleFontsBottomSheet
 import com.aryan.reader.shared.ui.SharedGoogleFontsLabels
@@ -7177,6 +7178,9 @@ private fun ReaderIosApp(
                         onRevoke = bridge::requestDeviceRevoke,
                     )
                     IosUtilityScreen.SETTINGS -> {
+                        // iOS does not expose its reduce-motion setting to Compose, so the hub is
+                        // told explicitly; Android reads it from the animator scale.
+                        val settingsReduceMotion = rememberReaderMotionPolicy().reduceMotion
                         val cloudSyncSetupIntent = resolveCloudSyncSetupIntent(
                             isProUser = state.isProUser,
                             providers = bridge.accountState.providers,
@@ -7437,6 +7441,7 @@ private fun ReaderIosApp(
                                     }
                                 }
                             },
+                            reduceMotion = settingsReduceMotion,
                          )
                          }
                     }

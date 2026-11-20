@@ -3,6 +3,7 @@ package com.aryan.reader
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -91,7 +92,9 @@ import com.aryan.reader.shared.readerThemeById
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.ui.SharedSettingsHub
+import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
+import com.aryan.reader.shared.ui.sharedFadeThrough
 import com.aryan.reader.tts.isReaderTtsVoiceChangeLocked
 import com.aryan.reader.tts.loadTtsMode
 import kotlinx.coroutines.launch
@@ -165,6 +168,7 @@ fun SettingsScreen(
     val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
     val ttsState by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
 
+    val reduceMotion = rememberReaderMotionPolicy().reduceMotion
     var query by remember { mutableStateOf("") }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var showAppThemePanel by remember { mutableStateOf(false) }
@@ -317,7 +321,15 @@ fun SettingsScreen(
         topBar = {
             CustomTopAppBar(
                 title = {
-                    Text(stringResolver.sharedText(settingsPage.title))
+                    // The title follows the page, so it fades through with it. Cutting to a new
+                    // title while the body slides made the bar look detached from the content.
+                    AnimatedContent(
+                        targetState = stringResolver.sharedText(settingsPage.title),
+                        transitionSpec = { sharedFadeThrough() },
+                        label = "settings-title"
+                    ) { title ->
+                        Text(title)
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = ::navigateBackFromSettings) {
@@ -369,6 +381,7 @@ fun SettingsScreen(
             onDestinationChange = { settingsDestination = it },
             contentPadding = padding,
             modifier = Modifier.fillMaxSize(),
+            reduceMotion = reduceMotion,
             onAction = { action ->
                 // Folder sync is a secondary settings surface now.  Do not
                 // toggle the legacy local-indexing switch merely by opening

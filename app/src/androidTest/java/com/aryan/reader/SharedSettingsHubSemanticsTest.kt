@@ -1,6 +1,10 @@
 package com.aryan.reader
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -66,6 +70,28 @@ class SharedSettingsHubSemanticsTest {
         }
     }
 
+    /** Drives the hub like a host does, so navigation actually changes the rendered destination. */
+    private fun setStatefulHub(initial: SharedSettingsDestination) {
+        val model = model()
+        composeTestRule.setContent {
+            var destination by remember { mutableStateOf(initial) }
+            MaterialTheme {
+                SharedSettingsHub(
+                    model = model,
+                    query = "",
+                    onQueryChange = {},
+                    readerDefaultSettings = ReaderSettings(),
+                    onReaderDefaultSettingsChange = {},
+                    ttsReplacementPreferences = ReaderTtsReplacementPreferences(),
+                    onTtsReplacementPreferencesChange = {},
+                    onAction = {},
+                    destination = destination,
+                    onDestinationChange = { destination = it },
+                )
+            }
+        }
+    }
+
     @Test
     fun eachToggleRowIsOneToggleableNode() {
         val toggleCount = model()
@@ -120,6 +146,28 @@ class SharedSettingsHubSemanticsTest {
             .onNodeWithText(
                 "Font, theme, and layout changes made inside the reader apply to that book only."
             )
+            .assertExists()
+    }
+
+    @Test
+    fun drillingIntoACategoryAnimatesThePageSwap() {
+        composeTestRule.mainClock.autoAdvance = false
+        setStatefulHub(SharedSettingsDestination.ROOT)
+
+        composeTestRule.onAllNodesWithText("EPUB & Text").onFirst().performClick()
+        composeTestRule.mainClock.advanceTimeByFrame()
+
+        // A hard cut would have replaced the root list on the very next frame. The shared-axis
+        // transition keeps it composed while the category page slides in, which is the whole point
+        // of the animation: the user can see that the page came from the row they tapped.
+        composeTestRule.onAllNodesWithText("PDF & Comics").assertCountEquals(1)
+
+        composeTestRule.mainClock.advanceTimeBy(600)
+        composeTestRule.mainClock.autoAdvance = true
+
+        composeTestRule.onAllNodesWithText("PDF & Comics").assertCountEquals(0)
+        composeTestRule
+            .onNodeWithText("Default text layout, EPUB appearance, and reader tools")
             .assertExists()
     }
 

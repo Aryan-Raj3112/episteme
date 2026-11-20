@@ -504,6 +504,19 @@ class SettingsHubModelsTest {
     }
 
     @Test
+    fun `navigation depth orders every page under its parent`() {
+        // The hub picks the slide direction from this, so a detail page that reported the same
+        // depth as its category would animate a drill-down as if it were a step back.
+        assertEquals(0, SharedSettingsDestination.ROOT.navigationDepth())
+        SharedSettingsDestination.entries
+            .filter { it != SharedSettingsDestination.ROOT }
+            .forEach { destination ->
+                val parent = assertNotNull(destination.parentDestination())
+                assertEquals(parent.navigationDepth() + 1, destination.navigationDepth())
+            }
+    }
+
+    @Test
     fun `every settings action still has a home`() {
         // Guards the promise that the IA change reorganised options without dropping any. Signed-in
         // and signed-out states are unioned because SIGN_IN and SIGN_OUT are mutually exclusive.

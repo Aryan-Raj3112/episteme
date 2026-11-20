@@ -1,5 +1,14 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,14 +70,17 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.CustomFontItem
@@ -87,6 +99,7 @@ import com.aryan.reader.shared.SharedSettingsPageKind
 import com.aryan.reader.shared.SharedSettingsPageModel
 import com.aryan.reader.shared.SharedSettingsSearchResult
 import com.aryan.reader.shared.SharedText
+import com.aryan.reader.shared.navigationDepth
 import com.aryan.reader.shared.parentDestination
 import com.aryan.reader.shared.reader.ReaderSettings
 import com.aryan.reader.shared.ui.SharedSettingsTokens.ChevronSize
@@ -144,7 +157,8 @@ fun SharedSettingsHub(
     onBack: (() -> Unit)? = null,
     destination: SharedSettingsDestination = SharedSettingsDestination.ROOT,
     onDestinationChange: (SharedSettingsDestination) -> Unit = {},
-    contentPadding: PaddingValues = PaddingValues(0.dp)
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    reduceMotion: Boolean = false
 ) {
     val page = remember(model, destination) { model.page(destination) }
     val searchResults = remember(model, query) { model.searchResults(query) }
@@ -168,10 +182,12 @@ fun SharedSettingsHub(
     }
 
     // Built once and shared by both layouts so the compact column and the expanded detail pane can
-    // never diverge in wiring.
-    val detailContent: @Composable () -> Unit = {
+    // never diverge in wiring. It takes the page it renders because a page swap keeps the outgoing
+    // page composed while it animates out, and that page must render its own controls, not the
+    // incoming page's.
+    val detailContent: @Composable (SharedSettingsPageModel) -> Unit = { detailPage ->
         SettingsDetailPage(
-            page = page,
+            page = detailPage,
             settings = readerDefaultSettings,
             onSettingsChange = onReaderDefaultSettingsChange,
             pdfSettings = pdfReaderDefaultSettings,
@@ -221,20 +237,33 @@ fun SharedSettingsHub(
                         .weight(1f)
                         .fillMaxHeight()
                 ) {
-                    if (page.kind == SharedSettingsPageKind.ROOT && query.isBlank()) {
-                        SettingsSelectCategoryPlaceholder(Modifier.align(Alignment.Center))
-                    } else {
-                        SettingsPageBody(
-                            page = page,
-                            query = query,
-                            onQueryChange = onQueryChange,
-                            searchResults = searchResults,
-                            onNavigate = ::navigateTo,
-                            onAction = onAction,
-                            contentGutter = gutter,
-                            detailContent = detailContent,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                    SettingsPageSwap(
+                        model = model,
+                        destination = page.destination,
+                        searching = query.isNotBlank(),
+                        reduceMotion = reduceMotion,
+                        modifier = Modifier.fillMaxSize()
+                    ) { state, statePage ->
+                        if (!state.searching && statePage.kind == SharedSettingsPageKind.ROOT) {
+                            // AnimatedContent is not a Box, so the placeholder gets its own Box
+                            // instead of relying on the enclosing pane's BoxScope alignment.
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                SettingsSelectCategoryPlaceholder(Modifier)
+                            }
+                        } else {
+                            SettingsPageBody(
+                                page = statePage,
+                                searching = state.searching,
+                                query = query,
+                                onQueryChange = onQueryChange,
+                                searchResults = searchResults,
+                                onNavigate = ::navigateTo,
+                                onAction = onAction,
+                                contentGutter = gutter,
+                                detailContent = detailContent,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     }
                 }
             }
@@ -260,40 +289,48 @@ fun SharedSettingsHub(
                     )
                 }
 
-                if (query.isBlank() && page.kind != SharedSettingsPageKind.ROOT) {
-                    item(key = "intro") {
-                        SettingsPageIntro(page = page, modifier = Modifier.padding(bottom = SpaceSm))
-                    }
-                }
-
-                when {
-                    query.isNotBlank() -> item(key = "results") {
-                        SettingsSearchResults(
-                            results = searchResults,
-                            query = query,
-                            onNavigate = ::navigateTo,
-                            onQueryChange = onQueryChange
-                        )
-                    }
-                    page.kind == SharedSettingsPageKind.ROOT -> item(key = "categories") {
-                        SettingsGroupContainer {
-                            page.categories.forEachIndexed { index, category ->
-                                SettingsCategoryRow(
-                                    category = category,
+                // One item, not four: the page body is the thing that animates, so it has to be a
+                // single composable node that AnimatedContent can hold on screen while it exits.
+                item(key = "page") {
+                    SettingsPageSwap(
+                        model = model,
+                        destination = page.destination,
+                        searching = query.isNotBlank(),
+                        reduceMotion = reduceMotion,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { state, statePage ->
+                        Column(verticalArrangement = Arrangement.spacedBy(SpaceSm)) {
+                            if (!state.searching && statePage.kind != SharedSettingsPageKind.ROOT) {
+                                SettingsPageIntro(
+                                    page = statePage,
+                                    modifier = Modifier.padding(bottom = SpaceSm)
+                                )
+                            }
+                            when {
+                                state.searching -> SettingsSearchResults(
+                                    results = searchResults,
+                                    query = query,
+                                    onNavigate = ::navigateTo,
+                                    onQueryChange = onQueryChange
+                                )
+                                statePage.kind == SharedSettingsPageKind.ROOT -> SettingsGroupContainer {
+                                    statePage.categories.forEachIndexed { index, category ->
+                                        SettingsCategoryRow(
+                                            category = category,
+                                            onNavigate = ::navigateTo
+                                        )
+                                        SettingsRowDivider(visible = index != statePage.categories.lastIndex)
+                                    }
+                                }
+                                statePage.kind == SharedSettingsPageKind.CATEGORY -> SettingsCategoryPage(
+                                    page = statePage,
+                                    onAction = onAction,
                                     onNavigate = ::navigateTo
                                 )
-                                SettingsRowDivider(visible = index != page.categories.lastIndex)
+                                else -> detailContent(statePage)
                             }
                         }
                     }
-                    page.kind == SharedSettingsPageKind.CATEGORY -> item(key = "page") {
-                        SettingsCategoryPage(
-                            page = page,
-                            onAction = onAction,
-                            onNavigate = ::navigateTo
-                        )
-                    }
-                    else -> item(key = "detail") { detailContent() }
                 }
             }
         }
@@ -307,13 +344,14 @@ fun SharedSettingsHub(
 @Composable
 private fun SettingsPageBody(
     page: SharedSettingsPageModel,
+    searching: Boolean,
     query: String,
     onQueryChange: (String) -> Unit,
     searchResults: List<SharedSettingsSearchResult>,
     onNavigate: (SharedSettingsDestination) -> Unit,
     onAction: (SharedSettingsAction) -> Unit,
     contentGutter: androidx.compose.ui.unit.Dp,
-    detailContent: @Composable () -> Unit,
+    detailContent: @Composable (SharedSettingsPageModel) -> Unit,
     modifier: Modifier
 ) {
     LazyColumn(
@@ -326,13 +364,13 @@ private fun SettingsPageBody(
         ),
         verticalArrangement = Arrangement.spacedBy(SpaceSm)
     ) {
-        if (query.isBlank() && page.kind != SharedSettingsPageKind.ROOT) {
+        if (!searching && page.kind != SharedSettingsPageKind.ROOT) {
             item(key = "intro") {
                 SettingsPageIntro(page = page, modifier = Modifier.padding(bottom = SpaceSm))
             }
         }
         when {
-            query.isNotBlank() -> item(key = "results") {
+            searching -> item(key = "results") {
                 SettingsSearchResults(
                     results = searchResults,
                     query = query,
@@ -344,9 +382,59 @@ private fun SettingsPageBody(
                 SettingsCategoryPage(page = page, onAction = onAction, onNavigate = onNavigate)
             }
             page.kind == SharedSettingsPageKind.DETAIL -> item(key = "detail") {
-                detailContent()
+                detailContent(page)
             }
         }
+    }
+}
+
+/**
+ * What the hub is showing, as the animation sees it.
+ *
+ * [searching] is part of the identity because the page and the result list are unrelated states:
+ * moving between them must not slide, or the search list would look like a child of the page.
+ */
+private data class SharedSettingsPageKey(
+    val destination: SharedSettingsDestination,
+    val searching: Boolean
+) {
+    val depth: Int get() = destination.navigationDepth()
+}
+
+/**
+ * Holds the outgoing page on screen while the incoming one arrives.
+ *
+ * Both layouts render through this so the compact column and the expanded pane can never animate
+ * differently. Direction comes from [SharedSettingsDestination.navigationDepth]: deeper slides
+ * forward, shallower slides back, and search changes fade through because they are lateral.
+ */
+@Composable
+private fun SettingsPageSwap(
+    model: SharedSettingsHubModel,
+    destination: SharedSettingsDestination,
+    searching: Boolean,
+    reduceMotion: Boolean,
+    modifier: Modifier = Modifier,
+    content: @Composable (SharedSettingsPageKey, SharedSettingsPageModel) -> Unit
+) {
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val key = remember(destination, searching) { SharedSettingsPageKey(destination, searching) }
+
+    AnimatedContent(
+        targetState = key,
+        modifier = modifier,
+        transitionSpec = {
+            when {
+                reduceMotion -> sharedReducedMotionSwap()
+                targetState.searching != initialState.searching -> sharedFadeThrough()
+                // Equal depth counts as forward: two sibling pages are not a step back.
+                else -> sharedAxisSlide(rtl = rtl, forward = targetState.depth >= initialState.depth)
+            }
+        },
+        label = "settings-page"
+    ) { state ->
+        val statePage = remember(model, state.destination) { model.page(state.destination) }
+        content(state, statePage)
     }
 }
 
@@ -398,14 +486,30 @@ private fun SettingsNavRow(
     selected: Boolean,
     onClick: () -> Unit
 ) {
-    Surface(
-        onClick = onClick,
-        shape = MaterialTheme.shapes.small,
-        color = if (selected) {
+    // The selected category is the only thing telling the user which page they are on in the wide
+    // layout, so it eases in rather than flickering between rows.
+    val containerColor by animateColorAsState(
+        targetValue = if (selected) {
             MaterialTheme.colorScheme.secondaryContainer
         } else {
             Color.Transparent
         },
+        animationSpec = tween(SharedMotion.DurationShort4, easing = SharedMotion.Standard),
+        label = "settings-nav-container"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        animationSpec = tween(SharedMotion.DurationShort4, easing = SharedMotion.Standard),
+        label = "settings-nav-content"
+    )
+    Surface(
+        onClick = onClick,
+        shape = MaterialTheme.shapes.small,
+        color = containerColor,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
@@ -419,20 +523,12 @@ private fun SettingsNavRow(
                 icon,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
-                tint = if (selected) {
-                    MaterialTheme.colorScheme.onSecondaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+                tint = contentColor
             )
             Text(
                 text = title,
                 style = MaterialTheme.typography.titleSmall,
-                color = if (selected) {
-                    MaterialTheme.colorScheme.onSecondaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurface
-                }
+                color = contentColor
             )
         }
     }
@@ -476,8 +572,14 @@ private fun SettingsSearchField(
         leadingIcon = {
             Icon(Icons.Default.Search, contentDescription = null)
         },
-        trailingIcon = if (query.isNotEmpty()) {
-            {
+        trailingIcon = {
+            AnimatedVisibility(
+                visible = query.isNotEmpty(),
+                enter = fadeIn(tween(SharedMotion.DurationShort4, easing = SharedMotion.StandardDecelerate)) +
+                    expandHorizontally(tween(SharedMotion.DurationShort4, easing = SharedMotion.StandardDecelerate)),
+                exit = fadeOut(tween(SharedMotion.DurationShort2, easing = SharedMotion.StandardAccelerate)) +
+                    shrinkHorizontally(tween(SharedMotion.DurationShort2, easing = SharedMotion.StandardAccelerate))
+            ) {
                 IconButton(onClick = { onQueryChange("") }) {
                     Icon(
                         Icons.Default.Close,
@@ -485,8 +587,6 @@ private fun SettingsSearchField(
                     )
                 }
             }
-        } else {
-            null
         },
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
         shape = MaterialTheme.shapes.extraLarge,
@@ -663,14 +763,23 @@ private fun SettingsRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        item.value?.let { value ->
-            Text(
-                text = value,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+        if (item.value != null) {
+            // The host owns this text ("Literata · 100% · Justified"), so it changes underneath the
+            // row while the user is elsewhere. Crossfading it keeps the row from appearing to
+            // re-flow when they come back.
+            Crossfade(
+                targetState = item.value,
+                animationSpec = tween(SharedMotion.DurationShort4, easing = SharedMotion.Standard),
+                label = "settings-row-value"
+            ) { value ->
+                Text(
+                    text = value.orEmpty(),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
         when (item.kind) {
             SharedSettingsItemKind.TOGGLE -> Switch(

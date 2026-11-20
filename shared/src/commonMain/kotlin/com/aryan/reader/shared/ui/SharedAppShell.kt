@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -239,7 +241,16 @@ fun SharedAppShell(
                         .fillMaxSize()
                         .background(MaterialTheme.colorScheme.background)
                 ) {
-                    content(selectedTab)
+                    // Tabs are lateral, not hierarchical, so they fade through instead of sliding:
+                    // nothing claims that Settings is "deeper" than the library. It also keeps the
+                    // settings exit from reading as a hard cut on desktop.
+                    Crossfade(
+                        targetState = selectedTab,
+                        animationSpec = tween(SharedMotion.DurationShort4, easing = SharedMotion.Standard),
+                        label = "shell-tab"
+                    ) { tab ->
+                        content(tab)
+                    }
                 }
             }
         }

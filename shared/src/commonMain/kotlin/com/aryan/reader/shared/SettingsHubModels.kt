@@ -98,6 +98,23 @@ enum class SharedSettingsPageKind {
 }
 
 /**
+ * How deep a destination sits in the hub hierarchy.
+ *
+ * Navigation animation uses this to decide direction: a change to a deeper destination slides
+ * forward, a change to a shallower one slides back. It is derived from [parentDestination] rather
+ * than listed, so adding a page can never make the motion point the wrong way.
+ */
+fun SharedSettingsDestination.navigationDepth(): Int {
+    var depth = 0
+    var current: SharedSettingsDestination? = parentDestination()
+    while (current != null) {
+        depth++
+        current = current.parentDestination()
+    }
+    return depth
+}
+
+/**
  * How a row behaves. The renderer derives the affordance from this, so presentation cannot drift
  * from behaviour:
  *

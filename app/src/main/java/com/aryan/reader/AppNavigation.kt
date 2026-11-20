@@ -58,7 +58,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -67,6 +69,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.aryan.reader.shared.ui.sharedScreenEnter
+import com.aryan.reader.shared.ui.sharedScreenExit
 import com.aryan.reader.epubreader.EpubReaderScreen
 import com.aryan.reader.feedback.FeedbackScreen
 import com.aryan.reader.feedback.SupportProjectScreen
@@ -296,7 +300,28 @@ fun AppNavigation(
             }
         }
 
-        NavHost(navController = navController, startDestination = SharedMobileAppDestination.MAIN.route) {
+        // The framework default (fade + 0.92x scale) is what made every exit look like the screen
+        // shrinking into the middle. A shared-axis slide says where the content went instead: a
+        // push arrives from the reading-direction end, a pop leaves towards it. The specs come from
+        // the shared motion tokens, so the hub's internal page changes and the route changes use
+        // the same durations and easing, and predictive back can seek them.
+        val navLayoutDirection = LocalLayoutDirection.current
+        val rtl = navLayoutDirection == LayoutDirection.Rtl
+        NavHost(
+            navController = navController,
+            startDestination = SharedMobileAppDestination.MAIN.route,
+            enterTransition = { sharedScreenEnter(rtl = rtl, forward = true) },
+            exitTransition = { sharedScreenExit(rtl = rtl, forward = true) },
+            popEnterTransition = { sharedScreenEnter(rtl = rtl, forward = false) },
+            popExitTransition = { sharedScreenExit(rtl = rtl, forward = false) },
+            // Predictive back has its own defaults, and its pop exit is `scaleOut(0.7f)` — the
+            // reported "shrinks towards the centre" exit. targetSdk 36 turns predictive back on by
+            // default, so these must match the pop transitions or the gesture preview and the
+            // finish animation would disagree with each other.
+            predictivePopEnterTransition = { sharedScreenEnter(rtl = rtl, forward = false) },
+            predictivePopExitTransition = { sharedScreenExit(rtl = rtl, forward = false) },
+            sizeTransform = null
+        ) {
         composable(SharedMobileAppDestination.MAIN.route) {
             Timber.d("Navigating to Main Screen (${SharedMobileAppDestination.MAIN.route}).")
             if (uiState.isTemporaryExternalOpen) {
