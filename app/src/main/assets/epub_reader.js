@@ -1843,70 +1843,286 @@
         return "JS: Search highlights cleared.";
     };
 
+    // ---- Reader search: one matcher, shared with Kotlin -------------------
+    // The results list, the paginated locator and this painter must agree on
+    // *which* occurrence a hit is, and they only agree when they flatten a
+    // chapter the same way and apply the same rule. Both live in shared/
+    // (ReaderSearchMatching.kt): text in document order, whitespace runs
+    // collapsed to one space, one space at every block boundary, and a match
+    // must start a word. Superscript footnote/endnote markup is exactly where a
+    // per-node substring scan used to disagree with the Kotlin scan, which
+    // shifted every later occurrence by one.
+    var READER_SEARCH_BLOCK_BOUNDARY_TAGS = {
+        address: 1, article: 1, aside: 1, blockquote: 1, br: 1, caption: 1, dd: 1,
+        div: 1, dl: 1, dt: 1, figcaption: 1, figure: 1, footer: 1, h1: 1, h2: 1,
+        h3: 1, h4: 1, h5: 1, h6: 1, header: 1, hr: 1, li: 1, main: 1, nav: 1,
+        ol: 1, p: 1, pre: 1, section: 1, table: 1, td: 1, th: 1, tr: 1, ul: 1
+    };
+    var READER_SEARCH_SKIPPED_TAGS = { script: 1, style: 1, noscript: 1, template: 1 };
+    var READER_SEARCH_WORD_CHAR = /[\p{L}\p{N}]/u;
+
+    /**
+     * Flattens one search root the way the shared scanner does, keeping, for
+     * every emitted character, the text node and offset it came from so matches
+     * can be painted without guessing. Boundary spaces carry no node.
+     */
+    function readerSearchTextIndex(root) {
+        var chars = [];
+        var nodes = [];
+        var offsets = [];
+        var lastWasSpace = true;
+
+        function appendSpace() {
+            if (!chars.length || lastWasSpace) {
+                lastWasSpace = true;
+                return;
+            }
+            chars.push(" ");
+            nodes.push(null);
+            offsets.push(-1);
+            lastWasSpace = true;
+        }
+
+        function visit(node) {
+            if (!node) return;
+            if (node.nodeType === 3) {
+                var value = node.nodeValue || "";
+                for (var i = 0; i < value.length; i++) {
+                    var char = value.charAt(i);
+                    if (/\s/.test(char)) {
+                        appendSpace();
+                        continue;
+                    }
+                    chars.push(char);
+                    nodes.push(node);
+                    offsets.push(i);
+                    lastWasSpace = false;
+                }
+                return;
+            }
+            if (node.nodeType === 1) {
+                var tag = (node.tagName || "").toLowerCase();
+                if (READER_SEARCH_SKIPPED_TAGS[tag]) return;
+                if (tag === "br") {
+                    appendSpace();
+                    return;
+                }
+                var children = node.childNodes;
+                for (var c = 0; c < children.length; c++) visit(children[c]);
+                if (READER_SEARCH_BLOCK_BOUNDARY_TAGS[tag]) appendSpace();
+                return;
+            }
+            var kids = node.childNodes || [];
+            for (var k = 0; k < kids.length; k++) visit(kids[k]);
+        }
+
+        visit(root);
+        return { text: chars.join(""), nodes: nodes, offsets: offsets };
+    }
+
+    /** Word-start match offsets in a [readerSearchTextIndex] text. */
+    function readerSearchMatchOffsets(index, query) {
+        var needle = (query || "").trim().toLowerCase();
+        if (!needle) return [];
+        var haystack = index.text.toLowerCase();
+        var out = [];
+        var lastStart = haystack.length - needle.length;
+        var from = 0;
+        while (from <= lastStart) {
+            var found = haystack.indexOf(needle, from);
+            if (found < 0) break;
+            if (found === 0 || !READER_SEARCH_WORD_CHAR.test(index.text.charAt(found - 1))) {
+                out.push(found);
+            }
+            from = found + 1;
+        }
+        return out;
+    }
+
+    /** Match offsets of a whitespace-insensitive quote, as a prefix hint. */
+    function readerSearchQuoteOffsets(text, quote) {
+        var needle = String(quote || "").toLowerCase().replace(/\s+/g, "");
+        if (!needle) return [];
+        var compact = "";
+        var compactToSource = [];
+        for (var i = 0; i < text.length; i++) {
+            var char = text.charAt(i);
+            if (/\s/.test(char)) continue;
+            compactToSource.push(i);
+            compact += char.toLowerCase();
+        }
+        var out = [];
+        var from = 0;
+        while (from <= compact.length - needle.length) {
+            var found = compact.indexOf(needle, from);
+            if (found < 0) break;
+            out.push(compactToSource[found]);
+            from = found + needle.length;
+        }
+        return out;
+    }
+
+    /**
+     * Which match a hit is. The ordinal is exact while the searched text and
+     * this text are identical; the quote is what keeps a divergent chapter on
+     * the intended occurrence, so prefer the match inside the quoted context
+     * that is nearest the expected ordinal.
+     */
+    function readerSearchTargetOrdinal(starts, indexText, quote, fallbackOrdinal) {
+        if (!starts.length) return -1;
+        if (quote) {
+            var quoteOffsets = readerSearchQuoteOffsets(indexText, quote);
+            var quoteSpan = String(quote).toLowerCase().replace(/\s+/g, "").length;
+            var best = -1;
+            var bestDistance = Number.MAX_VALUE;
+            for (var q = 0; q < quoteOffsets.length; q++) {
+                var quoteStart = quoteOffsets[q];
+                var quoteEnd = quoteStart + quoteSpan;
+                for (var m = 0; m < starts.length; m++) {
+                    if (starts[m] < quoteStart) continue;
+                    if (starts[m] > quoteEnd) break;
+                    var distance = Math.abs(m - fallbackOrdinal);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = m;
+                    }
+                }
+            }
+            if (best >= 0) return best;
+        }
+        if (fallbackOrdinal >= 0 && fallbackOrdinal < starts.length) return fallbackOrdinal;
+        return starts.length - 1;
+    }
+
+    /** Unwraps this root's marks so a repaint never nests or double-counts. */
+    function readerSearchClearRoot(root) {
+        var stale = root && root.querySelectorAll ? root.querySelectorAll("mark.search-highlight") : [];
+        for (var s = 0; s < stale.length; s++) {
+            var el = stale[s], parent = el.parentNode;
+            if (!parent) continue;
+            while (el.firstChild) parent.insertBefore(el.firstChild, el);
+            parent.removeChild(el);
+            parent.normalize();
+        }
+    }
+
+    /** Wraps every match of [query] inside [root]; returns the match count. */
+    function readerSearchPaintRoot(root, query, quote, fallbackOrdinal) {
+        readerSearchClearRoot(root);
+        var index = readerSearchTextIndex(root);
+        var starts = readerSearchMatchOffsets(index, query);
+        if (!starts.length) return { painted: 0, target: null };
+
+        var covered = [];
+        starts.forEach(function (start, ordinal) {
+            var end = start + query.trim().length;
+            var groups = [];
+            for (var i = start; i < end && i < index.nodes.length; i++) {
+                var node = index.nodes[i];
+                if (!node) continue;
+                var group = groups[groups.length - 1];
+                if (group && group.node === node) {
+                    group.end = index.offsets[i] + 1;
+                } else {
+                    groups.push({ node: node, start: index.offsets[i], end: index.offsets[i] + 1 });
+                }
+            }
+            // A match that starts or ends on an inserted boundary space has no
+            // paintable run; it also keeps its own ordinal.
+            if (groups.length) covered.push({ ordinal: ordinal, groups: groups });
+        });
+
+        var byNode = new Map();
+        covered.forEach(function (match) {
+            match.groups.forEach(function (range) {
+                var list = byNode.get(range.node) || [];
+                list.push({ start: range.start, end: range.end, ordinal: match.ordinal });
+                byNode.set(range.node, list);
+            });
+        });
+
+        var painted = 0;
+        byNode.forEach(function (ranges, node) {
+            // Descending within a node: each split shifts only later offsets.
+            if (!node || !node.parentNode) return;
+            ranges.sort(function (a, b) { return b.start - a.start; });
+            for (var r = 0; r < ranges.length; r++) {
+                var range = ranges[r];
+                var value = node.nodeValue || "";
+                var start = Math.max(0, Math.min(range.start, value.length));
+                var end = Math.max(start, Math.min(range.end, value.length));
+                if (end <= start) continue;
+                var after = node.splitText(start);
+                after.splitText(end - start);
+                var mark = document.createElement("mark");
+                mark.className = "search-highlight";
+                mark.setAttribute("data-reader-search-match", String(range.ordinal));
+                after.parentNode.replaceChild(mark, after);
+                mark.appendChild(after);
+                painted++;
+            }
+        });
+
+        var ordinal = readerSearchTargetOrdinal(starts, index.text, quote, fallbackOrdinal);
+        var target = ordinal >= 0 ? root.querySelector('[data-reader-search-match="' + ordinal + '"]') : null;
+        return { painted: painted, target: target };
+    }
+
     window.highlightAllOccurrences = function (query) {
         window.clearSearchHighlights();
         window.CURRENT_SEARCH_QUERY = query;
 
-        if (!query || query.length < 2) return "JS: Query too short for highlighting.";
+        if (!query || query.trim().length < 2) return "JS: Query too short for highlighting.";
 
-        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-        var nodesToModify =[];
-
-        while ((node = walker.nextNode())) {
-            if (node.nodeValue.toLowerCase().includes(query.toLowerCase())) {
-                nodesToModify.push(node);
-            }
-        }
-
-        var regex = new RegExp("(" + query.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&") + ")", "gi");
-
-        nodesToModify.forEach(function (textNode) {
-            if (textNode.parentNode && textNode.parentNode.tagName !== "SCRIPT" && textNode.parentNode.tagName !== "STYLE") {
-                var tempDiv = document.createElement("div");
-                tempDiv.innerHTML = textNode.nodeValue.replace(regex, '<mark class="search-highlight">$1</mark>');
-
-                var parent = textNode.parentNode;
-                while (tempDiv.firstChild) {
-                    parent.insertBefore(tempDiv.firstChild, textNode);
-                }
-                parent.removeChild(textNode);
-            }
+        // Per chunk, not per document: the Kotlin scanner windows one chunk at a
+        // time, so matching per chunk keeps the ordinals identical on both sides.
+        var roots = Array.prototype.slice.call(document.querySelectorAll(".chunk-container"));
+        if (!roots.length) roots = [document.body];
+        var painted = 0;
+        roots.forEach(function (root) {
+            painted += readerSearchPaintRoot(root, query, "", -1).painted;
         });
 
-        return "JS: Highlighted " + document.querySelectorAll("mark.search-highlight").length + " occurrences.";
+        return "JS: Highlighted " + painted + " occurrences.";
     };
 
-    window.scrollToChunkOccurrence = function (chunkIndex, relativeIndex) {
+    window.scrollToChunkOccurrence = function (chunkIndex, relativeIndex, quote) {
         console.log("NavDiag: scrollToChunkOccurrence chunk=" + chunkIndex + ", relativeIdx=" + relativeIndex);
         var chunkDiv = document.querySelector(`.chunk-container[data-chunk-index='${chunkIndex}']`);
 
-        if (chunkDiv) {
-            let wasEmpty = false;
+        if (!chunkDiv) return "JS: Chunk " + chunkIndex + " not found.";
 
-            if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
-                console.log("NavDiag: Chunk was empty, restoring content before scrolling.");
-                chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
-                chunkDiv.style.height = "";
-                wasEmpty = true;
-            }
-
-            var highlights = chunkDiv.querySelectorAll("mark.search-highlight");
-
-            if ((wasEmpty || highlights.length === 0) && window.CURRENT_SEARCH_QUERY) {
-                window.highlightAllOccurrences(window.CURRENT_SEARCH_QUERY);
-                highlights = chunkDiv.querySelectorAll("mark.search-highlight");
-            }
-
-            if (highlights && highlights.length > 0) {
-                var targetIdx = (relativeIndex >= 0 && relativeIndex < highlights.length) ? relativeIndex : 0;
-                highlights[targetIdx].scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-                return "JS: Scrolled to relative occurrence " + targetIdx + " in chunk " + chunkIndex;
-            } else {
-                chunkDiv.scrollIntoView({ behavior: "auto", block: "center" });
-                return "JS: No highlights in chunk, scrolled to chunk center.";
-            }
+        if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+            console.log("NavDiag: Chunk was empty, restoring content before scrolling.");
+            chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
+            chunkDiv.style.height = "";
         }
-        return "JS: Chunk " + chunkIndex + " not found.";
+
+        var target = null;
+        var painted = 0;
+        if (window.CURRENT_SEARCH_QUERY) {
+            // Repaint this chunk first: marks may be missing (fresh chunk) or
+            // stale (query changed), and the quote lookup needs this chunk's own
+            // matches to pick from.
+            var result = readerSearchPaintRoot(chunkDiv, window.CURRENT_SEARCH_QUERY, quote || "", relativeIndex);
+            target = result.target;
+            painted = result.painted;
+        }
+
+        if (target) {
+            target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+            return "JS: Scrolled to quoted occurrence in chunk " + chunkIndex;
+        }
+
+        var highlights = chunkDiv.querySelectorAll("mark.search-highlight");
+        if (highlights.length > 0) {
+            var targetIdx = (relativeIndex >= 0 && relativeIndex < highlights.length) ? relativeIndex : 0;
+            highlights[targetIdx].scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+            return "JS: Scrolled to relative occurrence " + targetIdx + " in chunk " + chunkIndex;
+        }
+
+        chunkDiv.scrollIntoView({ behavior: "auto", block: "center" });
+        return "JS: No highlights in chunk (" + painted + " painted), scrolled to chunk center.";
     };
 
     /**

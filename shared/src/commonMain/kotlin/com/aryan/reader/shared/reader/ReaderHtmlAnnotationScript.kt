@@ -1227,11 +1227,12 @@ internal fun readerHtmlAnnotationScript(): String = """
               };
               // Reader search highlight-all (Android highlightAllOccurrences
               // parity): wraps every occurrence of the query in translucent
-              // marks. Substring-based like the benchmark (not word-start),
-              // theme-tinted from the payload, and scoped to [root] when
-              // provided so freshly loaded virtual chunks repaint only
-              // themselves. Queries shorter than 2 chars only clear, also
-              // like the benchmark.
+              // marks. Word-start, flattened the way the search scanners flatten
+              // (a block boundary separates words, inline markup does not), so
+              // the k-th mark is the k-th result; theme-tinted from the payload,
+              // and scoped to [root] when provided so freshly loaded virtual
+              // chunks repaint only themselves. Queries shorter than 2 chars
+              // only clear, like the benchmark.
               window.readerApplySearchHighlights = function (payload, root) {
                 var query = payload && payload.query ? String(payload.query) : '';
                 var dark = !!(payload && payload.dark);
@@ -1250,40 +1251,76 @@ internal fun readerHtmlAnnotationScript(): String = """
                 var needle = query.trim().toLowerCase();
                 var bg = dark ? 'rgba(0, 90, 156, 0.8)' : 'rgba(160, 207, 241, 0.8)';
                 var fg = dark ? '#E0E0E0' : 'black';
-                var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT, null, false);
-                var node, pending = [];
-                while ((node = walker.nextNode())) {
-                  if (String(node.nodeValue || '').toLowerCase().indexOf(needle) < 0) continue;
-                  var ancestor = node.parentNode, skip = false;
-                  while (ancestor && ancestor !== scope) {
-                    var tag = ancestor.tagName || '';
-                    if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'MARK') { skip = true; break; }
-                    ancestor = ancestor.parentNode;
+                // Word-start, like the results list and the native locator: a
+                // substring-only painter marks occurrences that are not hits, so
+                // the k-th mark stops being the k-th result. The walk tracks the
+                // character before each text node in flattened order, so a
+                // paragraph that follows a letter-ending paragraph still starts
+                // a word while "here<sup>1</sup>" does not.
+                var wordChar = /[\p{L}\p{N}]/u;
+                var boundary = { address: 1, article: 1, aside: 1, blockquote: 1, br: 1, caption: 1, dd: 1,
+                  div: 1, dl: 1, dt: 1, figcaption: 1, figure: 1, footer: 1, h1: 1, h2: 1, h3: 1, h4: 1,
+                  h5: 1, h6: 1, header: 1, hr: 1, li: 1, main: 1, nav: 1, ol: 1, p: 1, pre: 1, section: 1,
+                  table: 1, td: 1, th: 1, tr: 1, ul: 1 };
+                var skipped = { script: 1, style: 1, noscript: 1, template: 1, mark: 1 };
+                var lastChar = null;
+                var matches = [];
+                function visitSearchNode(node) {
+                  if (!node) return;
+                  if (node.nodeType === 3) {
+                    var value = String(node.nodeValue || '');
+                    if (!value.length) return;
+                    var lower = value.toLowerCase();
+                    var from = 0, ranges = [];
+                    while (from <= lower.length - needle.length) {
+                      var found = lower.indexOf(needle, from);
+                      if (found < 0) break;
+                      var before = found === 0 ? lastChar : value.charAt(found - 1);
+                      if (before === null || before === ' ' || !wordChar.test(before)) {
+                        ranges.push({ start: found, end: found + needle.length });
+                      }
+                      from = found + needle.length;
+                    }
+                    if (ranges.length) matches.push({ node: node, ranges: ranges });
+                    var tail = value.charAt(value.length - 1);
+                    lastChar = /\s/.test(tail) ? ' ' : tail;
+                    return;
                   }
-                  if (!skip) pending.push(node);
+                  if (node.nodeType !== 1) return;
+                  var name = String(node.tagName || '').toLowerCase();
+                  if (skipped[name]) return;
+                  if (name === 'br') { lastChar = ' '; return; }
+                  var kids = node.childNodes;
+                  for (var k = 0; k < kids.length; k++) visitSearchNode(kids[k]);
+                  if (boundary[name]) lastChar = ' ';
                 }
+                visitSearchNode(scope);
                 var painted = 0, previousY = window.scrollY;
-                pending.forEach(function (textNode) {
-                  var current = textNode;
-                  while (current && current.nodeValue) {
-                    var value = current.nodeValue;
-                    var found = value.toLowerCase().indexOf(needle);
-                    if (found < 0) break;
-                    var after = current.splitText(found);
-                    var rest = after.splitText(needle.length);
-                    var mark = document.createElement('mark');
-                    mark.className = 'reader-search-all';
-                    mark.style.background = bg;
-                    mark.style.color = fg;
-                    mark.style.borderRadius = '3px';
-                    mark.style.display = 'inline';
-                    mark.style.padding = '0';
-                    mark.style.margin = '0';
-                    after.parentNode.replaceChild(mark, after);
-                    mark.appendChild(after);
-                    painted++;
-                    current = rest;
-                  }
+                matches.forEach(function (entry) {
+                  // Descending inside a node: each split shifts only later offsets.
+                  entry.ranges
+                    .slice()
+                    .sort(function (a, b) { return b.start - a.start; })
+                    .forEach(function (range) {
+                      var textNode = entry.node;
+                      var nodeValue = textNode.nodeValue || '';
+                      var start = Math.max(0, Math.min(range.start, nodeValue.length));
+                      var end = Math.max(start, Math.min(range.end, nodeValue.length));
+                      if (end <= start) return;
+                      var after = textNode.splitText(start);
+                      after.splitText(end - start);
+                      var mark = document.createElement('mark');
+                      mark.className = 'reader-search-all';
+                      mark.style.background = bg;
+                      mark.style.color = fg;
+                      mark.style.borderRadius = '3px';
+                      mark.style.display = 'inline';
+                      mark.style.padding = '0';
+                      mark.style.margin = '0';
+                      after.parentNode.replaceChild(mark, after);
+                      mark.appendChild(after);
+                      painted++;
+                    });
                 });
                 window.scrollTo({ top: previousY, behavior: 'auto' });
                 return painted;

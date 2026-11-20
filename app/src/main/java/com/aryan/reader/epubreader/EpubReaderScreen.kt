@@ -158,6 +158,7 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.audiobook.ACTION_AUDIOBOOK_STOP
 import com.aryan.reader.audiobook.AudiobookPlaybackService
 import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.recordedJumpQuote
 import com.aryan.reader.shared.search.bestReaderResultForLibraryHit
 import com.aryan.reader.shared.search.navigationQuote
 import com.aryan.reader.shared.SummarizationResult
@@ -834,7 +835,18 @@ fun EpubReaderHost(
     val isRequestingRecapCfiState = remember { mutableStateOf(false) }
     var isRequestingRecapCfi by isRequestingRecapCfiState
 
-    val epubSearcher = remember(epubBook) { createEpubSearcher(epubBook) }
+    // Declared before the searcher: search must scan the text the reader
+    // actually renders, replacements included, or every occurrence ordinal
+    // after a replaced phrase points at a neighbouring hit.
+    val bookReplacementPreferencesState = remember { mutableStateOf(loadBookReplacementPreferences(context)) }
+    var bookReplacementPreferences by bookReplacementPreferencesState
+    val epubSearcher = remember(epubBook) {
+        createEpubSearcher(
+            epubBook = epubBook,
+            replacementPreferences = { bookReplacementPreferences },
+            replacementFileId = bookId,
+        )
+    }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val showBarsState = remember { mutableStateOf(false) }
@@ -1250,8 +1262,6 @@ fun EpubReaderHost(
         ttsReplacementPreferences = next
         saveTtsReplacementPreferences(context, next)
     }
-    val bookReplacementPreferencesState = remember { mutableStateOf(loadBookReplacementPreferences(context)) }
-    var bookReplacementPreferences by bookReplacementPreferencesState
     val updateBookReplacementPreferences: (ReaderBookReplacementPreferences) -> Unit = { next ->
         bookReplacementPreferences = next
         saveBookReplacementPreferences(context, next)
@@ -3584,22 +3594,37 @@ fun EpubReaderHost(
                             val targetChunk = parts.getOrNull(1)?.toIntOrNull() ?: 0
                             val occurrence = parts.getOrNull(2)?.toIntOrNull() ?: 0
                             initialScrollTargetForChapter = null
+                            val targetResult = searchState.searchResults.firstOrNull {
+                                it.locationInSource == chapterIndex &&
+                                    it.chunkIndex == targetChunk &&
+                                    it.occurrenceIndexInLocation == occurrence
+                            }
                             if (chapterIndex != null && chapterIndex != currentChapterIndex) {
                                 navigation.chunkTargetOverride = targetChunk.coerceAtLeast(0)
-                                searchHighlightTarget = searchState.searchResults.firstOrNull {
-                                    it.locationInSource == chapterIndex &&
-                                        it.chunkIndex == targetChunk &&
-                                        it.occurrenceIndexInLocation == occurrence
-                                }
+                                searchHighlightTarget = targetResult
                                 currentScrollYPosition = 0
                                 currentScrollHeightValue = 0
                                 currentChapterIndex = chapterIndex
                             } else {
                                 injectVerticalChunksThrough(targetChunk)
-                                webViewRefForTts?.evaluateJavascript(
-                                    "javascript:window.scrollToOccurrence($occurrence);",
-                                    null
-                                )
+                                webViewRefForTts?.let { webView ->
+                                    if (targetResult != null) {
+                                        webView.evaluateJavascript(
+                                            epubSearchHighlightAndScrollScript(
+                                                searchState.searchResults,
+                                                targetResult
+                                            ),
+                                            null
+                                        )
+                                    } else {
+                                        // Results were cleared (process death, new
+                                        // query): the chunk is still the best landing.
+                                        webView.evaluateJavascript(
+                                            "javascript:window.scrollToChunkOccurrence($targetChunk, 0);",
+                                            null
+                                        )
+                                    }
+                                }
                             }
                         }
                         cfi.startsWith("android-locator:") -> {
@@ -3731,7 +3756,7 @@ fun EpubReaderHost(
                     if (recordHistory) {
                         recordEpubJump(
                             scrollLocator.toEpubJumpLocator(pageIndex = pageIdx)
-                                .copy(textQuote = targetResult.snippet.text)
+                                .copy(textQuote = targetResult.recordedJumpQuote())
                         )
                     }
                     requestNativeVerticalLocatorScroll(
@@ -3749,7 +3774,7 @@ fun EpubReaderHost(
                     SharedReaderLocator(
                         chapterIndex = targetResult.locationInSource,
                         cfi = "android-search:${targetResult.chunkIndex}:${targetResult.occurrenceIndexInLocation}",
-                        textQuote = targetResult.snippet.text
+                        textQuote = targetResult.recordedJumpQuote()
                     )
                 )
             }
@@ -3765,7 +3790,7 @@ fun EpubReaderHost(
                     val targetLocator = bookPaginator.getLocatorForPage(pageIdx)
                     if (recordHistory) {
                         paginatedJumpLocatorForPage(pageIdx, targetLocator)
-                            ?.copy(textQuote = targetResult.snippet.text)
+                            ?.copy(textQuote = targetResult.recordedJumpQuote())
                             ?.let { recordEpubJump(it) }
                     }
                     scrollPaginatedToJumpPage(pageIdx, targetLocator)

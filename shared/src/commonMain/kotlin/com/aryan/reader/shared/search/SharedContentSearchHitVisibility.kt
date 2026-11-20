@@ -5,9 +5,10 @@ package com.aryan.reader.shared.search
  *
  * A book's hits are chunk-based, so a chapter that repeats a word produces
  * several near-identical chunks that would each render the same sentence.
- * Collapsing to the best hit per location is what keeps the list readable, and
- * the same location-ranked list backs the expanded view so growing a row never
- * reorders what was already visible.
+ * Collapsing to the best hit per location is what keeps the list readable; the
+ * strongest location stays first so growing a row never reorders what was
+ * already visible, and the rest of the expanded view follows reading order so
+ * the chapter/page labels do not read as shuffled.
  */
 object SharedContentSearchHitVisibility {
 
@@ -17,7 +18,7 @@ object SharedContentSearchHitVisibility {
     /** Ceiling per row; the rest stays behind the "more" affordance. */
     const val EXPANDED_HITS = 8
 
-    /** Hits to render, best-first, one per chapter/page location. */
+    /** Hits to render: the strongest location first, then reading order. */
     fun hitsFor(
         result: SharedGlobalSearchBookResult,
         expanded: Boolean,
@@ -48,8 +49,17 @@ object SharedContentSearchHitVisibility {
     }
 }
 
-private fun List<SharedGlobalSearchHit>.distinctByLocation(): List<SharedGlobalSearchHit> =
-    groupBy { hit -> hit.chapterIndex to hit.pageIndex }
+private fun List<SharedGlobalSearchHit>.distinctByLocation(): List<SharedGlobalSearchHit> {
+    val bestPerLocation = groupBy { hit -> hit.chapterIndex to hit.pageIndex }
         .values
         .map { sameLocation -> sameLocation.maxByOrNull { hit -> hit.score } ?: sameLocation.first() }
-        .sortedByDescending { it.score }
+    // Relevance decides which book ranks where and which hit represents a
+    // location, but a list of one book's matches labelled "Chapter 12 /
+    // Chapter 3" reads as a bug. The strongest hit stays first (so collapsing
+    // never reorders it away); everything behind it follows reading order.
+    val best = bestPerLocation.maxByOrNull { it.score } ?: return emptyList()
+    val rest = bestPerLocation
+        .filter { it !== best }
+        .sortedWith(compareBy({ it.chapterIndex ?: Int.MAX_VALUE }, { it.pageIndex ?: Int.MAX_VALUE }))
+    return listOf(best) + rest
+}

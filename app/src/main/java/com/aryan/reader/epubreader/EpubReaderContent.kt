@@ -25,6 +25,10 @@ import com.aryan.reader.applyBookReplacementsToHtmlDocument
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.LocatorConverter
+import com.aryan.reader.paginatedreader.READER_BODY_CHUNK_NODE_COUNT
+import com.aryan.reader.paginatedreader.readerChunkHtml
+import com.aryan.reader.paginatedreader.sharedEffectiveReaderChunkNodes
+import com.aryan.reader.paginatedreader.sharedReaderBodyChunks
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -72,51 +76,28 @@ internal data class ReaderHtmlChunk(
 
 internal fun splitBodyNodesIntoReaderChunks(
     bodyNodes: List<Node>,
-    chunkSize: Int = 20
-): List<ReaderHtmlChunk> {
-    // Standard Ebooks chapters wrap everything in a single container
-    // (<section id="...">); chunking the wrapper itself collapses the whole
-    // chapter into one 200000px+ chunk and defeats virtualization. Descend
-    // into lone passthrough containers so figures and paragraphs chunk.
-    val effectiveNodes = effectiveReaderChunkNodes(bodyNodes, chunkSize)
-    var elementStartIndex = 0
-    return effectiveNodes.chunked(chunkSize).map { nodes ->
-        val elementCount = nodes.count { it is Element }
+    chunkSize: Int = READER_BODY_CHUNK_NODE_COUNT
+): List<ReaderHtmlChunk> =
+    sharedReaderBodyChunks(bodyNodes, chunkSize).map { chunk ->
         ReaderHtmlChunk(
-            html = nodes.joinToString(separator = "\n") { it.outerHtml() },
-            elementStartIndex = elementStartIndex,
-            elementCount = elementCount
-        ).also {
-            elementStartIndex += elementCount
-        }
+            html = chunk.readerChunkHtml(),
+            elementStartIndex = chunk.elementStartIndex,
+            elementCount = chunk.elementCount
+        )
     }
-}
-
-private val READER_CHUNK_PASSTHROUGH_CONTAINERS = setOf("section", "div", "article", "main", "aside")
 
 /**
  * Unwraps lone structural containers so [splitBodyNodesIntoReaderChunks] and
  * [Element.readerTopLevelBodyChildIndex] agree on what "top level" means.
  * Small wrappers stay intact: zero behavior change for normal chapters.
+ *
+ * Same implementation as the searcher's (shared), so a hit's chunk index is
+ * always a real chunk index in the rendered chapter.
  */
 internal fun effectiveReaderChunkNodes(
     bodyNodes: List<Node>,
-    chunkSize: Int = 20
-): List<Node> {
-    val size = chunkSize.coerceAtLeast(1)
-    var nodes = bodyNodes
-    var guard = 0
-    while (guard++ < 8) {
-        val elements = nodes.filterIsInstance<Element>()
-        if (elements.size != 1) break
-        val container = elements.single()
-        if (container.tagName().lowercase() !in READER_CHUNK_PASSTHROUGH_CONTAINERS) break
-        val innerElements = container.childNodes().filterIsInstance<Element>()
-        if (innerElements.size <= size) break
-        nodes = container.childNodes().toList()
-    }
-    return nodes
-}
+    chunkSize: Int = READER_BODY_CHUNK_NODE_COUNT
+): List<Node> = sharedEffectiveReaderChunkNodes(bodyNodes, chunkSize)
 
 internal fun readerChunkContainerAttributes(
     index: Int,

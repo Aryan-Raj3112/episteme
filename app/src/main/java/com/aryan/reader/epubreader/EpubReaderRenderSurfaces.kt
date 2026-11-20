@@ -921,15 +921,14 @@ internal fun EpubReaderRenderSurfaces(
                                                 delay(200)
                                                 val webView = webViewRefForTts
                                                 if (webView != null) {
-                                                    val escapedQuery = escapeJsString(target.query)
-                                                    val targetChunk = target.chunkIndex
-
-                                                    val relativeIdx = searchState.searchResults
-                                                        .filter { it.locationInSource == target.locationInSource && it.chunkIndex == targetChunk }
-                                                        .indexOf(target)
-                                                        .coerceAtLeast(0)
-
-                                                    val js = "javascript:window.CURRENT_SEARCH_QUERY = '${escapedQuery}'; window.highlightAllOccurrences('${escapedQuery}'); window.scrollToChunkOccurrence($targetChunk, $relativeIdx);"
+                                                    // Chunk-scoped paint + quote-anchored scroll: the
+                                                    // ordinal only survives while the searched and the
+                                                    // painted text are identical, so the hit's context is
+                                                    // what actually finds the occurrence.
+                                                    val js = epubSearchHighlightAndScrollScript(
+                                                        searchState.searchResults,
+                                                        target
+                                                    )
                                                     Timber.tag("NavDiag").d("Executing search highlight/scroll JS: $js")
                                                     webView.evaluateJavascript(js) { result ->
                                                         Timber.tag("NavDiag").d("JS highlight/scroll result: $result")

@@ -1828,6 +1828,15 @@ class BookPaginator(
         findStableLocatorForAnchor(targetChapterIndex, anchor)
     }
 
+    /**
+     * Page for a search hit.
+     *
+     * The locator path already resolves the hit in the paginator's own text
+     * (word-start ordinal, then the hit's quote when the texts drifted), so the
+     * old block-by-block re-count is gone: it used raw substring matching, only
+     * looked at four block types, and silently fell back to the chapter's first
+     * page — which is what made footnote/endnote hits page backwards.
+     */
     suspend fun findStablePageForSearchResult(result: SearchResult): Int? = withContext(Dispatchers.IO) {
         val targetChapterIndex = result.locationInSource
         Timber.i("Finding page for search result: '${result.query}' in chapter $targetChapterIndex")
@@ -1839,46 +1848,10 @@ class BookPaginator(
             }
         }
 
-        val chapterPages = ensureChapterPaginated(targetChapterIndex)
+        // Last resort: land inside the hit's chapter instead of claiming a page.
         val chapterStartPage = ensureStableStartPageForChapter(targetChapterIndex)
-
-        if (chapterPages == null || chapterStartPage == null) {
-            Timber.e("Search result navigation failed: Could not stabilize target chapter $targetChapterIndex.")
-            return@withContext null
-        }
-
-        var targetPageInChapter = 0
-        var occurrenceCount = 0
-
-        pageLoop@ for ((pageIndex, page) in chapterPages.withIndex()) {
-            for (block in page.content) {
-                val textToSearch = when (block) {
-                    is ParagraphBlock -> block.content.text
-                    is HeaderBlock -> block.content.text
-                    is QuoteBlock -> block.content.text
-                    is ListItemBlock -> block.content.text
-                    else -> null
-                }
-
-                if (textToSearch != null) {
-                    var lastIndex = -1
-                    while (true) {
-                        lastIndex = textToSearch.indexOf(result.query, startIndex = lastIndex + 1, ignoreCase = true)
-                        if (lastIndex == -1) break
-
-                        if (occurrenceCount == result.occurrenceIndexInLocation) {
-                            targetPageInChapter = pageIndex
-                            Timber.i("Found search result '${result.query}' at occurrence ${result.occurrenceIndexInLocation} on page $pageIndex of chapter $targetChapterIndex")
-                            break@pageLoop
-                        }
-                        occurrenceCount++
-                    }
-                }
-            }
-        }
-        val finalPageIndex = chapterStartPage + targetPageInChapter
-        Timber.i("Search result found. Final page index: $finalPageIndex")
-        finalPageIndex
+        Timber.w("Search result '${result.query}' unresolved in chapter $targetChapterIndex; landing at chapter start $chapterStartPage")
+        chapterStartPage
     }
 
     suspend fun findStableLocatorForSearchResult(result: SearchResult): Locator? = withContext(Dispatchers.IO) {

@@ -23,35 +23,30 @@ fun flattenTextContentBlocksForSharedNavigation(blocks: List<ContentBlock>): Lis
         }
     }
 
+/**
+ * Resolves a search hit to a paginated block/character target.
+ *
+ * One implementation for every platform: flatten the blocks in reading order
+ * (all text-bearing block types, tables/flex/wrapping included), then resolve by
+ * the hit's word-start ordinal and, when the searched text and this text
+ * disagree, by the hit's own quote. See [readerSearchTarget].
+ */
 fun findSharedNavigationTargetForSearchResult(
     result: SearchResult,
     blocks: List<ContentBlock>
 ): ReaderNavigationTarget? {
-    val query = result.query.takeIf { it.isNotBlank() } ?: return null
-    var occurrenceCount = 0
+    val target = readerSearchTarget(
+        textBlocks = readerSearchTextBlocks(blocks),
+        query = result.query,
+        occurrenceIndexInLocation = result.occurrenceIndexInLocation,
+        matchQuote = result.matchQuote,
+    ) ?: return null
 
-    flattenTextContentBlocksForSharedNavigation(blocks).forEach { block ->
-        val text = block.content.text
-        var lastIndex = -1
-        while (true) {
-            lastIndex = text.indexOf(query, startIndex = lastIndex + 1, ignoreCase = true)
-            if (lastIndex == -1) break
-
-            val isWordStart = lastIndex == 0 || !text[lastIndex - 1].isLetterOrDigit()
-            if (isWordStart) {
-                if (occurrenceCount == result.occurrenceIndexInLocation) {
-                    return ReaderNavigationTarget(
-                        chapterIndex = result.locationInSource,
-                        blockIndex = block.blockIndex,
-                        charOffset = block.startCharOffsetInSource + lastIndex
-                    )
-                }
-                occurrenceCount++
-            }
-        }
-    }
-
-    return null
+    return ReaderNavigationTarget(
+        chapterIndex = result.locationInSource,
+        blockIndex = target.blockIndex,
+        charOffset = target.charOffsetInSource,
+    )
 }
 
 fun findSharedNavigationTargetForAnchor(

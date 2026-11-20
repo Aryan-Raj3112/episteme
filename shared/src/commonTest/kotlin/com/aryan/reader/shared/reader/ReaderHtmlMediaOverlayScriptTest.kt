@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.shared.READER_SEARCH_BLOCK_BOUNDARY_TAGS
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -235,6 +236,48 @@ class ReaderHtmlMediaOverlayScriptTest {
             ),
             "both playback layers are reader chrome and belong in the exclusion list together"
         )
+    }
+
+    /**
+     * The search painter block only: the k-th mark has to be the k-th result.
+     *
+     * The painter used to mark substrings, so "reader" produced two marks and
+     * every ordinal after it pointed one mark earlier than the results list
+     * meant — the same class of desync as the footnote/endnote hits.
+     */
+    private val searchPaintBlock: String = run {
+        val start = script.indexOf("window.readerApplySearchHighlights = function")
+        assertTrue(start > 0, "the search painter is missing from the annotation script")
+        val end = script.indexOf("var readerTtsLocator = null;", start)
+        assertTrue(end > start, "the search painter block has no end, so the extraction is wrong")
+        script.substring(start, end)
+    }
+
+    @Test
+    fun `the search painter matches word starts only`() {
+        assertTrue(searchPaintBlock.contains("wordChar"), "the painter has no word-start rule")
+        assertTrue(
+            searchPaintBlock.contains("found === 0 ? lastChar : value.charAt(found - 1)"),
+            "the word-start rule does not consult the character before the text node"
+        )
+    }
+
+    @Test
+    fun `the search painter flattens block boundaries like the scanner`() {
+        val boundaryTags = searchPaintBlock
+            .substringAfter("var boundary = {")
+            .substringBefore("};")
+            .split(',')
+            .mapNotNull { entry -> entry.substringBefore(':').trim().takeIf { it.isNotEmpty() } }
+            .toSet()
+        assertTrue(
+            boundaryTags.containsAll(READER_SEARCH_BLOCK_BOUNDARY_TAGS),
+            "the painter is missing boundary tags: " +
+                (READER_SEARCH_BLOCK_BOUNDARY_TAGS - boundaryTags)
+        )
+        // Marks are cleared before painting and never walked into.
+        assertTrue(searchPaintBlock.contains("mark.reader-search-all"))
+        assertTrue(searchPaintBlock.contains("mark: 1"))
     }
 
     private companion object {

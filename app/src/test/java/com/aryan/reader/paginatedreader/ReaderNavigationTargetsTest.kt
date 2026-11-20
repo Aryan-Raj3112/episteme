@@ -34,6 +34,60 @@ class ReaderNavigationTargetsTest {
     }
 
     @Test
+    fun `search locator falls back to the hit quote when the ordinal drifted`() {
+        val blocks = listOf(
+            ParagraphBlock(
+                content = AnnotatedString("alpha target beta"),
+                startCharOffsetInSource = 10,
+                blockIndex = 1
+            ),
+            ParagraphBlock(
+                content = AnnotatedString("gamma target delta"),
+                startCharOffsetInSource = 40,
+                blockIndex = 2
+            )
+        )
+        // The searcher counted matches the paginator does not render (a dropped
+        // hidden note), so the ordinal points past the end of this text.
+        val result = SearchResult(
+            locationInSource = 0,
+            locationTitle = "Chapter",
+            snippet = AnnotatedString("gamma target delta"),
+            query = "target",
+            occurrenceIndexInLocation = 7,
+            chunkIndex = 0,
+            matchQuote = "gamma target delta",
+        )
+
+        assertEquals(
+            Locator(chapterIndex = 0, blockIndex = 2, charOffset = 46),
+            findLocatorForSearchResultInBlocks(result, blocks)
+        )
+    }
+
+    @Test
+    fun `search locator without a resolvable quote declines instead of guessing`() {
+        val blocks = listOf(
+            ParagraphBlock(
+                content = AnnotatedString("alpha target beta"),
+                startCharOffsetInSource = 10,
+                blockIndex = 1
+            )
+        )
+        val result = SearchResult(
+            locationInSource = 0,
+            locationTitle = "Chapter",
+            snippet = AnnotatedString("nowhere"),
+            query = "target",
+            occurrenceIndexInLocation = 4,
+            chunkIndex = 0,
+            matchQuote = "text that is not in this chapter",
+        )
+
+        assertEquals(null, findLocatorForSearchResultInBlocks(result, blocks))
+    }
+
+    @Test
     fun `anchor locator resolves string annotation offset`() {
         val content = buildAnnotatedString {
             append("before anchored text")
