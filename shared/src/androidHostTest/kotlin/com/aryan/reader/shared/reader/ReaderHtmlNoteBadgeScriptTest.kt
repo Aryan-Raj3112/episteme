@@ -1,8 +1,12 @@
 package com.aryan.reader.shared.reader
 
 import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
-import com.aryan.reader.shared.ui.SHARED_STICKY_NOTE_2_PATH_DATA
+import com.aryan.reader.shared.ui.HIGHLIGHT_NOTE_MARK_CSS_COLOR
+import com.aryan.reader.shared.ui.HIGHLIGHT_NOTE_MARK_CSS_OUTLINE
+import com.aryan.reader.shared.ui.SHARED_NOTE_MARK_BODY_PATH_DATA
+import com.aryan.reader.shared.ui.SHARED_NOTE_MARK_FOLD_PATH_DATA
 import kotlin.test.Test
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 /**
@@ -33,9 +37,14 @@ class ReaderHtmlNoteBadgeScriptTest {
     }
 
     @Test
-    fun `mark draws the sticky note glyph and follows the highlight colour`() {
-        assertTrue(script.contains(SHARED_STICKY_NOTE_2_PATH_DATA))
-        assertTrue(script.contains("highlight.badgeCss"))
+    fun `mark draws the note plate in the fixed gold with its fold and outline`() {
+        // One colour for every mark and a hairline around it: a mark taking its colour from the
+        // highlight is invisible on a yellow one.
+        assertTrue(script.contains(SHARED_NOTE_MARK_BODY_PATH_DATA))
+        assertTrue(script.contains(SHARED_NOTE_MARK_FOLD_PATH_DATA))
+        assertTrue(script.contains(HIGHLIGHT_NOTE_MARK_CSS_COLOR))
+        assertTrue(script.contains(HIGHLIGHT_NOTE_MARK_CSS_OUTLINE))
+        assertFalse(script.contains("highlight.badgeCss"))
     }
 
     @Test

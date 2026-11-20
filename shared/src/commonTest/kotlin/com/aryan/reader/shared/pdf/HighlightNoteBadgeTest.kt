@@ -14,12 +14,14 @@ import kotlin.test.assertTrue
 class HighlightNoteBadgeTest {
 
     @Test
-    fun `badge is right-aligned with the highlight end`() {
+    fun `badge hangs just past the highlight end`() {
         val bounds = highlightNoteBadgeBounds(right = 200f, lineTop = 100f, lineHeight = 20f)
 
         assertNotNull(bounds)
-        assertEquals(200f, bounds.right)
-        assertEquals(200f - 20f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION, bounds.left)
+        val size = 20f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+        // Hangs past the end by a fraction of its own size, so the last letter stays legible.
+        assertEquals(200f + size * HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION, bounds.right, 0.001f)
+        assertEquals(size, bounds.width, 0.001f)
         assertEquals(bounds.height, bounds.width)
     }
 
@@ -27,30 +29,34 @@ class HighlightNoteBadgeTest {
     fun `badge straddles the line top by the protrusion fraction`() {
         val lineTop = 100f
         val lineHeight = 20f
+        val leading = 8f
         val bounds = highlightNoteBadgeBounds(
             right = 200f,
             lineTop = lineTop,
             lineHeight = lineHeight,
-            leadingAbove = 8f,
+            leadingAbove = leading,
         )
 
         assertNotNull(bounds)
         val size = lineHeight * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
-        assertEquals(lineTop - size * HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION, bounds.top)
-        // Most of the mark is inside the highlight, which is what keeps it attached to it.
-        assertTrue(bounds.bottom - lineTop > lineTop - bounds.top)
+        assertEquals(lineTop - size * HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION, bounds.top, 0.001f)
+        // Most of the mark still sits inside the highlight's fill, which is what keeps it attached to
+        // it, while enough of it is in the leading above to clear the text.
+        assertTrue(bounds.bottom - lineTop > 0f)
+        assertTrue(lineTop - bounds.top <= leading + size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION)
     }
 
     @Test
-    fun `badge stays inside the line when the leading above it is unknown`() {
+    fun `badge lifts only by its own sliver when the leading above it is unknown`() {
         // Nothing describes the line above a single-line PDF highlight, and a line box that already
-        // covers its own leading has no gap to borrow: assuming one would put the mark on the
-        // previous line's descenders.
+        // covers its own leading has no gap to borrow: the mark takes only the sliver of descender
+        // space that the line box above it never fills, never the full protrusion.
         val bounds = highlightNoteBadgeBounds(right = 200f, lineTop = 100f, lineHeight = 20f)
 
         assertNotNull(bounds)
-        assertEquals(100f, bounds.top)
-        assertEquals(100f + 20f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION, bounds.bottom)
+        val size = 20f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+        assertEquals(100f - size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION, bounds.top, 0.001f)
+        assertTrue(size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION < size * HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION)
     }
 
     @Test
@@ -64,8 +70,10 @@ class HighlightNoteBadgeTest {
         )
 
         assertNotNull(bounds)
-        assertEquals(98f, bounds.top)
-        assertEquals(2f, 100f - bounds.top)
+        val size = 24f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+        // The 2px that exist plus the sliver, and no more.
+        assertEquals(100f - (2f + size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION), bounds.top, 0.001f)
+        assertTrue(100f - bounds.top - 2f <= size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION + 0.001f)
     }
 
     @Test
@@ -80,7 +88,9 @@ class HighlightNoteBadgeTest {
         )
 
         assertNotNull(bounds)
-        assertEquals(100f, bounds.top)
+        val size = 24f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+        // A negative gap buys nothing extra: only the sliver remains.
+        assertEquals(100f - size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION, bounds.top, 0.001f)
     }
 
     @Test
@@ -102,10 +112,17 @@ class HighlightNoteBadgeTest {
         val bounds = pdfHighlightNoteBadgeBounds(lines)
 
         assertNotNull(bounds)
-        assertEquals(180f, bounds.right)
+        // Anchored to the last line's end, hanging past it by the shared overhang.
+        assertEquals(
+            180f + 20f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION * HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION,
+            bounds.right,
+            0.001f
+        )
         assertTrue(bounds.top < 130f)
-        // The previous line ends at 120 and the gap above it exists, so nothing is painted over it.
-        assertTrue(bounds.top >= 120f)
+        // The previous line ends at 120; the mark crosses that edge only by its own sliver, which is
+        // descender space rather than type.
+        val size = 20f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+        assertTrue(bounds.top >= 120f - size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION - 0.001f)
     }
 
     @Test
@@ -126,14 +143,18 @@ class HighlightNoteBadgeTest {
         val bounds = pdfHighlightNoteBadgeBoundsForRects(rects)
 
         assertNotNull(bounds)
-        assertEquals(240f, bounds.right)
+        assertEquals(
+            240f + 20f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION * HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION,
+            bounds.right,
+            0.01f
+        )
         assertEquals(20f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION, bounds.width, 0.01f)
     }
 
     @Test
-    fun `mark sits inside the highlight when the caller has no leading to give`() {
-        // The Compose text readers fill the whole line box, so they pass 0: the mark then borrows
-        // nothing from above and covers only the leading inside the highlight itself.
+    fun `mark takes only its sliver when the caller has no leading to give`() {
+        // The Compose text readers fill the whole line box, so they pass 0: the mark borrows nothing
+        // from the leading above and stays within its own height either side of the line's top edge.
         val lineTop = 100f
         val bounds = highlightNoteBadgeBounds(
             right = 200f,
@@ -143,7 +164,8 @@ class HighlightNoteBadgeTest {
         )
 
         assertNotNull(bounds)
-        assertEquals(lineTop, bounds.top)
+        val size = 30f * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+        assertEquals(lineTop - size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION, bounds.top, 0.001f)
         assertTrue(bounds.bottom <= lineTop + 30f)
     }
 }

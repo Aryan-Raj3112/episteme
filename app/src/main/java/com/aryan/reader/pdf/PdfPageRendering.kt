@@ -793,7 +793,7 @@ internal fun PdfHighlightsLayer(
                             badge.bottom.toInt()
                         )
                         if (isVisible(badgeRect)) {
-                            drawHighlightNoteBadge(badge, displayColor.copy(alpha = 1f))
+                            drawHighlightNoteBadge(badge)
                         }
                     }
                 }

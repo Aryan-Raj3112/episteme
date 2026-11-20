@@ -46,16 +46,6 @@ fun Int.highlightFillCss(
         .toRgbaCss()
 }
 
-/**
- * The colour a note mark is drawn in, as an opaque CSS colour.
- *
- * A highlight's fill is a tint of its colour; the mark is the colour itself, at full opacity, so it
- * reads as a denser piece of the highlight it belongs to rather than as an unrelated badge — and so a
- * recolour moves both at once. A tint of a tint is unreadable at mark size, which is why the stored
- * alpha is dropped here instead of applied twice.
- */
-fun Int.highlightNoteBadgeCss(): String = Color(this or 0xFF000000.toInt()).toRgbaCss()
-
 /** [Color] as a CSS `rgba()` string, preserving its alpha. */
 fun Color.toRgbaCss(): String {
     fun channel(value: Float): Int = (value.coerceIn(0f, 1f) * 255f).toInt()

@@ -287,9 +287,7 @@ internal fun DrawScope.drawSharedPdfHighlightAnnotation(
         // stored colour rather than the tinted fill colour, which is what a reader recognises as
         // "this highlight" in the sheet and in the annotation list.
         pdfHighlightNoteBadgeBoundsForRects(bounds.map { it.toPdfHighlightRect(canvasWidth, canvasHeight) })
-            // Opaque: the fill under it is already the tint, so a translucent mark would all but
-            // disappear into the highlight it is marking.
-            ?.let { badge -> drawHighlightNoteBadge(badge, Color(annotation.colorArgb or 0xFF000000.toInt())) }
+            ?.let { badge -> drawHighlightNoteBadge(badge) }
     }
 }
 

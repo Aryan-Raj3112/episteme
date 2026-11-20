@@ -2621,7 +2621,7 @@ internal fun TextWithEmphasis(
     val noteBadgeDraws = remember(textLayoutResult, noteBadgeEndOffsets, highlightById) {
         val layout = textLayoutResult
         if (layout == null || noteBadgeEndOffsets.isEmpty()) {
-            emptyList<Pair<HighlightNoteBadgeBounds, Color>>()
+            emptyList<HighlightNoteBadgeBounds>()
         } else {
             val layoutTextLength = layout.layoutInput.text.length
             if (layoutTextLength == 0) {
@@ -2645,9 +2645,7 @@ internal fun TextWithEmphasis(
                                 // The highlight's fill covers the whole line box, so there is no
                                 // leading above it to borrow: the mark stays inside the fill.
                                 leadingAbove = 0f,
-                            )?.let { bounds ->
-                                bounds to Color(highlight.effectiveArgb or 0xFF000000.toInt())
-                            }
+                            )
                         } catch (error: Exception) {
                             Timber.tag("DecorationsDiag").e(error, "Note badge out of bounds")
                             null
@@ -2833,7 +2831,7 @@ internal fun TextWithEmphasis(
 
     val noteBadgeDrawer = Modifier.drawWithContent {
         drawContent()
-        noteBadgeDraws.forEach { (bounds, color) -> drawHighlightNoteBadge(bounds, color) }
+        noteBadgeDraws.forEach { bounds -> drawHighlightNoteBadge(bounds) }
     }
 
     val customDrawer = Modifier.drawBehind {

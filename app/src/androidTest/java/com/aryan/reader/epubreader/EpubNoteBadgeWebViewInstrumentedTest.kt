@@ -105,16 +105,24 @@ class EpubNoteBadgeWebViewInstrumentedTest {
             "the mark has no size (${rect.getInt(2)}x${rect.getInt(3)}), so nothing is painted"
         }
         // In the highlight's own colour at full opacity, not the tinted fill.
-        assert(mark.getString("fill") == "rgba(56,142,60,1.0)") {
-            "mark colour should be the highlight's own, was ${mark.getString("fill")}"
+        // One fixed gold for every mark, with a hairline outline: a mark taking the
+        // highlight's colour is invisible on a yellow highlight.
+        assert(mark.getString("fill") == "#FFB400") {
+            "mark colour should be the fixed gold, was ${mark.getString("fill")}"
         }
-        // Attached to the highlight: inside its box, ending at its end.
+        assert(mark.getString("stroke").isNotBlank()) { "the mark has no outline to separate it" }
+        // Attached to the highlight: inside its box, with its trailing edge on the highlight's end.
+        // It hangs a fraction of its own width past that end by design, far enough to clear the last
+        // character's shoulder and no further than its own width.
         val spanLeft = spanRect.getInt(0)
         val spanRight = spanLeft + spanRect.getInt(2)
         val markLeft = rect.getInt(0)
         val markRight = markLeft + rect.getInt(2)
-        assert(markLeft >= spanLeft && markRight <= spanRight + 1) {
-            "mark at $markLeft..$markRight is not inside the highlight span $spanLeft..$spanRight"
+        assert(markLeft >= spanLeft && markRight >= spanRight - 1) {
+            "mark at $markLeft..$markRight does not end at the highlight span $spanLeft..$spanRight"
+        }
+        assert(markRight <= spanRight + rect.getInt(2)) {
+            "mark at $markLeft..$markRight overhangs the highlight end $spanRight by more than itself"
         }
         // Near the vertical end of the highlight rather than at the top of the passage.
         val spanTop = spanRect.getInt(1)
@@ -252,6 +260,8 @@ class EpubNoteBadgeWebViewInstrumentedTest {
               display: b.style.display,
               transform: b.style.transform,
               fill: path ? path.getAttribute('fill') : null,
+              stroke: path ? path.getAttribute('stroke') : null,
+              paths: b.querySelectorAll('path').length,
               rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)]
             });
           }

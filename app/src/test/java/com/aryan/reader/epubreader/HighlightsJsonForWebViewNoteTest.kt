@@ -51,26 +51,21 @@ class HighlightsJsonForWebViewNoteTest {
 
         assertEquals(1, Regex("\"hasNote\":true").findAll(json).count())
         assertTrue(json.contains("\"id\":\"with-note\""))
-        assertFalse(json.contains("\"id\":\"without-note\",\"cfi\":\"0:2:1:5:3\",\"text\":\"alpha beta\",\"cssClass\":[^}]*\"hasNote\""))
     }
 
     @Test
-    fun `the mark is painted in the highlight's own colour, opaque`() {
-        val json = highlightsJsonForWebView(listOf(highlight("stored", "a thought")))
-
-        // The stored fill is a tint; the mark is the colour a reader recognises as this highlight,
-        // so its alpha is dropped rather than applied a second time.
-        assertTrue(json.contains("\"badgeCss\":\"rgba(51,102,204,1.0)\""))
-    }
-
-    @Test
-    fun `a palette highlight marks with the palette colour`() {
+    fun `the mark carries no colour of its own`() {
         val json = highlightsJsonForWebView(
-            listOf(highlight("palette", "a thought", colorArgb = null, color = HighlightColor.YELLOW))
+            listOf(
+                highlight("blue", "a thought"),
+                highlight("yellow", "a thought", colorArgb = null, color = HighlightColor.YELLOW),
+            )
         )
 
-        // 0xFFFBC02D
-        assertTrue(json.contains("\"badgeCss\":\"rgba(251,192,45,1.0)\""))
+        // The mark is a fixed gold in the document: taking the highlight's colour made it invisible
+        // on a yellow highlight, which is the one highlight it most needed to stand out from.
+        assertFalse(json.contains("badgeCss"))
+        assertEquals(2, Regex("\"hasNote\":true").findAll(json).count())
     }
 
     @Test

@@ -92,13 +92,16 @@ import com.aryan.reader.copyPlainTextToClipboard
 import com.aryan.reader.getReaderTextureDataUri
 import com.aryan.reader.readerFontDiagnosticSummary
 import com.aryan.reader.shared.fillCssColor
-import com.aryan.reader.shared.highlightNoteBadgeCss
 import com.aryan.reader.shared.highlightFillCss
 import com.aryan.reader.shared.detectFontVariant
 import com.aryan.reader.shared.familyFilenameSignature
 import com.aryan.reader.shared.fontWeightCssDescriptor
 import com.aryan.reader.shared.isReaderExternalHref
 import com.aryan.reader.shared.normalizeReaderHref
+import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION
+import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION
+import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
@@ -530,7 +533,7 @@ private fun String.txtFormatTracePreview(maxLength: Int = 220): String {
 }
 
 private fun getJsToInject(context: Context): String {
-    return try {
+    val assetScript = try {
         context.assets.open("epub_reader.js").use { inputStream ->
             BufferedReader(InputStreamReader(inputStream)).use { reader ->
                 reader.readText()
@@ -540,7 +543,25 @@ private fun getJsToInject(context: Context): String {
         Timber.e(e, "Error reading epub_reader.js from assets")
         "" // Return empty string on error
     }
+    if (assetScript.isEmpty()) return assetScript
+    return noteBadgeConfigJs() + assetScript
 }
+
+/**
+ * The note mark's geometry, handed to the injected script instead of being retyped in it.
+ *
+ * The asset cannot import Kotlin, and a second hand-maintained copy of these fractions is exactly
+ * the kind of drift that makes one surface disagree with the other three. The script reads
+ * `window.__readerNoteBadgeConfig` and falls back to its own literals only if this never ran.
+ */
+private fun noteBadgeConfigJs(): String =
+    "window.__readerNoteBadgeConfig={" +
+        "sizeFraction:${HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION}," +
+        "protrusionFraction:${HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION}," +
+        "overhangFraction:${HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION}," +
+        "liftFraction:${HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION}" +
+        "};"
+
 
 @Suppress("unused")
 class AutoScrollJsBridge(
@@ -750,11 +771,12 @@ internal fun highlightsJsonForWebView(userHighlights: List<UserHighlight>): Stri
         // it the WebView painted stored colours fully opaque and palette colours tinted, which is how
         // the same book showed one highlight at two different tones.
         obj.put("fillCss", highlight.fillCssColor())
-        // The note mark is drawn by the document, so it has to be told which highlights carry one and
-        // which colour to paint it with. The note text itself never leaves the app.
+        // The note mark is drawn by the document, so it has to be told which highlights carry one.
+        // Its colour is fixed (HIGHLIGHT_NOTE_MARK_CSS_COLOR) and lives in the document, not in the
+        // payload: a mark that took its colour from the highlight is invisible on a yellow one. The
+        // note text itself never leaves the app.
         if (!highlight.note.isNullOrBlank()) {
             obj.put("hasNote", true)
-            obj.put("badgeCss", highlight.effectiveArgb.highlightNoteBadgeCss())
         }
         obj.put("chapterIndex", highlight.chapterIndex)
         obj.put(

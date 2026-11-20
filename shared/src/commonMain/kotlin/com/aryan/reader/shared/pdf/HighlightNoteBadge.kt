@@ -30,12 +30,33 @@ data class HighlightNoteBadgeBounds(
 /** Badge edge as a fraction of the line height it is pinned to. */
 const val HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION: Float = 0.56f
 
-/** Fraction of the badge that sits below the line's top edge, inside the highlight's fill. */
-const val HIGHLIGHT_NOTE_BADGE_INSIDE_FRACTION: Float = 0.6f
-
 /** Fraction of the badge that reaches above the line's top edge, into the leading. */
-const val HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION: Float =
-    1f - HIGHLIGHT_NOTE_BADGE_INSIDE_FRACTION
+const val HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION: Float = 0.6f
+
+/** Fraction of the badge that sits below the line's top edge, inside the highlight's fill. */
+const val HIGHLIGHT_NOTE_BADGE_INSIDE_FRACTION: Float =
+    1f - HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION
+
+/**
+ * How far the mark hangs *past* the highlight's end, as a fraction of its own size.
+ *
+ * A mark flush with the end sits on the last character's shoulder and reads as part of the word. Set
+ * back from the end it covers text the highlight already owns; set past the end it leaves that text
+ * legible and sits on the passage's edge, which is where a tag belongs. Small on purpose — enough to
+ * clear the last letter's shoulder, not enough to bury the character after the highlight.
+ */
+const val HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION: Float = 0.6f
+
+/**
+ * How far the mark may reach past the leading it can measure, as a fraction of its own size.
+ *
+ * A line box is taller than the type in it: the bottom of the box above a highlight is descender
+ * space, which most lines never fill. Using a sliver of it lifts the mark clear of the ascenders it
+ * is sitting on, which is what makes it read as a tag on top of the line rather than a chip inside
+ * it. Bounded on purpose — this is the only amount by which a mark is allowed to cross into the
+ * line above, so a descender there is the worst it can meet.
+ */
+const val HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION: Float = 0.3f
 
 /** A badge smaller than this has no recognisable shape left, so nothing is drawn. */
 private const val HIGHLIGHT_NOTE_BADGE_MIN_SIZE_PX: Float = 5f
@@ -44,12 +65,12 @@ private const val HIGHLIGHT_NOTE_BADGE_MIN_SIZE_PX: Float = 5f
  * The badge rect for a highlight whose last line ends at [right] with its top edge at [lineTop].
  *
  * [leadingAbove] is the vertical room between that line and the line above it, when the caller can
- * measure it. It only ever *reduces* the protrusion: the mark must not touch the line above, so it
- * spends that much less of itself in the leading and sits correspondingly deeper inside the fill.
+ * measure it. It bounds the protrusion: the mark spends that much of itself in the leading, then sits
+ * deeper inside the fill rather than reaching further up.
  *
- * With no leading to measure the mark does not protrude at all. The percentage above is only safe
- * once that room is known to exist — a line box that already covers its own leading has no gap, and
- * assuming one would put the mark on the previous line's descenders.
+ * A caller that cannot measure the leading (a line box that already covers its own) gets
+ * [HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION] of the mark's own height as headroom, which is the small lift
+ * that makes it read as a tag rather than a chip.
  */
 fun highlightNoteBadgeBounds(
     right: Float,
@@ -63,16 +84,16 @@ fun highlightNoteBadgeBounds(
     val size = lineHeight * HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
     if (!size.isFinite() || size < HIGHLIGHT_NOTE_BADGE_MIN_SIZE_PX) return null
 
-    val protrusion = if (leadingAbove != null && leadingAbove.isFinite()) {
-        (size * HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION).coerceAtMost(leadingAbove.coerceAtLeast(0f))
-    } else {
-        0f
-    }
+    val measurableLeading = leadingAbove?.takeIf { it.isFinite() }?.coerceAtLeast(0f) ?: 0f
+    val protrusion = (size * HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION)
+        .coerceAtMost(measurableLeading + size * HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION)
+    // Hangs past the end rather than sitting flush on the last character's shoulder.
+    val markRight = right + size * HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION
 
     return HighlightNoteBadgeBounds(
-        left = right - size,
+        left = markRight - size,
         top = lineTop - protrusion,
-        right = right,
+        right = markRight,
         bottom = lineTop - protrusion + size,
     )
 }

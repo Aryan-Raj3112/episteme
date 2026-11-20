@@ -137,10 +137,10 @@ class SharedMobileEpubHighlightBridgeTest {
     }
 
     @Test
-    fun `apply script marks highlights that carry a note in the highlight's own colour`() {
-        // The mark is drawn by the document, so the payload has to say which highlights have a note
-        // and which colour to paint the mark with. It is the highlight's own colour at full opacity:
-        // the fill under it is already a tint, and a tint of a tint is unreadable at mark size.
+    fun `apply script marks every highlight that carries a note`() {
+        // The mark is drawn by the document, so the payload has to say which highlights have a note.
+        // Its colour is fixed there rather than travelling with each highlight: a mark coloured by
+        // its own highlight disappears on a yellow one.
         val withNote = UserHighlight(
             id = "h1",
             cfi = "/4/2",
@@ -155,7 +155,7 @@ class SharedMobileEpubHighlightBridgeTest {
         val script = sharedMobileEpubHighlightsApplyScript(listOf(withNote, withoutNote))
 
         assertTrue(script.contains("\"hasNote\":true"))
-        assertTrue(script.contains("\"badgeCss\":\"rgba(25,118,210,1.0)\""))
+        assertFalse(script.contains("badgeCss"))
         // The note body itself never leaves the app.
         assertFalse(script.contains("a thought"))
         // Exactly one highlight carries the mark.

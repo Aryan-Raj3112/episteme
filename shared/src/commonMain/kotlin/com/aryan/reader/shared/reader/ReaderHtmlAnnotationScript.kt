@@ -1,8 +1,16 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION
 import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION
+import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION
 import com.aryan.reader.shared.pdf.HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION
-import com.aryan.reader.shared.ui.SHARED_STICKY_NOTE_2_PATH_DATA
+import com.aryan.reader.shared.ui.HIGHLIGHT_NOTE_MARK_CSS_COLOR
+import com.aryan.reader.shared.ui.HIGHLIGHT_NOTE_MARK_CSS_FOLD
+import com.aryan.reader.shared.ui.HIGHLIGHT_NOTE_MARK_CSS_OUTLINE
+import com.aryan.reader.shared.ui.HIGHLIGHT_NOTE_MARK_FOLD_OUTLINE_WIDTH
+import com.aryan.reader.shared.ui.HIGHLIGHT_NOTE_MARK_OUTLINE_WIDTH
+import com.aryan.reader.shared.ui.SHARED_NOTE_MARK_BODY_PATH_DATA
+import com.aryan.reader.shared.ui.SHARED_NOTE_MARK_FOLD_PATH_DATA
 
 internal fun readerHtmlAnnotationScript(): String = """
               function wrapRangeTextSegments(range, markerFactory, shiftContext) {
@@ -2089,9 +2097,26 @@ internal fun readerHtmlAnnotationScript(): String = """
                 readerNoteBadgeSetImportant(badge, 'min-height', '0');
                 readerNoteBadgeSetImportant(badge, 'max-width', 'none');
                 readerNoteBadgeSetImportant(badge, 'max-height', 'none');
-                var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                path.setAttribute('d', '${SHARED_STICKY_NOTE_2_PATH_DATA}');
-                badge.appendChild(path);
+                var svgNs = 'http://www.w3.org/2000/svg';
+                // A solid gold plate, not an outline: at this size an outlined glyph loses its
+                // interior strokes and reads as a hairline. One fixed colour on every highlight, a
+                // darker folded corner, and a hairline outline so it separates from a highlight of
+                // the same hue. Every value comes from the shared constants the canvas surfaces draw
+                // with, so the WebView cannot drift from them.
+                var body = document.createElementNS(svgNs, 'path');
+                body.setAttribute('d', '${SHARED_NOTE_MARK_BODY_PATH_DATA}');
+                body.setAttribute('fill', '${HIGHLIGHT_NOTE_MARK_CSS_COLOR}');
+                body.setAttribute('stroke', '${HIGHLIGHT_NOTE_MARK_CSS_OUTLINE}');
+                body.setAttribute('stroke-width', '${HIGHLIGHT_NOTE_MARK_OUTLINE_WIDTH}');
+                body.setAttribute('stroke-linejoin', 'round');
+                badge.appendChild(body);
+                var fold = document.createElementNS(svgNs, 'path');
+                fold.setAttribute('d', '${SHARED_NOTE_MARK_FOLD_PATH_DATA}');
+                fold.setAttribute('fill', '${HIGHLIGHT_NOTE_MARK_CSS_FOLD}');
+                fold.setAttribute('stroke', '${HIGHLIGHT_NOTE_MARK_CSS_OUTLINE}');
+                fold.setAttribute('stroke-width', '${HIGHLIGHT_NOTE_MARK_FOLD_OUTLINE_WIDTH}');
+                fold.setAttribute('stroke-linejoin', 'round');
+                badge.appendChild(fold);
                 badge.readerNoteHighlight = highlight;
                 readerNoteBadgeLayer().appendChild(badge);
                 return badge;
@@ -2123,8 +2148,6 @@ internal fun readerHtmlAnnotationScript(): String = """
                   readerNoteBadges[key] = badge;
                 }
                 badge.readerNoteHighlight = highlight;
-                var path = badge.querySelector('path');
-                if (path) path.setAttribute('fill', highlight.badgeCss || '#000000');
                 return badge;
               }
               function readerPaintedEntryFor(highlight) {
@@ -2229,8 +2252,16 @@ internal fun readerHtmlAnnotationScript(): String = """
                     readerNoteBadgeSetImportant(badge, 'display', 'none');
                     return;
                   }
-                  var protrusion = Math.min(size * ${HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION}, leadingAbove);
-                  var left = last.right - size;
+                  // The leading the line actually has, plus a sliver of descender space in the line
+                  // box above: that sliver is what lifts the mark clear of the ascenders it sits on.
+                  var protrusion = Math.min(
+                    size * ${HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION},
+                    leadingAbove + size * ${HIGHLIGHT_NOTE_BADGE_LIFT_FRACTION}
+                  );
+                  // Hangs past the end rather than sitting flush on the last character's shoulder: it
+                  // sits on the passage's edge and leaves the last letter legible.
+                  var markRight = last.right + size * ${HIGHLIGHT_NOTE_BADGE_END_OVERHANG_FRACTION};
+                  var left = markRight - size;
                   var top = last.top - protrusion;
                   if (viewportWidth > 0 && (left + size < 0 || left > viewportWidth)) {
                     readerNoteBadgeSetImportant(badge, 'display', 'none');

@@ -5054,17 +5054,31 @@
     var LAYER_ID = "reader-note-badge-layer";
     var BADGE_CLASS = "reader-note-badge";
     var SVG_NS = "http://www.w3.org/2000/svg";
-    // Material "sticky_note_2", the same path data the Compose surfaces draw
-    // (com.aryan.reader.shared.ui.SHARED_STICKY_NOTE_2_PATH_DATA).
-    var STICKY_NOTE_PATH =
-        "M5,19h9V14h5V5H5V19Zm0,2q-0.83,0-1.41-0.59T3,19V5Q3,4.17 3.59,3.59T5,3H19q0.83,0 " +
-        "1.41,0.59T21,5V15l-6,6H5Zm2-7V12h5v2H7Zm0-4V8H17v2H7ZM5,19V14V5V19Z";
+    // A page with a folded corner, drawn as a solid plate: the same path data the Compose surfaces
+    // draw (com.aryan.reader.shared.ui.SHARED_NOTE_MARK_BODY_PATH_DATA). Solid rather than outlined
+    // because at thirteen pixels an outlined glyph loses its interior strokes.
+    var NOTE_BODY_PATH = "M5,3 H19 A2,2 0 0 1 21,5 V15 L15,21 H5 A2,2 0 0 1 3,19 V5 A2,2 0 0 1 5,3 Z";
+    var NOTE_FOLD_PATH = "M15,15 L21,15 L15,21 Z";
     var VIEWPORT = 24;
-    // Mirrors HIGHLIGHT_NOTE_BADGE_HEIGHT_FRACTION and HIGHLIGHT_NOTE_BADGE_PROTRUSION_FRACTION in
-    // the shared geometry. A fraction of the line, not a px constant, so the mark keeps its
+    // The mark's own colour, not the highlight's: a mark that inherits the highlight's colour is the
+    // one colour it cannot be seen against, and at this size the difference is not legible anyway.
+    // The same constants the canvas surfaces draw with
+    // (shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/SharedHighlightNoteBadge.kt).
+    var MARK_FILL = "#FFB400";
+    var MARK_FOLD = "#8A5A00";
+    var MARK_OUTLINE = "rgba(58,38,0,0.6)";
+    var MARK_OUTLINE_WIDTH = 1.4;
+    var MARK_FOLD_OUTLINE_WIDTH = 1.1;
+    // Geometry comes from the shared constants, injected by the host before this script runs
+    // (ChapterWebView.getJsToInject), so tuning the mark is one edit in HighlightNoteBadge.kt and
+    // not a number to keep in step by hand. The literals below only cover a page that was somehow
+    // injected without that config. All are fractions of the line, not px, so the mark keeps its
     // relationship to the type when the reader changes size.
-    var SIZE_FRACTION = 0.56;
-    var PROTRUSION_FRACTION = 0.4;
+    var NOTE_BADGE = window.__readerNoteBadgeConfig || {};
+    var SIZE_FRACTION = NOTE_BADGE.sizeFraction || 0.56;
+    var PROTRUSION_FRACTION = NOTE_BADGE.protrusionFraction || 0.6;
+    var END_OVERHANG_FRACTION = NOTE_BADGE.overhangFraction || 0.45;
+    var LIFT_FRACTION = NOTE_BADGE.liftFraction || 0.3;
 
     var badges = {};
     var updateHandle = null;
@@ -5156,9 +5170,22 @@
         setImportant(badge, "min-height", "0");
         setImportant(badge, "max-width", "none");
         setImportant(badge, "max-height", "none");
-        var path = document.createElementNS(SVG_NS, "path");
-        path.setAttribute("d", STICKY_NOTE_PATH);
-        badge.appendChild(path);
+        // Body then fold: a gold plate with a darker corner and a hairline outline. The outline is
+        // what separates the mark from a highlight of a similar hue at thirteen pixels.
+        var body = document.createElementNS(SVG_NS, "path");
+        body.setAttribute("d", NOTE_BODY_PATH);
+        body.setAttribute("fill", MARK_FILL);
+        body.setAttribute("stroke", MARK_OUTLINE);
+        body.setAttribute("stroke-width", String(MARK_OUTLINE_WIDTH));
+        body.setAttribute("stroke-linejoin", "round");
+        badge.appendChild(body);
+        var fold = document.createElementNS(SVG_NS, "path");
+        fold.setAttribute("d", NOTE_FOLD_PATH);
+        fold.setAttribute("fill", MARK_FOLD);
+        fold.setAttribute("stroke", MARK_OUTLINE);
+        fold.setAttribute("stroke-width", String(MARK_FOLD_OUTLINE_WIDTH));
+        fold.setAttribute("stroke-linejoin", "round");
+        badge.appendChild(fold);
         badge.__readerNoteHighlight = highlight;
         // Same bridge call a tap on the highlight itself makes, so the annotation sheet opens in the
         // same state it would from the highlight.
@@ -5194,8 +5221,6 @@
             badges[key] = badge;
         }
         badge.__readerNoteHighlight = highlight;
-        var path = badge.querySelector("path");
-        if (path) path.setAttribute("fill", highlight.badgeCss || "#000000");
         return badge;
     }
 
@@ -5265,8 +5290,16 @@
                 setImportant(badge, "display", "none");
                 return;
             }
-            var protrusion = Math.min(size * PROTRUSION_FRACTION, leadingAbove);
-            var left = rect.right - size;
+            // The leading the line actually has, plus a sliver of descender space in the line box
+            // above: that sliver is what lifts the mark clear of the ascenders it sits on.
+            var protrusion = Math.min(
+                size * PROTRUSION_FRACTION,
+                leadingAbove + size * LIFT_FRACTION
+            );
+            // Hangs past the end rather than sitting flush on the last character's shoulder: it sits
+            // on the passage's edge and leaves the last letter legible.
+            var markRight = rect.right + size * END_OVERHANG_FRACTION;
+            var left = markRight - size;
             var top = rect.top - protrusion;
             if (viewportWidth > 0 && (left + size < 0 || left > viewportWidth)) {
                 setImportant(badge, "display", "none");
