@@ -1,12 +1,15 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -15,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -25,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -39,9 +44,12 @@ import androidx.compose.runtime.remember
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 data class SharedAndroidUnifiedHomeStrings(
@@ -84,6 +92,11 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     contentSearchActive: Boolean = false,
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     contentResultRow: @Composable (T, SharedGlobalSearchBookResult, Boolean, () -> Unit) -> Unit = { _, _, _, _ -> },
+    /** True while the first library scan is still running and there is nothing to show yet. */
+    isLoading: Boolean = false,
+    /** Empty-state action ("Clear filters"), shown only when the host reports one. */
+    emptyActionLabel: String? = null,
+    onEmptyAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val resolvedGridCells = gridCells ?: widthClass.bookGridCells()
@@ -93,102 +106,224 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     val contentResultsById = remember(contentSearchResults) {
         contentSearchResults.associateBy { it.bookId }
     }
-    Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+    Column(modifier.fillMaxSize().padding(horizontal = SharedSpacing.Lg)) {
         openTabsContent()
         continueReading?.let { continueCard(it, Modifier.padding(top = density.continueCardTopGap)) }
-        LazyRow(
+        // The chip row scrolls; the two icon actions are pinned outside it. On a 360dp phone the
+        // chips alone are wider than the screen, so keeping the actions inside the scroller made
+        // advanced filters and the grid/list toggle reachable only by a scroll with no affordance.
+        Row(
             modifier = Modifier.fillMaxWidth().padding(top = density.filterRowTopGap),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
-            contentPadding = PaddingValues(horizontal = 2.dp),
         ) {
-            items(MobileUnifiedLibraryFilter.entries) { option ->
-                FilterChip(selected = filter == option, onClick = { onFilterChange(option) }, label = { Text(strings.filterLabels.getValue(option)) })
+            LazyRow(
+                modifier = Modifier.weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(SharedSpacing.Sm),
+                verticalAlignment = Alignment.CenterVertically,
+                contentPadding = PaddingValues(horizontal = SharedSpacing.Xxs),
+            ) {
+                items(MobileUnifiedLibraryFilter.entries) { option ->
+                    FilterChip(
+                        selected = filter == option,
+                        onClick = { onFilterChange(option) },
+                        label = { Text(strings.filterLabels.getValue(option)) },
+                    )
+                }
+                item {
+                    // Sort is a menu trigger, not a peer of the status filters, so it carries a
+                    // disclosure icon instead of looking like a fifth filter chip.
+                    AssistChip(
+                        onClick = onControls,
+                        label = { Text(sortLabel) },
+                        trailingIcon = {
+                            Icon(
+                                Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                modifier = Modifier.size(FilterChipDefaults.IconSize),
+                            )
+                        },
+                    )
+                }
             }
-            item {
-                // Sort is a menu trigger, not a peer of the status filters, so it carries a
-                // disclosure icon instead of looking like a fifth filter chip.
-                AssistChip(
-                    onClick = onControls,
-                    label = { Text(sortLabel) },
-                    trailingIcon = {
-                        Icon(
-                            Icons.Default.ArrowDropDown,
-                            contentDescription = null,
-                            modifier = Modifier.size(FilterChipDefaults.IconSize),
-                        )
-                    },
-                )
-            }
-            item {
-                BadgedBox(badge = { if (advancedFilterCount > 0) Badge { Text(advancedFilterCount.toString()) } }) {
-                    IconButton(onClick = onAdvancedFilters) { Icon(Icons.Default.FilterList, contentDescription = strings.filterBooks) }
+            BadgedBox(badge = { if (advancedFilterCount > 0) Badge { Text(advancedFilterCount.toString()) } }) {
+                IconButton(onClick = onAdvancedFilters) {
+                    Icon(Icons.Default.FilterList, contentDescription = strings.filterBooks)
                 }
             }
             if (!contentSearchActive) {
-                item {
-                    IconButton(onClick = { onListViewChange(!useListView) }) {
-                        Icon(
-                            if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
-                            contentDescription = if (useListView) strings.gridView else strings.listView,
-                        )
-                    }
+                IconButton(onClick = { onListViewChange(!useListView) }) {
+                    Icon(
+                        if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
+                        contentDescription = if (useListView) strings.gridView else strings.listView,
+                    )
                 }
             }
         }
-        if (books.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(strings.noBooks, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        } else if (contentSearchActive) {
-            Surface(
-                Modifier.weight(1f).padding(top = density.gridCardTopGap),
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-            ) {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(12.dp, density.gridContentTopPadding, 12.dp, 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+        when {
+            isLoading && books.isEmpty() -> {
+                Surface(
+                    Modifier.weight(1f).padding(top = density.gridCardTopGap),
+                    shape = sharedContentSheetShape(),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
                 ) {
-                    // Iterate the merged book list, not the content results:
-                    // books matching metadata only must still appear, just
-                    // without the matched-text body.
-                    items(books, key = itemKey) { book ->
-                        val result = contentResultsById[itemKey(book)]
-                        if (result != null) {
-                            val expanded = expandedBooks[result.bookId] == true
-                            contentResultRow(
-                                book,
-                                result,
-                                expanded,
-                                { expandedBooks[result.bookId] = !expanded },
-                            )
-                        } else {
-                            bookListItem(book)
+                    SharedHomeGridSkeleton(
+                        gridCells = resolvedGridCells,
+                        contentTopPadding = density.gridContentTopPadding,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            }
+
+            books.isEmpty() -> {
+                Column(
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = SharedSpacing.Xl),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        strings.noBooks,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (emptyActionLabel != null && onEmptyAction != null) {
+                        Spacer(Modifier.height(SharedSpacing.Lg))
+                        FilledTonalButton(onClick = onEmptyAction) { Text(emptyActionLabel) }
+                    }
+                }
+            }
+
+            contentSearchActive -> {
+                Surface(
+                    Modifier.weight(1f).padding(top = density.gridCardTopGap),
+                    shape = sharedContentSheetShape(),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            SharedSpacing.Md,
+                            density.gridContentTopPadding,
+                            SharedSpacing.Md,
+                            SharedGridBottomClearance,
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(SharedSpacing.Md),
+                    ) {
+                        // Iterate the merged book list, not the content results: books matching
+                        // metadata only must still appear, just without the matched-text body.
+                        items(books, key = itemKey) { book ->
+                            val result = contentResultsById[itemKey(book)]
+                            if (result != null) {
+                                val expanded = expandedBooks[result.bookId] == true
+                                contentResultRow(
+                                    book,
+                                    result,
+                                    expanded,
+                                    { expandedBooks[result.bookId] = !expanded },
+                                )
+                            } else {
+                                bookListItem(book)
+                            }
                         }
                     }
                 }
             }
-        } else {
-            Surface(
-                Modifier.weight(1f).padding(top = density.gridCardTopGap),
-                shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-            ) {
-                if (useListView) {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(12.dp, density.gridContentTopPadding, 12.dp, 96.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) { items(books, key = itemKey) { bookListItem(it) } }
-                } else {
-                    LazyVerticalGrid(
-                        columns = resolvedGridCells,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(12.dp, density.gridContentTopPadding, 12.dp, 96.dp),
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) { items(books, key = itemKey) { bookCard(it) } }
+
+            else -> {
+                Surface(
+                    Modifier.weight(1f).padding(top = density.gridCardTopGap),
+                    shape = sharedContentSheetShape(),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                ) {
+                    if (useListView) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                SharedSpacing.Md,
+                                density.gridContentTopPadding,
+                                SharedSpacing.Md,
+                                SharedGridBottomClearance,
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(SharedSpacing.Md),
+                        ) { items(books, key = itemKey) { bookListItem(it) } }
+                    } else {
+                        LazyVerticalGrid(
+                            columns = resolvedGridCells,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(
+                                SharedSpacing.Md,
+                                density.gridContentTopPadding,
+                                SharedSpacing.Md,
+                                SharedGridBottomClearance,
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
+                            verticalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
+                        ) { items(books, key = itemKey) { bookCard(it) } }
+                    }
                 }
+            }
+        }
+    }
+}
+
+/** Clearance under the grid so the last row can scroll clear of the FAB. */
+private val SharedGridBottomClearance = 96.dp
+
+/** Two rows of three at compact width; the grid's own column math trims the rest. */
+private const val SharedHomeSkeletonCellCount = 6
+
+/**
+ * The grid sits in a tonal sheet with rounded top corners. M3 has no "top corners only" shape test,
+ * so the token's corner sizes are applied to the top pair and the bottom pair stays square (the
+ * sheet runs off the bottom of the window).
+ */
+@Composable
+private fun sharedContentSheetShape(): Shape {
+    val sheet = MaterialTheme.shapes.extraLarge
+    return RoundedCornerShape(
+        topStart = sheet.topStart,
+        topEnd = sheet.topEnd,
+        bottomEnd = CornerSize(0.dp),
+        bottomStart = CornerSize(0.dp),
+    )
+}
+
+/**
+ * Placeholder grid for a running first scan. It mirrors the real grid's geometry instead of showing
+ * a spinner, so the screen does not jump when the books arrive.
+ */
+@Composable
+private fun SharedHomeGridSkeleton(
+    gridCells: GridCells,
+    contentTopPadding: Dp,
+    modifier: Modifier = Modifier,
+) {
+    val placeholder = MaterialTheme.colorScheme.surfaceContainerHigh
+    LazyVerticalGrid(
+        columns = gridCells,
+        modifier = modifier.testTag("UnifiedLibraryHomeLoading"),
+        contentPadding = PaddingValues(SharedSpacing.Md, contentTopPadding, SharedSpacing.Md, SharedGridBottomClearance),
+        horizontalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
+        verticalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
+        userScrollEnabled = false,
+    ) {
+        items(SharedHomeSkeletonCellCount) {
+            Column(verticalArrangement = Arrangement.spacedBy(SharedSpacing.Sm)) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().aspectRatio(0.74f),
+                    shape = MaterialTheme.shapes.large,
+                    color = placeholder,
+                ) {}
+                Surface(
+                    modifier = Modifier.fillMaxWidth(0.8f).height(12.dp),
+                    shape = MaterialTheme.shapes.small,
+                    color = placeholder,
+                ) {}
+                Surface(
+                    modifier = Modifier.fillMaxWidth(0.5f).height(10.dp),
+                    shape = MaterialTheme.shapes.small,
+                    color = placeholder,
+                ) {}
             }
         }
     }
@@ -217,9 +352,9 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
     if (showSearchField) {
         LaunchedEffect(Unit) { focusRequester.requestFocus() }
     }
-    Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
+    Column(modifier.fillMaxSize().padding(horizontal = SharedSpacing.Lg)) {
         if (showSearchField) {
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().padding(top = SharedSpacing.Md), verticalAlignment = Alignment.CenterVertically) {
                 SharedSearchField(
                     query = query,
                     onQueryChange = onQueryChange,
@@ -232,16 +367,21 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, closeDescription) }
             }
         }
-        Text(resultLabel, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 12.dp, bottom = 8.dp))
+        Text(
+            resultLabel,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = SharedSpacing.Md, bottom = SharedSpacing.Sm),
+        )
         if (books.isEmpty() && query.isNotBlank()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(noResultsLabel, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         } else {
             LazyVerticalGrid(
                 columns = gridCells ?: widthClass.bookGridCells(),
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(bottom = SharedSpacing.Xl),
+                horizontalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
+                verticalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
             ) { items(books, key = itemKey) { bookCard(it) } }
         }
     }

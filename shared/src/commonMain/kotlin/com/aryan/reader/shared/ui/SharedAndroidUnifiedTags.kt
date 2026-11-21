@@ -78,7 +78,7 @@ private fun UnifiedTagCard(
     countLabel: String,
     onClick: () -> Unit,
 ) {
-    val tagColor = Color(tag.color ?: 0xFF64B5F6.toInt())
+    val tagColor = tag.color?.let(::Color) ?: SharedTagColorFallback
     ElevatedCard(
         modifier = Modifier
             .fillMaxWidth()

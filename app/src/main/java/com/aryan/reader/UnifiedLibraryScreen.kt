@@ -132,6 +132,7 @@ import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.ui.AppIcon
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
+import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
 import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
@@ -522,7 +523,19 @@ fun UnifiedLibraryScreen(
             }
         ) {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-    ModalNavigationDrawer(
+    // Wide windows get a permanent rail; phones keep the modal drawer. Both render the same shell
+    // below, so navigation parity is structural rather than duplicated.
+    val showNavigationRail = widthSizeClass != WindowWidthSizeClass.Compact
+    val railModel = remember {
+        com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel(
+            com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities(
+                catalogsAvailable = !BuildConfig.IS_OFFLINE,
+                aiSettingsAvailable = !BuildConfig.IS_OFFLINE,
+            ),
+        )
+    }
+    com.aryan.reader.shared.ui.SharedAdaptiveLibraryNavigation(
+        showRail = showNavigationRail,
         drawerState = drawerState,
         drawerContent = {
             UnifiedLibraryDrawer(
@@ -552,7 +565,32 @@ fun UnifiedLibraryScreen(
                     navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
                 }
             )
-        }
+        },
+        rail = {
+            com.aryan.reader.shared.ui.SharedLibraryNavigationRail(
+                destinations = railModel.destinations,
+                selectedSection = section,
+                appearance = railModel.appearance,
+                onDestinationSelected = { destination ->
+                    selectedShelfId = null
+                    selectedTagId = null
+                    viewModel.setUnifiedLibrarySection(destination.section.persistedValue)
+                },
+                onAppearanceSelected = { appearance ->
+                    // The rail is already on screen, so there is no drawer to close first.
+                    when (appearance) {
+                        com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance.THEME ->
+                            showThemeSheet = true
+                        com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance.SETTINGS ->
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS)
+                        com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance.FONTS ->
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FONTS)
+                        com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance.AI ->
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
+                    }
+                },
+            )
+        },
     ) {
         com.aryan.reader.shared.ui.SharedAndroidUnifiedScaffold(
             section = section,
@@ -566,6 +604,7 @@ fun UnifiedLibraryScreen(
             canPullToSync = canPullToSync,
             isRefreshing = uiState.isRefreshing,
             onRefresh = viewModel::refreshLibrary,
+            reduceMotion = rememberReaderMotionPolicy().reduceMotion,
             bottomBar = {
                 val activeTtsBook = ttsPlayback.bookId
                     ?.takeIf { ttsPlayback.playbackSource == "AUDIOBOOK_TTS" }
@@ -699,7 +738,11 @@ fun UnifiedLibraryScreen(
                     UnifiedLibraryTopBar(
                         section = section,
                         selectedShelf = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } },
-                        onMenuClick = { scope.launch { drawerState.open() } },
+                        onMenuClick = if (showNavigationRail) {
+                            null
+                        } else {
+                            { scope.launch { drawerState.open() } }
+                        },
                         onBackFromShelf = navigateBack,
                         titleOverride = if (section == UnifiedLibrarySection.TAGS) {
                             selectedTagId?.let { id -> uiState.allTags.find { it.id == id }?.name }
@@ -748,6 +791,12 @@ fun UnifiedLibraryScreen(
                     onCloseAllTabs = { showCloseAllTabsDialog = true },
                     searchInsideFiles = uiState.libraryState.searchInsideFiles,
                     contentSearchResults = uiState.libraryState.contentSearchResults,
+                    isLoading = uiState.isLoading,
+                    clearFiltersLabel = stringResource(R.string.action_clear_filters),
+                    onClearFilters = {
+                        filter = UnifiedLibraryFilter.ALL
+                        query = ""
+                    },
                 )
                 UnifiedLibrarySection.AUDIOBOOKS -> AudiobooksLibrarySection(
                     modifier = Modifier.padding(padding),

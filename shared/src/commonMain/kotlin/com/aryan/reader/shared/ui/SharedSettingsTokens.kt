@@ -12,12 +12,12 @@ import androidx.compose.ui.unit.dp
  * there", which is what lets the look stay coherent when one of them changes.
  */
 internal object SharedSettingsTokens {
-    val SpaceXxs = 2.dp
-    val SpaceXs = 4.dp
-    val SpaceSm = 8.dp
-    val SpaceMd = 12.dp
-    val SpaceLg = 16.dp
-    val SpaceXl = 24.dp
+    val SpaceXxs = SharedSpacing.Xxs
+    val SpaceXs = SharedSpacing.Xs
+    val SpaceSm = SharedSpacing.Sm
+    val SpaceMd = SharedSpacing.Md
+    val SpaceLg = SharedSpacing.Lg
+    val SpaceXl = SharedSpacing.Xl
 
     val ScreenGutterCompact = 16.dp
     val ScreenGutterExpanded = 24.dp

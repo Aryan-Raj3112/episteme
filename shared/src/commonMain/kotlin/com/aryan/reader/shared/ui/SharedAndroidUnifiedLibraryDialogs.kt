@@ -14,6 +14,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,9 +53,17 @@ fun SharedAndroidUnifiedLibraryControlsSheet(
         Column(Modifier.fillMaxWidth().padding(24.dp).navigationBarsPadding()) {
             Text(strings.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
             Text(strings.readStatus, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                MobileUnifiedLibraryFilter.entries.forEach { option ->
-                    FilterChip(selected = currentFilter == option, onClick = { onFilterChanged(option) }, label = { Text(strings.filterLabels.getValue(option)) })
+            // Read status is one exclusive choice out of four, so it is a segmented button group:
+            // chips made it look like a multi-select next to the sort chips below.
+            val statusOptions = MobileUnifiedLibraryFilter.entries
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                statusOptions.forEachIndexed { index, option ->
+                    SegmentedButton(
+                        selected = currentFilter == option,
+                        onClick = { onFilterChanged(option) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = statusOptions.size),
+                        label = { Text(strings.filterLabels.getValue(option), maxLines = 1) },
+                    )
                 }
             }
             Text(strings.sort, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 20.dp, bottom = 8.dp))

@@ -178,7 +178,8 @@ internal fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Uni
 internal fun UnifiedLibraryTopBar(
     section: UnifiedLibrarySection,
     selectedShelf: Shelf?,
-    onMenuClick: () -> Unit,
+    /** Null when navigation is already on screen (the wide-window rail). */
+    onMenuClick: (() -> Unit)?,
     onBackFromShelf: () -> Unit,
     uiState: ReaderScreenState,
     onAccountClick: () -> Unit,
@@ -274,6 +275,10 @@ internal fun UnifiedLibraryHome(
     searchInsideFiles: Boolean = false,
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     onContentHitClick: (RecentFileItem, SharedGlobalSearchHit, String) -> Unit = { _, _, _ -> },
+    isLoading: Boolean = false,
+    /** Host-provided "clear filters" affordance for an empty, filtered view. */
+    clearFiltersLabel: String? = null,
+    onClearFilters: (() -> Unit)? = null,
 ) {
     // Content search replaces the grid: one row per matching book, its matched
     // text, and an expand affordance for the rest of that book's matches.
@@ -357,6 +362,13 @@ internal fun UnifiedLibraryHome(
             WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
             else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
         },
+        isLoading = isLoading,
+        // Only a filtered/searched view has something to clear; a genuinely empty library keeps the
+        // import path (the empty state) instead of offering a button that would do nothing.
+        emptyActionLabel = clearFiltersLabel.takeIf {
+            onClearFilters != null && (filter != UnifiedLibraryFilter.ALL || query.isNotBlank())
+        },
+        onEmptyAction = onClearFilters,
         modifier = modifier,
     )
 }

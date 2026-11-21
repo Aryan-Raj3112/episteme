@@ -150,7 +150,7 @@ fun SharedMobileTagSheet(
                     }
                 }
                 items(filteredTags, key = { it.id }) { tag ->
-                    val tagColor = Color(tag.color ?: 0xFF64B5F6.toInt())
+                    val tagColor = tag.color?.let(::Color) ?: SharedTagColorFallback
                     val checkedCount = tagCounts[tag.id] ?: 0
                     val toggleState = when (checkedCount) {
                         0 -> ToggleableState.Off

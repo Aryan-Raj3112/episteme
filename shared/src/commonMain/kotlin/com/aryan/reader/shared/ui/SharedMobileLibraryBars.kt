@@ -8,10 +8,11 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -148,16 +149,26 @@ fun SharedMobileEmptyLibrary(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(
-            imageVector = Icons.Outlined.FileOpen,
-            contentDescription = readerString("content_desc_no_files_icon", "No files"),
-            modifier = Modifier.size(80.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(24.dp))
+        // The icon sits in a tonal container: a bare 80dp outline on the background reads as an
+        // illustration that failed to load rather than as the screen's empty state.
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.size(96.dp),
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Outlined.FileOpen,
+                    contentDescription = readerString("content_desc_no_files_icon", "No files"),
+                    modifier = Modifier.size(40.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(SharedSpacing.Xl))
         Text(
             text = title,
-            style = MaterialTheme.typography.headlineSmall,
+            style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
         )
@@ -169,7 +180,7 @@ fun SharedMobileEmptyLibrary(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (actionLabel != null) {
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(SharedSpacing.Xxl))
             FilledTonalButton(onClick = onAction) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
@@ -177,7 +188,7 @@ fun SharedMobileEmptyLibrary(
             }
         }
         if (secondaryActionLabel != null) {
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(SharedSpacing.Lg))
             OutlinedButton(onClick = onSecondaryAction) {
                 Text(secondaryActionLabel)
             }

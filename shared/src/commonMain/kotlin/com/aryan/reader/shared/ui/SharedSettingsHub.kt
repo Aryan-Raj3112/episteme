@@ -265,66 +265,67 @@ fun SharedSettingsHub(
                 }
             }
         } else {
-            LazyColumn(
+            // The docked search sits above the scrolling list instead of inside it: a search bar
+            // that scrolls away with the first fling is not a docked bar.
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .align(Alignment.TopCenter)
-                    .widthIn(max = CompactContentMaxWidth),
-                contentPadding = PaddingValues(
-                    start = gutter,
-                    end = gutter,
-                    top = SpaceXl,
-                    bottom = SpaceXl
-                ),
-                verticalArrangement = Arrangement.spacedBy(SpaceSm)
+                    .widthIn(max = CompactContentMaxWidth)
             ) {
-                item(key = "search") {
-                    SettingsSearchField(
-                        query = query,
-                        onQueryChange = onQueryChange,
-                        modifier = Modifier.padding(bottom = SpaceSm)
-                    )
-                }
-
-                // One item, not four: the page body is the thing that animates, so it has to be a
-                // single composable node that AnimatedContent can hold on screen while it exits.
-                item(key = "page") {
-                    SettingsPageSwap(
-                        model = model,
-                        destination = page.destination,
-                        searching = query.isNotBlank(),
-                        reduceMotion = reduceMotion,
-                        modifier = Modifier.fillMaxWidth()
-                    ) { state, statePage ->
-                        Column(verticalArrangement = Arrangement.spacedBy(SpaceSm)) {
-                            if (!state.searching && statePage.kind != SharedSettingsPageKind.ROOT) {
-                                SettingsPageIntro(
-                                    page = statePage,
-                                    modifier = Modifier.padding(bottom = SpaceSm)
-                                )
-                            }
-                            when {
-                                state.searching -> SettingsSearchResults(
-                                    results = searchResults,
-                                    query = query,
-                                    onNavigate = ::navigateTo,
-                                    onQueryChange = onQueryChange
-                                )
-                                statePage.kind == SharedSettingsPageKind.ROOT -> SettingsGroupContainer {
-                                    statePage.categories.forEachIndexed { index, category ->
-                                        SettingsCategoryRow(
-                                            category = category,
-                                            onNavigate = ::navigateTo
-                                        )
-                                        SettingsRowDivider(visible = index != statePage.categories.lastIndex)
-                                    }
+                SettingsSearchField(
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = gutter, end = gutter, top = SpaceXl, bottom = SpaceSm)
+                )
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = gutter, end = gutter, bottom = SpaceXl),
+                    verticalArrangement = Arrangement.spacedBy(SpaceSm)
+                ) {
+                    // One item, not four: the page body is the thing that animates, so it has to be
+                    // a single composable node that AnimatedContent can hold on screen while it
+                    // exits.
+                    item(key = "page") {
+                        SettingsPageSwap(
+                            model = model,
+                            destination = page.destination,
+                            searching = query.isNotBlank(),
+                            reduceMotion = reduceMotion,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { state, statePage ->
+                            Column(verticalArrangement = Arrangement.spacedBy(SpaceSm)) {
+                                if (!state.searching && statePage.kind != SharedSettingsPageKind.ROOT) {
+                                    SettingsPageIntro(
+                                        page = statePage,
+                                        modifier = Modifier.padding(bottom = SpaceSm)
+                                    )
                                 }
-                                statePage.kind == SharedSettingsPageKind.CATEGORY -> SettingsCategoryPage(
-                                    page = statePage,
-                                    onAction = onAction,
-                                    onNavigate = ::navigateTo
-                                )
-                                else -> detailContent(statePage)
+                                when {
+                                    state.searching -> SettingsSearchResults(
+                                        results = searchResults,
+                                        query = query,
+                                        onNavigate = ::navigateTo,
+                                        onQueryChange = onQueryChange
+                                    )
+                                    statePage.kind == SharedSettingsPageKind.ROOT -> SettingsGroupContainer {
+                                        statePage.categories.forEachIndexed { index, category ->
+                                            SettingsCategoryRow(
+                                                category = category,
+                                                onNavigate = ::navigateTo
+                                            )
+                                            SettingsRowDivider(visible = index != statePage.categories.lastIndex)
+                                        }
+                                    }
+                                    statePage.kind == SharedSettingsPageKind.CATEGORY -> SettingsCategoryPage(
+                                        page = statePage,
+                                        onAction = onAction,
+                                        onNavigate = ::navigateTo
+                                    )
+                                    else -> detailContent(statePage)
+                                }
                             }
                         }
                     }

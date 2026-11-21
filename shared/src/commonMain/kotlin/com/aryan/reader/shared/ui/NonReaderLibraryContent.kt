@@ -492,7 +492,7 @@ internal fun StatusBadge(icon: ImageVector, label: String) {
 
 @Composable
 internal fun TagChip(name: String, color: Int?) {
-    val tagColor = Color(color ?: 0xFF64B5F6.toInt())
+    val tagColor = color?.let(::Color) ?: SharedTagColorFallback
     Surface(
         shape = RoundedCornerShape(50),
         color = tagColor.copy(alpha = 0.14f),

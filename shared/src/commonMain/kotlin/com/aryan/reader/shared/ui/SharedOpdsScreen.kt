@@ -979,7 +979,7 @@ private fun SharedOpdsBookCard(
 
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
+        shape = MaterialTheme.shapes.small,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth()
     ) {

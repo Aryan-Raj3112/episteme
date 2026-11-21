@@ -1,11 +1,6 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -25,7 +20,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,6 +44,8 @@ fun SharedAndroidUnifiedScaffold(
     canPullToSync: Boolean = false,
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
+    /** Platforms that expose a reduce-motion setting swap sections without spatial movement. */
+    reduceMotion: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -90,12 +89,20 @@ fun SharedAndroidUnifiedScaffold(
             { }
         },
     ) { padding ->
+        // Section changes are a hierarchical move inside one surface, so they use the same
+        // shared-axis tokens as the settings hub instead of Compose's default fade/slide spec.
+        val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         AnimatedContent(
             targetState = section,
             transitionSpec = {
-                val direction = if (targetState.persistedValue > initialState.persistedValue) 1 else -1
-                (fadeIn() + slideInHorizontally { direction * it / 5 }) togetherWith
-                    (fadeOut() + slideOutHorizontally { -direction * it / 5 })
+                if (reduceMotion) {
+                    sharedReducedMotionSwap()
+                } else {
+                    sharedAxisSlide(
+                        rtl = rtl,
+                        forward = targetState.persistedValue >= initialState.persistedValue,
+                    )
+                }
             },
             label = "UnifiedLibrarySharedAxis",
         ) { displayedSection ->

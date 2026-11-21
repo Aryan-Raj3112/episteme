@@ -140,7 +140,7 @@ internal fun SharedMobileLibraryHorizontalNav(
  * the column and left the last row pressed against the display's rounded corner).
  */
 @Composable
-internal fun SharedMobileLibraryRail(
+fun SharedMobileLibraryRail(
     destinations: List<MobileUnifiedLibraryDrawerDestination>,
     selectedSection: MobileUnifiedLibrarySection,
     appearance: List<MobileUnifiedLibraryDrawerAppearance>,

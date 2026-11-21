@@ -81,6 +81,9 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
@@ -549,9 +552,12 @@ fun SharedMobileLibraryFilterDialog(
         ) {
             Text(labels.title, style = MaterialTheme.typography.titleLarge)
             Text(labels.fileType, style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            // FlowRow, not a horizontal scroller: a hidden chip is an option the user cannot see
+            // exists. Wrapping shows every file type without a scroll affordance.
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 readableFileTypes.forEach { type ->
                     FilterChip(
@@ -566,9 +572,10 @@ fun SharedMobileLibraryFilterDialog(
                 }
             }
             Text(labels.sourceFolder, style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FilterChip(
                     selected = IN_APP_STORAGE_SOURCE in currentFilters.sourceFolders,
@@ -592,15 +599,15 @@ fun SharedMobileLibraryFilterDialog(
                 }
             }
             Text(labels.readStatus, style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ReadStatusFilter.entries.forEach { status ->
-                    FilterChip(
+            // Exclusive choice, so it is a segmented group rather than four toggle-looking chips.
+            val statusOptions = ReadStatusFilter.entries
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                statusOptions.forEachIndexed { index, status ->
+                    SegmentedButton(
                         selected = currentFilters.readStatus == status,
                         onClick = { currentFilters = currentFilters.copy(readStatus = status) },
-                        label = { Text(readStatusLabels[status].orEmpty()) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = statusOptions.size),
+                        label = { Text(readStatusLabels[status].orEmpty(), maxLines = 1) },
                     )
                 }
             }
@@ -624,7 +631,7 @@ fun SharedMobileLibraryFilterDialog(
                             leadingIcon = {
                                 Box(
                                     modifier = Modifier.size(10.dp).background(
-                                        Color(tag.color ?: 0xFF64B5F6.toInt()),
+                                        tag.color?.let(::Color) ?: SharedTagColorFallback,
                                         CircleShape,
                                     ),
                                 )
@@ -1033,7 +1040,7 @@ internal fun SharedMobileBookCard(
 /**
  * Android parity (`BookTagChipsRow` in `SharedComposables.kt`): compact
  * horizontally scrolling tag chips. Tag tint follows the established shared
- * convention (`Color(tag.color ?: 0xFF64B5F6)`).
+ * convention (`SharedTagColorFallback` when a tag stores no colour).
  */
 @Composable
 internal fun SharedMobileBookTagChipsRow(
@@ -1047,7 +1054,7 @@ internal fun SharedMobileBookTagChipsRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         tags.forEach { tag ->
-            val tagColor = Color(tag.color ?: 0xFF64B5F6.toInt())
+            val tagColor = tag.color?.let(::Color) ?: SharedTagColorFallback
             Surface(
                 shape = RoundedCornerShape(50),
                 color = tagColor.copy(alpha = 0.14f),
