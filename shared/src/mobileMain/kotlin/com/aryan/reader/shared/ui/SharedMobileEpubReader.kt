@@ -135,6 +135,7 @@ import com.aryan.reader.shared.withReaderThemeFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.ReaderPerceptionLinesSettings
 import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedEpubBook
@@ -317,6 +318,8 @@ fun SharedMobileEpubReaderScreen(
     onAutoScrollMusicianModePreferenceChange: (Boolean) -> Unit = {},
     initialPageSliderVisible: Boolean = false,
     onPageSliderVisibilityPreferenceChange: (Boolean) -> Unit = {},
+    initialPerceptionLines: ReaderPerceptionLinesSettings = ReaderPerceptionLinesSettings(),
+    onPerceptionLinesChange: (ReaderPerceptionLinesSettings) -> Unit = {},
     initialUseNativeVerticalRenderer: Boolean = false,
     onUseNativeVerticalRendererPreferenceChange: (Boolean) -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
@@ -715,6 +718,17 @@ fun SharedMobileEpubReaderScreen(
     var showCustomizeToolsSheet by remember(book.id) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(book.id) { mutableStateOf(false) }
     var showBrightnessSheet by remember(book.id) { mutableStateOf(false) }
+    var showPerceptionLinesSheet by remember(book.id) { mutableStateOf(false) }
+    // Host-persisted (Android SharedPreferences / iOS NSUserDefaults) but reader-local: switching
+    // it never touches ReaderSettings, so it cannot invalidate pagination or a measurement key.
+    var perceptionLines by remember(book.id) { mutableStateOf(initialPerceptionLines.sanitized()) }
+    val updatePerceptionLines: (ReaderPerceptionLinesSettings) -> Unit = { next ->
+        val sanitized = next.sanitized()
+        if (sanitized != perceptionLines) {
+            perceptionLines = sanitized
+            onPerceptionLinesChange(sanitized)
+        }
+    }
     var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
     var showBookReplacementsSheet by remember(book.id) { mutableStateOf(false) }
@@ -3356,8 +3370,10 @@ fun SharedMobileEpubReaderScreen(
                         onFileInfo = { showFileInfo = true },
                         onCustomizeTools = { showCustomizeToolsSheet = true },
                         onScreenOrientation = { showScreenOrientationSheet = true },
-                        onTtsReplacements = { showTtsReplacementsSheet = true },
+                        onPerceptionLines = { showPerceptionLinesSheet = true },
+                        perceptionLinesVisible = perceptionLines.enabled,
                         onTtsSettings = { showTtsSettingsSheet = true },
+                        onTtsReplacements = { showTtsReplacementsSheet = true },
                         onBookReplacements = { showBookReplacementsSheet = true },
                         onOpenDictionarySettings = onOpenDictionarySettings,
                         onOpenAiHub = { showAiHub = true; onOpenAiHub() },
@@ -3493,6 +3509,8 @@ fun SharedMobileEpubReaderScreen(
                             onDictionary = onOpenDictionarySettings,
                             onBrightness = { showBrightnessSheet = true },
                             onScreenOrientation = { showScreenOrientationSheet = true },
+                            onPerceptionLines = { showPerceptionLinesSheet = true },
+                            perceptionLinesVisible = perceptionLines.enabled,
                             onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                             aiAvailable = readerAiAvailable,
                             localTtsState = localTts.state,
@@ -3519,6 +3537,13 @@ fun SharedMobileEpubReaderScreen(
                             cancelTtsPlanning(); localTts.stop()
                         },
                             onCloudTtsStop = cloudTts?.let { controller -> { cancelTtsPlanning(); controller.stop() } } ?: {},
+                        )
+                        // Perception lines: drawn above the page but below the chrome, and with no
+                        // pointer input, so scroll, tap, selection and long-press lookup still reach
+                        // the WebView underneath.
+                        SharedPerceptionLinesOverlay(
+                            settings = perceptionLines,
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
                     }
@@ -4156,6 +4181,13 @@ fun SharedMobileEpubReaderScreen(
             rememberedCustomBrightness = readerCustomBrightness,
             onBrightnessChange = onReaderBrightnessChange,
             onDismiss = { showBrightnessSheet = false },
+        )
+    }
+    if (showPerceptionLinesSheet) {
+        SharedPerceptionLinesSheet(
+            settings = perceptionLines,
+            onSettingsChange = updatePerceptionLines,
+            onDismiss = { showPerceptionLinesSheet = false },
         )
     }
     if (showTtsReplacementsSheet) {

@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Settings
@@ -604,6 +605,7 @@ fun SharedEpubToolbarDragIcon(tool: ReaderTool) {
         ReaderTool.BOOK_REPLACEMENTS -> Icons.Default.TextFields
         ReaderTool.FILE_INFO -> Icons.Default.Info
         ReaderTool.SCREEN_ORIENTATION -> Icons.Default.ScreenRotation
+        ReaderTool.PERCEPTION_LINES -> Icons.Default.Visibility
         ReaderTool.BOOKMARK -> Icons.Default.Bookmark
         else -> Icons.Default.MoreVert
     }

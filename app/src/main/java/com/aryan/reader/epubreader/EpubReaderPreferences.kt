@@ -50,7 +50,7 @@ private const val HIDDEN_TOOLS_KEY = "hidden_reader_tools"
 private const val TOOL_ORDER_KEY = "reader_tool_order"
 private const val BOTTOM_TOOLS_KEY = "reader_bottom_tools"
 private const val HIDDEN_TOOLS_DEFAULTS_VERSION_KEY = "reader_hidden_tools_defaults_version"
-private const val HIDDEN_TOOLS_DEFAULTS_VERSION = 2
+private const val HIDDEN_TOOLS_DEFAULTS_VERSION = 3
 private const val TTS_LOCATE_REASON_INITIAL_RESTORE = "initial_restore"
 private const val TTS_LOCATE_REASON_LIFECYCLE_RESUME = "lifecycle_resume"
 private const val TTS_LOCATE_REASON_OVERLAY = "overlay"
@@ -150,6 +150,7 @@ internal fun readerHiddenToolsIntroducedAfter(defaultsVersion: Int): Set<String>
     return buildSet {
         if (defaultsVersion < 1) add(ReaderTool.SCREEN_ORIENTATION.name)
         if (defaultsVersion < 2) add(ReaderTool.BRIGHTNESS.name)
+        if (defaultsVersion < 3) add(ReaderTool.PERCEPTION_LINES.name)
     }
 }
 

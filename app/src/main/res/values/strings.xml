@@ -891,6 +891,17 @@
     <string name="menu_change_reading_mode">Change Reading Mode</string>
     <string name="menu_right_to_left_pagination">Paginated (right-to-left)</string>
     <string name="menu_auto_scroll">Auto Scroll</string>
+    <string name="menu_perception_lines">Perception Lines</string>
+    <string name="menu_perception_lines_desc">Two guide rails that rest the eye between fixes</string>
+    <string name="perception_lines_show">Show lines</string>
+    <string name="perception_lines_show_desc">Draw a guide rail inset from each edge of the text.</string>
+    <string name="perception_lines_color">Color</string>
+    <string name="perception_lines_custom_color">Custom color</string>
+    <string name="perception_lines_opacity">Opacity</string>
+    <string name="perception_lines_width">Line width</string>
+    <string name="perception_lines_position">Line position</string>
+    <!-- Caption above the sample page that shows where the two guide lines land. -->
+    <string name="perception_lines_preview">Preview</string>
     <!-- TTS = Text-to-Speech. -->
     <string name="menu_tts_settings">TTS Settings</string>
     <!-- TTS = Text-to-Speech. -->

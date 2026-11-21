@@ -167,6 +167,8 @@ class EpubChromeSystemBarInsetsTest {
                                 onOpenBrightness = {},
                                 onOpenVisualOptions = {},
                                 onOpenScreenOrientation = {},
+                                onOpenPerceptionLines = {},
+                                perceptionLinesVisible = false,
                                 onOpenSlider = {},
                                 onOpenDrawer = {},
                                 onToggleFormat = {},

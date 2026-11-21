@@ -271,6 +271,8 @@ import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
+import com.aryan.reader.shared.ui.SharedPerceptionLinesOverlay
+import com.aryan.reader.shared.ui.SharedPerceptionLinesSheet
 import com.aryan.reader.shared.ui.SharedReaderPageInfoBarRow
 import com.aryan.reader.shared.ui.SharedReaderPageInfoBarSidePadding
 import com.aryan.reader.shared.ui.sharedMobileEpubBottomChromePadding
@@ -462,6 +464,18 @@ fun EpubReaderHost(
     var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
     var showBrightnessSheet by remember { mutableStateOf(false) }
     ReaderBrightnessEffect(window, readerBrightnessSettings)
+
+    // Perception lines: a global, host-persisted overlay preference (not a format setting), so the
+    // reader can flip it per page without touching a single pagination key.
+    var perceptionLines by remember { mutableStateOf(loadPerceptionLinesSettings(context)) }
+    var showPerceptionLinesSheet by remember { mutableStateOf(false) }
+    val updatePerceptionLines: (ReaderPerceptionLinesSettings) -> Unit = { settings ->
+        val sanitized = settings.sanitized()
+        if (sanitized != perceptionLines) {
+            perceptionLines = sanitized
+            savePerceptionLinesSettings(context, sanitized)
+        }
+    }
 
     val updateReaderBrightness: (com.aryan.reader.ReaderBrightnessSettings) -> Unit = { settings ->
         readerBrightnessSettings = settings
@@ -5123,6 +5137,14 @@ fun EpubReaderHost(
                     onBookmarksUserEdited = { bookmarksDirty = true }
                 )
 
+                // Perception lines sit above both render surfaces (WebView scroll and the Compose
+                // paginator) and below the chrome that follows in this Box, so the rails never cover
+                // the page-info bar or a toolbar. It is an overlay only: no layout, no reflow.
+                SharedPerceptionLinesOverlay(
+                    settings = perceptionLines,
+                    modifier = Modifier.fillMaxSize()
+                )
+
                 val isBookmarked: Boolean
                 val onBookmarkClick: () -> Unit
 
@@ -5829,6 +5851,8 @@ fun EpubReaderHost(
                     onOpenBrightness = { showBrightnessSheet = true },
                     onOpenVisualOptions = { prefs.showVisualOptionsSheet = true },
                     onOpenScreenOrientation = { prefs.showScreenOrientationSheet = true },
+                    onOpenPerceptionLines = { showPerceptionLinesSheet = true },
+                    perceptionLinesVisible = perceptionLines.enabled,
                     onOpenAiHub = { showAiHubSheet = true },
                     onOpenSlider = ::toggleEpubPageSlider,
                     onOpenDrawer = {
@@ -6171,6 +6195,8 @@ fun EpubReaderHost(
                         }
                     },
                     onOpenScreenOrientation = { prefs.showScreenOrientationSheet = true },
+                    onOpenPerceptionLines = { showPerceptionLinesSheet = true },
+                    perceptionLinesVisible = perceptionLines.enabled,
                     onToggleFormat = {
                         navigation.showFormatAdjustmentBars = !navigation.showFormatAdjustmentBars
                         if (navigation.showFormatAdjustmentBars) {
@@ -6636,6 +6662,14 @@ fun EpubReaderHost(
                 },
                 isPaginated = currentRenderMode == RenderMode.PAGINATED,
                 onDismiss = { prefs.showVisualOptionsSheet = false }
+            )
+        }
+
+        if (showPerceptionLinesSheet) {
+            SharedPerceptionLinesSheet(
+                settings = perceptionLines,
+                onSettingsChange = updatePerceptionLines,
+                onDismiss = { showPerceptionLinesSheet = false },
             )
         }
 

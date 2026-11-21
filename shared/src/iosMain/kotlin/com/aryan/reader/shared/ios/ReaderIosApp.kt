@@ -364,6 +364,11 @@ import com.aryan.reader.shared.ui.rememberSharedMobileEpubLocalTts
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.withoutFolderFilter
 import com.aryan.reader.shared.reader.ReaderScreenOrientationMode
+import com.aryan.reader.shared.reader.ReaderPerceptionLinesSettings
+import com.aryan.reader.shared.reader.DefaultPerceptionLinesColorArgb
+import com.aryan.reader.shared.reader.DefaultPerceptionLinesInsetFraction
+import com.aryan.reader.shared.reader.DefaultPerceptionLinesOpacity
+import com.aryan.reader.shared.reader.DefaultPerceptionLinesWidthDp
 import com.aryan.reader.shared.reader.epubPositionSummary
 import com.aryan.reader.shared.reader.logEpubPositionSave
 import com.aryan.reader.shared.reader.sharedEpubOpenTrace
@@ -2527,6 +2532,11 @@ private const val IosPdfAutoScrollMusicianDefaultsKey = "reader_ios_pdf_auto_scr
 private const val IosPdfAutoScrollSliderDefaultsKey = "reader_ios_pdf_auto_scroll_slider_v1"
 private const val IosReaderOrientationDefaultsKey = "reader_ios_reader_orientation_v1"
 private const val IosKeepScreenOnDefaultsKey = "reader_ios_keep_screen_on_v1"
+private const val IosPerceptionLinesEnabledDefaultsKey = "reader_ios_perception_lines_enabled_v1"
+private const val IosPerceptionLinesColorDefaultsKey = "reader_ios_perception_lines_color_v1"
+private const val IosPerceptionLinesOpacityDefaultsKey = "reader_ios_perception_lines_opacity_v1"
+private const val IosPerceptionLinesWidthDefaultsKey = "reader_ios_perception_lines_width_v1"
+private const val IosPerceptionLinesInsetDefaultsKey = "reader_ios_perception_lines_inset_v1"
 private const val IosNativeVerticalRendererDefaultsKey = "reader_native_vertical_renderer"
 private const val IosStylusOnlyModeDefaultsKey = "reader_ios_stylus_only_mode_v1"
 private const val IosPendingExternalBookIdDefaultsKey = "reader_ios_pending_external_book_id_v1"
@@ -2957,6 +2967,44 @@ private fun loadIosKeepScreenOn(): Boolean {
 
 private fun persistIosKeepScreenOn(enabled: Boolean) {
     NSUserDefaults.standardUserDefaults.setBool(enabled, forKey = IosKeepScreenOnDefaultsKey)
+}
+
+/**
+ * Android parity (`loadPerceptionLinesSettings`): the rails are a global overlay preference, stored
+ * next to the other reader toggles rather than in the saved [ReaderSettings], so toggling them can
+ * never change a persisted format or force a re-paginate.
+ */
+private fun loadIosPerceptionLines(): ReaderPerceptionLinesSettings {
+    val defaults = NSUserDefaults.standardUserDefaults
+    val color = if (defaults.objectForKey(IosPerceptionLinesColorDefaultsKey) == null) {
+        DefaultPerceptionLinesColorArgb
+    } else {
+        defaults.stringForKey(IosPerceptionLinesColorDefaultsKey)?.toLongOrNull()
+            ?: DefaultPerceptionLinesColorArgb
+    }
+    val opacity = defaults.stringForKey(IosPerceptionLinesOpacityDefaultsKey)?.toFloatOrNull()
+        ?: DefaultPerceptionLinesOpacity
+    val width = defaults.stringForKey(IosPerceptionLinesWidthDefaultsKey)?.toFloatOrNull()
+        ?: DefaultPerceptionLinesWidthDp
+    val inset = defaults.stringForKey(IosPerceptionLinesInsetDefaultsKey)?.toFloatOrNull()
+        ?: DefaultPerceptionLinesInsetFraction
+    return ReaderPerceptionLinesSettings(
+        enabled = defaults.boolForKey(IosPerceptionLinesEnabledDefaultsKey),
+        colorArgb = color,
+        opacity = opacity,
+        lineWidthDp = width,
+        insetFraction = inset,
+    ).sanitized()
+}
+
+private fun persistIosPerceptionLines(settings: ReaderPerceptionLinesSettings) {
+    val sanitized = settings.sanitized()
+    val defaults = NSUserDefaults.standardUserDefaults
+    defaults.setBool(sanitized.enabled, forKey = IosPerceptionLinesEnabledDefaultsKey)
+    defaults.setObject(sanitized.colorArgb.toString(), forKey = IosPerceptionLinesColorDefaultsKey)
+    defaults.setObject(sanitized.opacity.toString(), forKey = IosPerceptionLinesOpacityDefaultsKey)
+    defaults.setObject(sanitized.lineWidthDp.toString(), forKey = IosPerceptionLinesWidthDefaultsKey)
+    defaults.setObject(sanitized.insetFraction.toString(), forKey = IosPerceptionLinesInsetDefaultsKey)
 }
 
 private fun loadIosNativeVerticalRenderer(): Boolean {
@@ -7080,6 +7128,8 @@ private fun ReaderIosApp(
                             onPageSliderVisibilityPreferenceChange = { visible ->
                                 persistIosEpubPageSliderVisible(book.id, visible)
                             },
+                            initialPerceptionLines = loadIosPerceptionLines(),
+                            onPerceptionLinesChange = ::persistIosPerceptionLines,
                             initialUseNativeVerticalRenderer = loadIosNativeVerticalRenderer(),
                             onUseNativeVerticalRendererPreferenceChange = ::persistIosNativeVerticalRenderer,
                             onTtsError = { message ->

@@ -19,6 +19,16 @@ object SharedReaderIcons {
 
     private const val MUSIC_NOTE_PATH = "M287,793Q240,746 240,680Q240,614 287,567Q334,520 400,520Q423,520 442.5,525.5Q462,531 480,542L480,120L720,120L720,280L560,280L560,680Q560,746 513,793Q466,840 400,840Q334,840 287,793Z"
 
+    // Perception lines: two vertical rails bracketing three text rows, i.e. the reading band the
+    // overlay draws. Built from the same 960-unit grid and hard-edged rectangles as the Material
+    // Symbols glyphs above so it matches them at 24.dp.
+    private const val PERCEPTION_LINES_PATH =
+        "M160,160L216,160L216,800L160,800Z" +
+            "M744,160L800,160L800,800L744,800Z" +
+            "M272,280L688,280L688,340L272,340Z" +
+            "M272,450L688,450L688,510L272,510Z" +
+            "M272,620L560,620L560,680L272,680Z"
+
     // The four below are Material **Symbols** glyphs copied verbatim from the Android
     // `drawable-nodpi/*.xml` the reader chrome used before it was repointed at the shared bars
     // (`palette`, `ai`, `close`, `volume_up`). Compose's `Icons.Default.*` equivalents are the
@@ -40,6 +50,7 @@ object SharedReaderIcons {
     val PinDrop: ImageVector by lazy { iconOf("ReaderPinDrop", PINDROP_PATH) }
     val FormatSize: ImageVector by lazy { iconOf("ReaderFormatSize", FORMAT_SIZE_PATH) }
     val MusicNote: ImageVector by lazy { iconOf("ReaderMusicNote", MUSIC_NOTE_PATH) }
+    val PerceptionLines: ImageVector by lazy { iconOf("ReaderPerceptionLines", PERCEPTION_LINES_PATH) }
     val Palette: ImageVector by lazy { iconOf("ReaderPalette", PALETTE_PATH) }
     val Ai: ImageVector by lazy { iconOf("ReaderAi", AI_PATH) }
     val Close: ImageVector by lazy { iconOf("ReaderClose", CLOSE_PATH) }

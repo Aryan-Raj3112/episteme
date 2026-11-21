@@ -115,6 +115,10 @@ import com.aryan.reader.readerModalMaxHeightDp
 import com.aryan.reader.readerFontDiagnosticSummary
 import com.aryan.reader.supportedFontMimeTypes
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.reader.DefaultPerceptionLinesColorArgb
+import com.aryan.reader.shared.reader.DefaultPerceptionLinesInsetFraction
+import com.aryan.reader.shared.reader.DefaultPerceptionLinesOpacity
+import com.aryan.reader.shared.reader.DefaultPerceptionLinesWidthDp
 import com.aryan.reader.shared.detectFontVariant
 import com.aryan.reader.shared.fontFaceSummary
 import com.aryan.reader.shared.familyFilenameSignature
@@ -137,6 +141,7 @@ typealias SystemUiMode = com.aryan.reader.shared.SystemUiMode
 typealias PageInfoMode = com.aryan.reader.shared.PageInfoMode
 typealias PageInfoPosition = com.aryan.reader.shared.PageInfoPosition
 typealias ReaderPageSpreadMode = com.aryan.reader.shared.reader.ReaderPageSpreadMode
+typealias ReaderPerceptionLinesSettings = com.aryan.reader.shared.reader.ReaderPerceptionLinesSettings
 typealias FormatSettings = com.aryan.reader.shared.FormatSettings
 
 const val SETTINGS_PREFS_NAME = "epub_reader_settings"
@@ -158,6 +163,11 @@ private const val PULL_TO_TURN_ENABLED_KEY = "reader_pull_to_turn_enabled"
 private const val HIDE_IMAGES_KEY = "reader_hide_images"
 private const val NATIVE_VERTICAL_RENDERER_KEY = "reader_native_vertical_renderer"
 private const val PAGE_SPREAD_MODE_KEY = "reader_page_spread_mode"
+private const val PERCEPTION_LINES_ENABLED_KEY = "reader_perception_lines_enabled"
+private const val PERCEPTION_LINES_COLOR_KEY = "reader_perception_lines_color"
+private const val PERCEPTION_LINES_OPACITY_KEY = "reader_perception_lines_opacity"
+private const val PERCEPTION_LINES_WIDTH_KEY = "reader_perception_lines_width_dp"
+private const val PERCEPTION_LINES_INSET_KEY = "reader_perception_lines_inset"
 
 const val DEFAULT_FONT_SIZE_VAL = 1.0f
 const val DEFAULT_LINE_HEIGHT_VAL = 1.0f
@@ -689,6 +699,34 @@ fun loadTapToNavigateSetting(context: Context): Boolean {
 fun saveVolumeScrollSetting(context: Context, enabled: Boolean) {
     val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
     prefs.edit { putBoolean(VOLUME_SCROLL_ENABLED_KEY, enabled) }
+}
+
+/**
+ * Perception lines are an overlay, not a format: global like [loadVolumeScrollSetting] rather than
+ * per-book, and deliberately outside [com.aryan.reader.shared.reader.ReaderSettings] so tweaking
+ * the rails can never invalidate a pagination or measurement cache.
+ */
+fun loadPerceptionLinesSettings(context: Context): ReaderPerceptionLinesSettings {
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    return ReaderPerceptionLinesSettings(
+        enabled = prefs.getBoolean(PERCEPTION_LINES_ENABLED_KEY, false),
+        colorArgb = prefs.getLong(PERCEPTION_LINES_COLOR_KEY, DefaultPerceptionLinesColorArgb),
+        opacity = prefs.getFloat(PERCEPTION_LINES_OPACITY_KEY, DefaultPerceptionLinesOpacity),
+        lineWidthDp = prefs.getFloat(PERCEPTION_LINES_WIDTH_KEY, DefaultPerceptionLinesWidthDp),
+        insetFraction = prefs.getFloat(PERCEPTION_LINES_INSET_KEY, DefaultPerceptionLinesInsetFraction),
+    ).sanitized()
+}
+
+fun savePerceptionLinesSettings(context: Context, settings: ReaderPerceptionLinesSettings) {
+    val sanitized = settings.sanitized()
+    val prefs = context.getSharedPreferences(SETTINGS_PREFS_NAME, Context.MODE_PRIVATE)
+    prefs.edit {
+        putBoolean(PERCEPTION_LINES_ENABLED_KEY, sanitized.enabled)
+        putLong(PERCEPTION_LINES_COLOR_KEY, sanitized.colorArgb)
+        putFloat(PERCEPTION_LINES_OPACITY_KEY, sanitized.opacity)
+        putFloat(PERCEPTION_LINES_WIDTH_KEY, sanitized.lineWidthDp)
+        putFloat(PERCEPTION_LINES_INSET_KEY, sanitized.insetFraction)
+    }
 }
 
 fun loadVolumeScrollSetting(context: Context): Boolean {

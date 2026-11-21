@@ -14,6 +14,10 @@ class ReaderToolbarPreferencesTest {
 
         assertFalse(preferences.isVisible(ReaderTool.BRIGHTNESS))
         assertFalse(preferences.isVisible(ReaderTool.SCREEN_ORIENTATION))
+        // Perception lines ship hidden: they draw over the page, so they are opt-in from
+        // Customize Toolbar like Android's other visual aids.
+        assertFalse(preferences.isVisible(ReaderTool.PERCEPTION_LINES))
+        assertTrue(ReaderTool.PERCEPTION_LINES in preferences.toolOrder)
         assertTrue(preferences.isVisible(ReaderTool.FILE_INFO))
         assertTrue(ReaderTool.BRIGHTNESS in preferences.toolOrder)
         assertTrue(ReaderTool.SCREEN_ORIENTATION in preferences.toolOrder)
@@ -72,11 +76,19 @@ class ReaderToolbarPreferencesTest {
     @Test
     fun `hidden defaults migrate by version like android`() {
         assertEquals(
-            setOf(ReaderTool.SCREEN_ORIENTATION.id, ReaderTool.BRIGHTNESS.id),
+            setOf(
+                ReaderTool.SCREEN_ORIENTATION.id,
+                ReaderTool.BRIGHTNESS.id,
+                ReaderTool.PERCEPTION_LINES.id
+            ),
             readerHiddenToolsIntroducedAfter(0)
         )
-        assertEquals(setOf(ReaderTool.BRIGHTNESS.id), readerHiddenToolsIntroducedAfter(1))
-        assertEquals(emptySet(), readerHiddenToolsIntroducedAfter(2))
+        assertEquals(
+            setOf(ReaderTool.BRIGHTNESS.id, ReaderTool.PERCEPTION_LINES.id),
+            readerHiddenToolsIntroducedAfter(1)
+        )
+        assertEquals(setOf(ReaderTool.PERCEPTION_LINES.id), readerHiddenToolsIntroducedAfter(2))
+        assertEquals(emptySet(), readerHiddenToolsIntroducedAfter(ReaderHiddenToolsDefaultsVersion))
 
         val legacy = ReaderToolbarPreferences(
             hiddenToolIds = emptySet(),
@@ -84,6 +96,7 @@ class ReaderToolbarPreferencesTest {
         ).sanitized()
         assertTrue(ReaderTool.SCREEN_ORIENTATION.id in legacy.hiddenToolIds)
         assertTrue(ReaderTool.BRIGHTNESS.id in legacy.hiddenToolIds)
+        assertTrue(ReaderTool.PERCEPTION_LINES.id in legacy.hiddenToolIds)
         assertEquals(ReaderHiddenToolsDefaultsVersion, legacy.hiddenToolsDefaultsVersion)
 
         // Explicit user unhide on a current prefs object survives sanitize.

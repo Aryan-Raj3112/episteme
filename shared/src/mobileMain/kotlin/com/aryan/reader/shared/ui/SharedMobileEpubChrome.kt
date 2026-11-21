@@ -247,6 +247,8 @@ fun SharedMobileEpubTopBar(
     onFileInfo: () -> Unit,
     onCustomizeTools: () -> Unit,
     onScreenOrientation: () -> Unit,
+    onPerceptionLines: () -> Unit = {},
+    perceptionLinesVisible: Boolean = false,
     onTtsSettings: () -> Unit,
     onTtsReplacements: () -> Unit,
     onBookReplacements: () -> Unit,
@@ -430,6 +432,7 @@ fun SharedMobileEpubTopBar(
                     ReaderTool.TTS_CONTROLS -> if (readAloudActive) onReadAloudStop() else onLocalTtsToggle()
                     ReaderTool.BRIGHTNESS -> onBrightness()
                     ReaderTool.SCREEN_ORIENTATION -> onScreenOrientation()
+                    ReaderTool.PERCEPTION_LINES -> onPerceptionLines()
                     ReaderTool.DICTIONARY -> onOpenDictionarySettings()
                     ReaderTool.AI_FEATURES -> onOpenAiHub()
                     else -> Unit
@@ -613,6 +616,32 @@ fun SharedMobileEpubTopBar(
                         ) {
                             Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = inactiveTint)
                         }
+                        ReaderTool.PERCEPTION_LINES -> {
+                            val linesText = readerString("menu_perception_lines", "Perception Lines")
+                            val linesDescription = readerString(
+                                "menu_perception_lines_desc",
+                                "Two guide rails that rest the eye between fixes"
+                            )
+                            SharedTooltipIconButton(
+                                text = linesText,
+                                description = linesDescription,
+                                onClick = onPerceptionLines,
+                                modifier = Modifier.testTag("EpubTopPerceptionLines")
+                                    .semantics { contentDescription = linesText }
+                            ) {
+                                // Tinted like the slider tool: a reader who turned the rails on
+                                // needs to see at a glance that they are on.
+                                Icon(
+                                    SharedReaderIcons.PerceptionLines,
+                                    contentDescription = null,
+                                    tint = if (perceptionLinesVisible) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        inactiveTint
+                                    }
+                                )
+                            }
+                        }
                         ReaderTool.DICTIONARY -> SharedTooltipIconButton(
                             text = dictionaryText,
                             description = dictionaryDescription,
@@ -707,6 +736,7 @@ val SharedMobileEpubToolbarTools = setOf(
     ReaderTool.TTS_CONTROLS,
     ReaderTool.BRIGHTNESS,
     ReaderTool.SCREEN_ORIENTATION,
+    ReaderTool.PERCEPTION_LINES,
     ReaderTool.DICTIONARY,
     ReaderTool.AI_FEATURES
 )
@@ -865,6 +895,8 @@ fun SharedMobileEpubBottomBar(
     onDictionary: () -> Unit,
     onBrightness: () -> Unit = {},
     onScreenOrientation: () -> Unit = {},
+    onPerceptionLines: () -> Unit = {},
+    perceptionLinesVisible: Boolean = false,
     onOpenAiHub: () -> Unit = {},
     aiAvailable: Boolean = false,
     localTtsState: SharedMobileEpubLocalTtsState,
@@ -1057,6 +1089,30 @@ fun SharedMobileEpubBottomBar(
                                 .semantics { contentDescription = orientationText }
                         ) {
                             Icon(Icons.Default.ScreenRotation, contentDescription = null, tint = inactiveTint)
+                        }
+                        ReaderTool.PERCEPTION_LINES -> {
+                            val linesText = readerString("menu_perception_lines", "Perception Lines")
+                            val linesDescription = readerString(
+                                "menu_perception_lines_desc",
+                                "Two guide rails that rest the eye between fixes"
+                            )
+                            SharedTooltipIconButton(
+                                text = linesText,
+                                description = linesDescription,
+                                onClick = onPerceptionLines,
+                                modifier = Modifier.testTag("EpubBottomPerceptionLines")
+                                    .semantics { contentDescription = linesText }
+                            ) {
+                                Icon(
+                                    SharedReaderIcons.PerceptionLines,
+                                    contentDescription = null,
+                                    tint = if (perceptionLinesVisible) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        inactiveTint
+                                    }
+                                )
+                            }
                         }
                         ReaderTool.AI_FEATURES -> if (aiAvailable) {
                             SharedTooltipIconButton(
