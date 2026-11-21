@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
@@ -39,7 +38,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 /** Exact Android Home recent-book card chrome with platform cover/status slots. */
 @OptIn(ExperimentalFoundationApi::class)
@@ -72,7 +70,9 @@ fun SharedAndroidHomeRecentCard(
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (isSelected) 6.dp else 2.dp),
+        // Selection is carried by the border and the check badge over the cover. Raising the card
+        // as well made selected cells look lifted out of the grid rather than chosen.
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
     ) {
         Column(Modifier.fillMaxWidth()) {
             BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(0.74f)) {
@@ -135,7 +135,6 @@ fun SharedAndroidHomeRecentCard(
                     minLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.fillMaxWidth(),
-                    lineHeight = 20.sp,
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -155,14 +154,14 @@ fun SharedAndroidHomeRecentCard(
 @Composable
 private fun SharedAndroidHomeProgressBadge(percent: Int, compact: Boolean) {
     Surface(
-        shape = RoundedCornerShape(50),
+        shape = CircleShape,
         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.95f),
         contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
     ) {
         Text(
             "$percent%",
-            style = if (compact) MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp) else MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             modifier = Modifier.padding(horizontal = if (compact) 6.dp else 10.dp, vertical = if (compact) 3.dp else 4.dp),

@@ -170,10 +170,7 @@ fun SharedMobileEmptyLibrary(
         )
         if (actionLabel != null) {
             Spacer(Modifier.height(32.dp))
-            FilledTonalButton(
-                onClick = onAction,
-                shape = MaterialTheme.shapes.medium,
-            ) {
+            FilledTonalButton(onClick = onAction) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize))
                 Spacer(Modifier.size(ButtonDefaults.IconSpacing))
                 Text(actionLabel)

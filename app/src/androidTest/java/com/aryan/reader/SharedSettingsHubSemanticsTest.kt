@@ -1,17 +1,24 @@
 package com.aryan.reader
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.isToggleable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aryan.reader.shared.SharedSettingsAction
 import com.aryan.reader.shared.SharedSettingsDestination
@@ -88,6 +95,51 @@ class SharedSettingsHubSemanticsTest {
                     destination = destination,
                     onDestinationChange = { destination = it },
                 )
+            }
+        }
+    }
+
+    /**
+     * Renders the hub inside a tablet-width window so the expanded two-pane layout is the one under
+     * test. `requiredWidth` forces the available width the hub measures, which is how the real
+     * 840dp breakpoint is reached in a phone-sized test host.
+     */
+    @Composable
+    private fun WideHubHost(destination: SharedSettingsDestination, onNavigate: (SharedSettingsDestination) -> Unit) {
+        val model = model()
+        Box(Modifier.requiredWidth(900.dp).requiredHeight(900.dp)) {
+            SharedSettingsHub(
+                model = model,
+                query = "",
+                onQueryChange = {},
+                readerDefaultSettings = ReaderSettings(),
+                onReaderDefaultSettingsChange = {},
+                ttsReplacementPreferences = ReaderTtsReplacementPreferences(),
+                onTtsReplacementPreferencesChange = {},
+                onAction = {},
+                destination = destination,
+                onDestinationChange = onNavigate,
+            )
+        }
+    }
+
+    private fun setWideHub(destination: SharedSettingsDestination) {
+        composeTestRule.setContent {
+            MaterialTheme { WideHubHost(destination) {} }
+        }
+    }
+
+    private fun setWideStatefulHub(
+        initial: SharedSettingsDestination,
+        onNavigate: (SharedSettingsDestination) -> Unit,
+    ) {
+        composeTestRule.setContent {
+            var destination by remember { mutableStateOf(initial) }
+            MaterialTheme {
+                WideHubHost(destination) { next ->
+                    destination = next
+                    onNavigate(next)
+                }
             }
         }
     }
@@ -187,6 +239,30 @@ class SharedSettingsHubSemanticsTest {
         composeTestRule.runOnIdle {
             assertThat(navigations).containsExactly(SharedSettingsDestination.STORAGE_PRIVACY)
             assertThat(actions).isEmpty()
+        }
+    }
+
+    /**
+     * The expanded layout's category list is a real `NavigationDrawerItem`, so selection is state,
+     * not a hand-painted background. Losing that would leave the wide layout with no way to tell
+     * which category the right-hand pane belongs to.
+     */
+    @Test
+    fun expandedLayoutMarksTheCurrentCategoryAsSelected() {
+        setWideHub(SharedSettingsDestination.EPUB_TEXT)
+
+        composeTestRule.onNodeWithText("EPUB & Text").assertIsSelected()
+    }
+
+    @Test
+    fun expandedNavigationPaneSwitchesPages() {
+        val navigations = mutableListOf<SharedSettingsDestination>()
+        setWideStatefulHub(SharedSettingsDestination.ROOT, onNavigate = { navigations += it })
+
+        composeTestRule.onNodeWithText("PDF & Comics").performClick()
+
+        composeTestRule.runOnIdle {
+            assertThat(navigations).containsExactly(SharedSettingsDestination.PDF_COMICS)
         }
     }
 }

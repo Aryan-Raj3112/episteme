@@ -415,14 +415,13 @@ private fun SharedAndroidFolderFiltersDialog(
                             onClick = { selectedTypes = if (selected) selectedTypes - type else selectedTypes + type },
                             label = { Text(type.name, style = MaterialTheme.typography.labelLarge) },
                             leadingIcon = if (selected) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null,
-                            shape = MaterialTheme.shapes.medium,
                         )
                     }
                 }
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(selectedTypes) }, enabled = selectedTypes.isNotEmpty(), shape = MaterialTheme.shapes.medium) { Text(strings.save) }
+            Button(onClick = { onConfirm(selectedTypes) }, enabled = selectedTypes.isNotEmpty()) { Text(strings.save) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } },
     )

@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -51,7 +50,8 @@ fun SharedAndroidUnifiedContinueCard(
     density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(if (density.compact) 20.dp else 28.dp)
+    // M3 shape scale: `large` on the short display, `extraLarge` for the standard hero.
+    val shape = if (density.compact) MaterialTheme.shapes.large else MaterialTheme.shapes.extraLarge
     val isRtl = cardLayoutDirection == LayoutDirection.Rtl
     Surface(
         modifier = modifier

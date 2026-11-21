@@ -3,7 +3,6 @@ package com.aryan.reader.shared.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.fadeIn
@@ -26,7 +25,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -62,12 +60,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -78,7 +76,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -487,51 +484,27 @@ private fun SettingsNavRow(
     onClick: () -> Unit
 ) {
     // The selected category is the only thing telling the user which page they are on in the wide
-    // layout, so it eases in rather than flickering between rows.
-    val containerColor by animateColorAsState(
-        targetValue = if (selected) {
-            MaterialTheme.colorScheme.secondaryContainer
-        } else {
-            Color.Transparent
-        },
-        animationSpec = tween(SharedMotion.DurationShort4, easing = SharedMotion.Standard),
-        label = "settings-nav-container"
-    )
-    val contentColor by animateColorAsState(
-        targetValue = if (selected) {
-            MaterialTheme.colorScheme.onSecondaryContainer
-        } else {
-            MaterialTheme.colorScheme.onSurface
-        },
-        animationSpec = tween(SharedMotion.DurationShort4, easing = SharedMotion.Standard),
-        label = "settings-nav-content"
-    )
-    Surface(
+    // layout. NavigationDrawerItem owns the M3 navigation-drawer treatment (56dp row, full-corner
+    // active indicator, secondaryContainer/onSecondaryContainer pairing) and animates the indicator
+    // itself, so the hub no longer paints selection by hand.
+    NavigationDrawerItem(
+        label = { Text(title, style = MaterialTheme.typography.titleSmall) },
+        selected = selected,
         onClick = onClick,
-        shape = MaterialTheme.shapes.small,
-        color = containerColor,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
+        icon = {
             Icon(
                 icon,
                 contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = contentColor
+                modifier = Modifier.size(SharedSettingsTokens.IconSize)
             )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                color = contentColor
-            )
-        }
-    }
+        },
+        modifier = Modifier.fillMaxWidth(),
+        colors = NavigationDrawerItemDefaults.colors(
+            unselectedContainerColor = Color.Transparent,
+            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            unselectedTextColor = MaterialTheme.colorScheme.onSurface
+        )
+    )
 }
 
 @Composable
@@ -561,17 +534,11 @@ private fun SettingsSearchField(
     onQueryChange: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    TextField(
-        value = query,
-        onValueChange = onQueryChange,
+    SharedSearchField(
+        query = query,
+        onQueryChange = onQueryChange,
+        placeholder = readerString("desktop_search_settings", "Search settings"),
         modifier = modifier.fillMaxWidth(),
-        singleLine = true,
-        placeholder = {
-            Text(readerString("desktop_search_settings", "Search settings"))
-        },
-        leadingIcon = {
-            Icon(Icons.Default.Search, contentDescription = null)
-        },
         trailingIcon = {
             AnimatedVisibility(
                 visible = query.isNotEmpty(),
@@ -587,16 +554,7 @@ private fun SettingsSearchField(
                     )
                 }
             }
-        },
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        shape = MaterialTheme.shapes.extraLarge,
-        colors = TextFieldDefaults.colors(
-            focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            focusedIndicatorColor = Color.Transparent,
-            unfocusedIndicatorColor = Color.Transparent,
-            disabledIndicatorColor = Color.Transparent
-        )
+        }
     )
 }
 

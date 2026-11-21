@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -16,8 +17,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
@@ -25,10 +26,10 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -104,7 +105,21 @@ fun <T> SharedAndroidUnifiedLibraryHome(
             items(MobileUnifiedLibraryFilter.entries) { option ->
                 FilterChip(selected = filter == option, onClick = { onFilterChange(option) }, label = { Text(strings.filterLabels.getValue(option)) })
             }
-            item { AssistChip(onClick = onControls, label = { Text(sortLabel) }) }
+            item {
+                // Sort is a menu trigger, not a peer of the status filters, so it carries a
+                // disclosure icon instead of looking like a fifth filter chip.
+                AssistChip(
+                    onClick = onControls,
+                    label = { Text(sortLabel) },
+                    trailingIcon = {
+                        Icon(
+                            Icons.Default.ArrowDropDown,
+                            contentDescription = null,
+                            modifier = Modifier.size(FilterChipDefaults.IconSize),
+                        )
+                    },
+                )
+            }
             item {
                 BadgedBox(badge = { if (advancedFilterCount > 0) Badge { Text(advancedFilterCount.toString()) } }) {
                     IconButton(onClick = onAdvancedFilters) { Icon(Icons.Default.FilterList, contentDescription = strings.filterBooks) }
@@ -128,7 +143,6 @@ fun <T> SharedAndroidUnifiedLibraryHome(
                 Modifier.weight(1f).padding(top = density.gridCardTopGap),
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 1.dp,
             ) {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -159,7 +173,6 @@ fun <T> SharedAndroidUnifiedLibraryHome(
                 Modifier.weight(1f).padding(top = density.gridCardTopGap),
                 shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
                 color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 1.dp,
             ) {
                 if (useListView) {
                     LazyColumn(
@@ -207,16 +220,14 @@ fun <T> SharedAndroidUnifiedLibrarySearch(
     Column(modifier.fillMaxSize().padding(horizontal = 20.dp)) {
         if (showSearchField) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
+                SharedSearchField(
+                    query = query,
+                    onQueryChange = onQueryChange,
+                    placeholder = searchPlaceholder,
                     modifier = Modifier.weight(1f).focusRequester(focusRequester).testTag("UnifiedLibrarySearch"),
-                    placeholder = { Text(searchPlaceholder) },
-                    leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = {
                         if (query.isNotEmpty()) IconButton(onClick = { onQueryChange("") }) { Icon(Icons.Default.Close, clearDescription) }
                     },
-                    singleLine = true,
                 )
                 IconButton(onClick = onClose) { Icon(Icons.Default.Close, closeDescription) }
             }

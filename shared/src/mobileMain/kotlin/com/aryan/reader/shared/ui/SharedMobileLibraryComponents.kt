@@ -81,7 +81,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
@@ -660,11 +659,11 @@ internal fun SharedMobileSearchTopBar(
     }
     CenterAlignedTopAppBar(
         title = {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                placeholder = { Text(readerString("action_search", "Search")) },
-                singleLine = true,
+            SharedSearchField(
+                query = query,
+                onQueryChange = onQueryChange,
+                placeholder = readerString("action_search", "Search"),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                 trailingIcon = {
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { onQueryChange("") }) {
@@ -675,7 +674,6 @@ internal fun SharedMobileSearchTopBar(
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
             )
         },
         navigationIcon = {
@@ -978,7 +976,9 @@ internal fun SharedMobileBookCard(
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (selected) 6.dp else 2.dp)
+        // Selection is carried by the border and the check badge on the cover; raising the card as
+        // well made a grid of selected cells re-flow visually against unselected ones.
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Box {
@@ -1015,7 +1015,6 @@ internal fun SharedMobileBookCard(
                     maxLines = 2,
                     minLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 20.sp
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
