@@ -92,6 +92,7 @@ import com.aryan.reader.shared.readerThemeById
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.ui.SharedSettingsHub
+import com.aryan.reader.shared.ui.rememberSharedSettingsItemValues
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.sharedFadeThrough
@@ -102,49 +103,6 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private const val ANDROID_SETTINGS_GLOBAL_BOOK_ID = "__global_reader_defaults__"
-
-/**
- * Current-value previews for the rows this host owns the data for. The shared model only knows a
- * row's identity, so the host is the one that can say "Literata · 100% · Justified" instead of
- * making the user open the page to read the value.
- */
-private fun androidSettingsItemValues(
-    context: Context,
-    epubDefaults: ReaderSettings,
-    pdfDefaults: ReaderSettings,
-    toolbarPreferences: ReaderToolbarPreferences,
-    customFontCount: Int,
-): Map<String, String> = buildMap {
-    put(
-        SharedSettingsDestination.EPUB_FORMAT.name,
-        listOfNotNull(
-            epubDefaults.fontFamily?.takeIf { it.isNotBlank() },
-            context.getString(R.string.settings_hub_value_font_size, epubDefaults.fontSize),
-        ).joinToString(" · ")
-    )
-    readerThemeById(epubDefaults.themeId)?.name?.let { themeName ->
-        put(SharedSettingsDestination.EPUB_THEME_TEXTURE.name, themeName)
-    }
-    BuiltInPdfReaderThemes.firstOrNull { it.id == pdfDefaults.themeId }?.name?.let { themeName ->
-        put(SharedSettingsDestination.PDF_APPEARANCE_DEFAULTS.name, themeName)
-    }
-    val totalTools = ReaderTool.entries.size
-    val visibleTools = (totalTools - toolbarPreferences.hiddenToolIds.size).coerceIn(0, totalTools)
-    put(
-        SharedSettingsDestination.READER_TOOLBAR_DEFAULTS.name,
-        context.getString(R.string.settings_hub_value_tools, visibleTools, totalTools)
-    )
-    if (customFontCount > 0) {
-        put(
-            SharedSettingsAction.CUSTOM_FONTS.name,
-            context.getString(R.string.settings_hub_value_fonts, customFontCount)
-        )
-    }
-    put(
-        SharedSettingsAction.ABOUT.name,
-        context.getString(R.string.about_version_name, BuildConfig.VERSION_NAME)
-    )
-}
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
@@ -250,20 +208,17 @@ fun SettingsScreen(
         }
     }
 
-    val settingsItemValues = remember(
-        epubReaderDefaults,
-        pdfReaderDefaults,
-        readerToolbarPreferences,
-        customFonts,
-    ) {
-        androidSettingsItemValues(
-            context = context,
-            epubDefaults = epubReaderDefaults,
-            pdfDefaults = pdfReaderDefaults,
-            toolbarPreferences = readerToolbarPreferences,
-            customFontCount = customFonts.count { !it.isDeleted },
-        )
-    }
+    // Current-value previews for the rows the host owns the data for. The shared model only knows a
+    // row's identity, so the host is the one that can say "Literata · 100% · Justified" instead of
+    // making the user open the page to read the value. Formatting is shared with iOS, which keeps the
+    // previews identical when the persisted defaults are the same.
+    val settingsItemValues = rememberSharedSettingsItemValues(
+        epubDefaults = epubReaderDefaults,
+        pdfDefaults = pdfReaderDefaults,
+        toolbarPreferences = readerToolbarPreferences,
+        customFontCount = customFonts.count { !it.isDeleted },
+        appVersion = BuildConfig.VERSION_NAME,
+    )
     // Model build allocates section/item lists; remember on its real inputs
     // so unrelated uiState emissions (progress, sync ticks) skip it.
     val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled, settingsItemValues) {
