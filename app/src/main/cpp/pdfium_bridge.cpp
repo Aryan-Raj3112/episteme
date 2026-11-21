@@ -1881,19 +1881,11 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
             continue;
         }
 
-        // Android PDFium samples this external BGRA buffer bottom-up relative to the
-        // Desktop/iOS builds (confirmed: upright matrix + matching objBounds still
-        // export vertically flipped). Flip rows in the JNI copy before CreateEx.
-        for (int y = 0; y < imageHeight / 2; y++) {
-            jint* rowTop = rasterPixels + pixelOffset + y * imageWidth;
-            jint* rowBottom = rasterPixels + pixelOffset + (imageHeight - 1 - y) * imageWidth;
-            for (int x = 0; x < imageWidth; x++) {
-                const jint tmp = rowTop[x];
-                rowTop[x] = rowBottom[x];
-                rowBottom[x] = tmp;
-            }
-        }
-
+        // The buffer is already in PDFium's order: Bitmap.getPixels() fills rows top-down
+        // and FPDFBitmap_CreateEx treats the first row as the image top (shared
+        // sharedPdfRasterImageMatrix documents the same contract, and iOS/Desktop feed the
+        // buffer unchanged). Reversing rows here mirrored every overlay vertically, which
+        // is the flipped text box text of #589. Keep the buffer as built.
         void* bitmap = bitmap_create_ex_func(
                 imageWidth,
                 imageHeight,
@@ -1901,7 +1893,6 @@ Java_com_aryan_reader_pdf_NativePdfiumBridge_exportAnnotatedPdf(
                 reinterpret_cast<void*>(rasterPixels + pixelOffset),
                 imageWidth * 4
         );
-        LOGG("raster.page=%d embed.flipY rows=%d (Android sample-order compensation)", pageIndex, imageHeight);
         if (!bitmap) {
             if (destroy_page_object_func) destroy_page_object_func(imageObject);
             close_page_func(page);
