@@ -104,7 +104,6 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -6906,14 +6905,23 @@ private fun SharedMobilePdfAnnotationsDrawerPage(
         }
         return
     }
-    var notesOnly by remember { mutableStateOf(false) }
+    var filters by remember { mutableStateOf(SharedAnnotationFilterState()) }
     var deleteTarget by remember { mutableStateOf<SharedPdfAnnotation?>(null) }
-    val filtered = highlights.filter { !notesOnly || !it.note.isNullOrBlank() }
+    // Computed per composition rather than remembered: a host that hands in a mutable list keeps
+    // its identity across in-place edits, and a remembered projection would go stale.
+    val colorFilterOptions = highlights.map { it.colorArgb }
+    val filtered = highlights
+        .filter { filters.matches(it.colorArgb, it.note) }
         .sortedWith(compareBy({ it.pageIndex }, { it.createdAt }, { it.id }))
     Column(modifier) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = !notesOnly, onClick = { notesOnly = false }, label = { Text("All") })
-            FilterChip(selected = notesOnly, onClick = { notesOnly = true }, label = { Text("With notes") })
+        SharedAnnotationFilterBar(
+            filters = filters,
+            annotationColorArgbs = colorFilterOptions,
+            onFiltersChange = { filters = it },
+        )
+        if (filtered.isEmpty()) {
+            SharedAnnotationFilteredEmptyState(onClearFilters = { filters = filters.cleared() })
+            return@Column
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
             items(filtered, key = { it.id }) { annotation ->

@@ -320,6 +320,8 @@ data class SharedAndroidPdfHighlightStrings(
     val empty: String,
     val allFilter: String,
     val withNotesFilter: String,
+    val noMatchingFilters: String,
+    val clearFilters: String,
     val defaultHighlight: String,
     val optionsDescription: String,
     val addNoteAction: String,
@@ -341,6 +343,9 @@ fun <T> SharedAndroidPdfHighlightsList(
     note: (T) -> String?,
     pageLabel: (T) -> String,
     color: (T) -> Color,
+    // Raw ARGB of the row's colour, kept separate from `color` because the filter compares hue
+    // identities and a host may resolve a custom colour into a display Color on the fly.
+    colorArgb: (T) -> Int,
     onNavigateToHighlight: (T) -> Unit,
     onNoteRequested: (T) -> Unit,
     onDeleteHighlight: (T) -> Unit,
@@ -353,26 +358,30 @@ fun <T> SharedAndroidPdfHighlightsList(
     }
 
     var showDeleteConfirmDialogFor by remember { mutableStateOf<T?>(null) }
-    var filterWithNotesOnly by remember { mutableStateOf(false) }
+    var filters by remember { mutableStateOf(SharedAnnotationFilterState()) }
+    // Not memoised on the projections: the host's lambdas are new instances on every recomposition,
+    // and a host may hand in a mutable list whose identity survives in-place edits — either way a
+    // remember key would freeze a stale projection.
+    val colorFilterOptions = highlights.map(colorArgb)
+    val sortedHighlights = highlights
+        .filter { filters.matches(colorArgb(it), note(it)) }
+        .sortedBy(sortKey)
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
-        ) {
-            androidx.compose.material3.FilterChip(
-                selected = !filterWithNotesOnly,
-                onClick = { filterWithNotesOnly = false },
-                label = { Text(strings.allFilter) },
+        SharedAnnotationFilterBar(
+            filters = filters,
+            annotationColorArgbs = colorFilterOptions,
+            onFiltersChange = { filters = it },
+            allLabel = strings.allFilter,
+            withNotesLabel = strings.withNotesFilter,
+        )
+        if (sortedHighlights.isEmpty()) {
+            SharedAnnotationFilteredEmptyState(
+                onClearFilters = { filters = filters.cleared() },
+                message = strings.noMatchingFilters,
+                clearLabel = strings.clearFilters,
             )
-            androidx.compose.material3.FilterChip(
-                selected = filterWithNotesOnly,
-                onClick = { filterWithNotesOnly = true },
-                label = { Text(strings.withNotesFilter) },
-            )
+            return@Column
         }
-
-        val filteredHighlights = if (filterWithNotesOnly) highlights.filter { !note(it).isNullOrBlank() } else highlights
-        val sortedHighlights = remember(filteredHighlights) { filteredHighlights.sortedBy(sortKey) }
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(sortedHighlights, key = key) { highlight ->
                 ListItem(

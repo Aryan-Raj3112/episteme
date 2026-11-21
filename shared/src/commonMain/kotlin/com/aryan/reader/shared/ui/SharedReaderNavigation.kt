@@ -933,167 +933,181 @@ internal fun SharedReaderAnnotationsTab(
         var menuExpandedFor by remember { mutableStateOf<UserHighlight?>(null) }
         var deleteConfirmFor by remember { mutableStateOf<UserHighlight?>(null) }
         val colors = highlightPalette.sanitized()
-        Box(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .sharedAcceleratedLazyWheelScroll(listState)
-                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(highlights, key = { it.id }) { highlight ->
-                        val locator = highlight.locator.withFallbacks(
-                            chapterIndex = highlight.chapterIndex,
-                            cfi = highlight.cfi,
-                            textQuote = highlight.text
-                        )
-                        val chapterTitle = session.reader.book.chapters
-                            .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
-                            ?.title
-                            ?: readerString("chapter_number_format", "Chapter %1\$d", (locator.chapterIndex ?: highlight.chapterIndex) + 1)
-                        val pageLabel = locator.pageIndex?.let { readerString("pdf_page_short", "Page %1\$d", it + 1) }
-                        Surface(
-                            color = MaterialTheme.colorScheme.surface,
-                            shape = RoundedCornerShape(6.dp),
-                            modifier = Modifier.fillMaxWidth()
+        var filters by remember { mutableStateOf(SharedAnnotationFilterState()) }
+        val colorFilterOptions = remember(highlights) { highlights.map { it.effectiveArgb } }
+        val visibleHighlights = remember(highlights, filters) {
+            highlights.filter { filters.matches(it.effectiveArgb, it.note) }
+        }
+        Column(modifier = Modifier.fillMaxSize()) {
+            SharedAnnotationFilterBar(
+                filters = filters,
+                annotationColorArgbs = colorFilterOptions,
+                onFiltersChange = { filters = it },
+            )
+            if (visibleHighlights.isEmpty()) {
+                SharedAnnotationFilteredEmptyState(onClearFilters = { filters = filters.cleared() })
+            } else {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .sharedAcceleratedLazyWheelScroll(listState)
+                                .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 24.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp, end = 4.dp).fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Row(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clickable { onGoToHighlight(highlight) },
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.CenterVertically
+                            items(visibleHighlights, key = { it.id }) { highlight ->
+                                val locator = highlight.locator.withFallbacks(
+                                    chapterIndex = highlight.chapterIndex,
+                                    cfi = highlight.cfi,
+                                    textQuote = highlight.text
+                                )
+                                val chapterTitle = session.reader.book.chapters
+                                    .getOrNull(locator.chapterIndex ?: highlight.chapterIndex)
+                                    ?.title
+                                    ?: readerString("chapter_number_format", "Chapter %1\$d", (locator.chapterIndex ?: highlight.chapterIndex) + 1)
+                                val pageLabel = locator.pageIndex?.let { readerString("pdf_page_short", "Page %1\$d", it + 1) }
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(start = 8.dp, top = 8.dp, bottom = 8.dp, end = 4.dp).fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .width(12.dp)
-                                                .height(12.dp)
-                                                .background(highlight.effectiveColor, RoundedCornerShape(2.dp))
-                                        )
-                                        Text(
-                                            listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                    }
-                                    Box {
-                                        IconButton(onClick = { menuExpandedFor = highlight }) {
-                                            Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_annotation_options", "Annotation options"))
-                                        }
-                                        SharedDropdownMenu(
-                                            expanded = menuExpandedFor == highlight,
-                                            onDismissRequest = { menuExpandedFor = null }
-                                        ) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                             Row(
                                                 modifier = Modifier
-                                                    .padding(vertical = 8.dp, horizontal = 10.dp)
-                                                    .fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.Center,
+                                                    .weight(1f)
+                                                    .clickable { onGoToHighlight(highlight) },
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                colors.colors.indices.forEach { slot ->
-                                                    val slotArgb = colors.argbAt(slot)
-                                                    val slotColor = Color(slotArgb)
-                                                    val isSelected = highlight.effectiveArgb == slotArgb
-                                                    Box(
-                                                        contentAlignment = Alignment.Center,
-                                                        modifier = Modifier
-                                                            .padding(horizontal = 4.dp)
-                                                            .size(28.dp)
-                                                            .clip(CircleShape)
-                                                            .background(slotColor)
-                                                            .clickable {
-                                                                menuExpandedFor = null
-                                                                onHighlightColorChange(highlight, slotArgb)
-                                                            }
-                                                    ) {
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .matchParentSize()
-                                                                .border(
-                                                                    width = if (isSelected) 3.dp else 1.dp,
-                                                                    color = if (isSelected) {
-                                                                        MaterialTheme.colorScheme.onSurface
-                                                                    } else {
-                                                                        MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
-                                                                    },
-                                                                    shape = CircleShape
-                                                                )
-                                                        )
-                                                        if (isSelected) {
-                                                            Icon(
-                                                                imageVector = Icons.Default.Check,
-                                                                contentDescription = null,
-                                                                tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White,
-                                                                modifier = Modifier.size(16.dp)
-                                                            )
-                                                        }
-                                                    }
-                                                }
-                                                Spacer(modifier = Modifier.width(6.dp))
-                                                SharedReaderHighlightPaletteSpectrumButton(
-                                                    onClick = {
-                                                        menuExpandedFor = null
-                                                        onOpenHighlightPaletteManager()
-                                                    },
-                                                    size = 28.dp
+                                                Box(
+                                                    modifier = Modifier
+                                                        .width(12.dp)
+                                                        .height(12.dp)
+                                                        .background(highlight.effectiveColor, RoundedCornerShape(2.dp))
+                                                )
+                                                Text(
+                                                    listOfNotNull(chapterTitle, pageLabel).joinToString(" - "),
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f)
                                                 )
                                             }
-                                            HorizontalDivider()
-                                            DropdownMenuItem(
-                                                text = {
-                                                    Text(
-                                                        if (highlight.note.isNullOrBlank()) {
-                                                            readerString("menu_add_note", "Add Note")
-                                                        } else {
-                                                            readerString("menu_edit_note", "Edit Note")
+                                            Box {
+                                                IconButton(onClick = { menuExpandedFor = highlight }) {
+                                                    Icon(Icons.Default.MoreVert, contentDescription = readerString("desktop_annotation_options", "Annotation options"))
+                                                }
+                                                SharedDropdownMenu(
+                                                    expanded = menuExpandedFor == highlight,
+                                                    onDismissRequest = { menuExpandedFor = null }
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .padding(vertical = 8.dp, horizontal = 10.dp)
+                                                            .fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.Center,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        colors.colors.indices.forEach { slot ->
+                                                            val slotArgb = colors.argbAt(slot)
+                                                            val slotColor = Color(slotArgb)
+                                                            val isSelected = highlight.effectiveArgb == slotArgb
+                                                            Box(
+                                                                contentAlignment = Alignment.Center,
+                                                                modifier = Modifier
+                                                                    .padding(horizontal = 4.dp)
+                                                                    .size(28.dp)
+                                                                    .clip(CircleShape)
+                                                                    .background(slotColor)
+                                                                    .clickable {
+                                                                        menuExpandedFor = null
+                                                                        onHighlightColorChange(highlight, slotArgb)
+                                                                    }
+                                                            ) {
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .matchParentSize()
+                                                                        .border(
+                                                                            width = if (isSelected) 3.dp else 1.dp,
+                                                                            color = if (isSelected) {
+                                                                                MaterialTheme.colorScheme.onSurface
+                                                                            } else {
+                                                                                MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
+                                                                            },
+                                                                            shape = CircleShape
+                                                                        )
+                                                                )
+                                                                if (isSelected) {
+                                                                    Icon(
+                                                                        imageVector = Icons.Default.Check,
+                                                                        contentDescription = null,
+                                                                        tint = if (slotColor.luminance() > 0.5f) Color.Black else Color.White,
+                                                                        modifier = Modifier.size(16.dp)
+                                                                    )
+                                                                }
+                                                            }
+                                                        }
+                                                        Spacer(modifier = Modifier.width(6.dp))
+                                                        SharedReaderHighlightPaletteSpectrumButton(
+                                                            onClick = {
+                                                                menuExpandedFor = null
+                                                                onOpenHighlightPaletteManager()
+                                                            },
+                                                            size = 28.dp
+                                                        )
+                                                    }
+                                                    HorizontalDivider()
+                                                    DropdownMenuItem(
+                                                        text = {
+                                                            Text(
+                                                                if (highlight.note.isNullOrBlank()) {
+                                                                    readerString("menu_add_note", "Add Note")
+                                                                } else {
+                                                                    readerString("menu_edit_note", "Edit Note")
+                                                                }
+                                                            )
+                                                        },
+                                                        onClick = {
+                                                            menuExpandedFor = null
+                                                            onEditHighlight(highlight)
                                                         }
                                                     )
-                                                },
-                                                onClick = {
-                                                    menuExpandedFor = null
-                                                    onEditHighlight(highlight)
+                                                    DropdownMenuItem(
+                                                        text = { Text(readerString("action_delete", "Delete")) },
+                                                        onClick = {
+                                                            menuExpandedFor = null
+                                                            deleteConfirmFor = highlight
+                                                        }
+                                                    )
                                                 }
-                                            )
-                                            DropdownMenuItem(
-                                                text = { Text(readerString("action_delete", "Delete")) },
-                                                onClick = {
-                                                    menuExpandedFor = null
-                                                    deleteConfirmFor = highlight
-                                                }
-                                            )
+                                            }
                                         }
-                                    }
-                                }
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable { onGoToHighlight(highlight) },
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                                    highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
-                                        Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { onGoToHighlight(highlight) },
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(highlight.text, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                                            highlight.note?.takeIf { it.isNotBlank() }?.let { note ->
+                                                Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+                        SharedReaderVerticalScrollbar(
+                            listState = listState,
+                            modifier = Modifier.align(Alignment.CenterEnd)
+                        )
                     }
-                }
-                SharedReaderVerticalScrollbar(
-                    listState = listState,
-                    modifier = Modifier.align(Alignment.CenterEnd)
-                )
-            }
             deleteConfirmFor?.let { highlight ->
                 AlertDialog(
                     onDismissRequest = { deleteConfirmFor = null },
@@ -1115,6 +1129,8 @@ internal fun SharedReaderAnnotationsTab(
                         }
                     }
                 )
+            }
+                }
             }
         }
     }

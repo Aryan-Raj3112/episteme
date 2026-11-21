@@ -1210,6 +1210,10 @@
     <string name="filter_all">All</string>
     <!-- Filter option label to show only annotations that have attached notes. -->
     <string name="filter_with_notes">With Notes</string>
+    <!-- Empty state shown when the annotation filters hide every highlight in the file. -->
+    <string name="no_annotations_match_filters">No annotations match these filters</string>
+    <!-- Action that resets the annotation filters back to showing every annotation. -->
+    <string name="action_clear_filters">Clear filters</string>
     <string name="menu_add_note">Add Note</string>
     <string name="menu_edit_note">Edit Note</string>
 

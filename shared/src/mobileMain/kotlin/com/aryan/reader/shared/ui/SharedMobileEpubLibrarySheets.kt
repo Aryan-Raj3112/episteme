@@ -35,7 +35,6 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -450,6 +449,9 @@ fun <T> SharedMobileEpubToc(
  * a color dot, chapter title and a tinted note card. The previous shared version rendered a
  * translucent color `Surface` card with a 10dp dot and plain note text, which is a different
  * component, not a platform difference.
+ *
+ * Filtering is [SharedAnnotationFilterBar] — notes, plus one swatch per colour the book actually
+ * uses — shared with the PDF drawers so both readers filter their files the same way.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -483,36 +485,33 @@ fun SharedMobileEpubHighlights(
         }
         return
     }
-    var notesOnly by remember { mutableStateOf(false) }
+    var filters by remember { mutableStateOf(SharedAnnotationFilterState()) }
     var menuHighlight by remember { mutableStateOf<UserHighlight?>(null) }
     var deleteHighlight by remember { mutableStateOf<UserHighlight?>(null) }
     val listState = rememberLazyListState()
-    val filteredHighlights = remember(highlights, notesOnly) {
-        if (notesOnly) highlights.filter { !it.note.isNullOrBlank() } else highlights
-    }
+    // Both projections are rebuilt during composition on purpose. Android hands this list a
+    // `SnapshotStateList`, whose identity survives every in-place add, recolour and note edit, so a
+    // `remember(highlights, ...)` never invalidated and the drawer kept serving the projection from
+    // before the edit — new notes only appeared after the book was reopened.
+    val colorFilterOptions = highlights.map { it.effectiveArgb }
+    val filteredHighlights = highlights
+        .filter { filters.matches(it.effectiveArgb, it.note) }
+        .sortedBy { it.chapterIndex }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            FilterChip(
-                selected = !notesOnly,
-                onClick = { notesOnly = false },
-                label = { Text(readerString("filter_all", "All")) }
+        SharedAnnotationFilterBar(
+            filters = filters,
+            annotationColorArgbs = colorFilterOptions,
+            onFiltersChange = { filters = it },
+            // Export runs off the whole file, not the filtered rows: the button sits next to the
+            // filters, so exporting only the visible subset would be a silent data loss.
+            onExport = onExportAnnotations,
+        )
+        if (filteredHighlights.isEmpty()) {
+            SharedAnnotationFilteredEmptyState(
+                onClearFilters = { filters = filters.cleared() },
             )
-            FilterChip(
-                selected = notesOnly,
-                onClick = { notesOnly = true },
-                label = { Text(readerString("filter_with_notes", "With Notes")) }
-            )
-            if (onExportAnnotations != null) {
-                Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = onExportAnnotations) {
-                    Text(readerString("action_export_annotations", "Export annotations"))
-                }
-            }
+            return@Column
         }
         Box(modifier = Modifier.fillMaxSize()) {
             LazyColumn(
@@ -520,7 +519,7 @@ fun SharedMobileEpubHighlights(
                 modifier = Modifier.fillMaxSize().padding(end = 4.dp)
             ) {
                 items(
-                    items = filteredHighlights.sortedBy { it.chapterIndex },
+                    items = filteredHighlights,
                     key = { it.id }
                 ) { highlight ->
                     ListItem(

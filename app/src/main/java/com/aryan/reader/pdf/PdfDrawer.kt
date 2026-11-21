@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
@@ -905,6 +906,8 @@ internal fun PdfNavigationDrawerContent(
                             empty = stringResource(R.string.no_highlights_yet),
                             allFilter = stringResource(R.string.read_status_all),
                             withNotesFilter = stringResource(R.string.filter_with_notes),
+                            noMatchingFilters = stringResource(R.string.no_annotations_match_filters),
+                            clearFilters = stringResource(R.string.action_clear_filters),
                             defaultHighlight = stringResource(R.string.msg_highlighted_section_default),
                             optionsDescription = stringResource(R.string.content_desc_options),
                             addNoteAction = stringResource(R.string.menu_add_note),
@@ -922,6 +925,7 @@ internal fun PdfNavigationDrawerContent(
                             context.resources.getString(R.string.pdf_page_short, highlight.pageIndex + 1)
                         },
                         color = { highlight -> highlight.resolvedColor(customHighlightColors) },
+                        colorArgb = { highlight -> highlight.resolvedColor(customHighlightColors).toArgb() },
                         onNavigateToHighlight = { highlight ->
                             onCloseDrawer()
                             onPageSelected(highlight.pageIndex)
