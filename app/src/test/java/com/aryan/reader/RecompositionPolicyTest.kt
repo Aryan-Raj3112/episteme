@@ -34,7 +34,7 @@ class RecompositionPolicyTest {
         assertTrue(source.contains("val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled, settingsItemValues)"))
         // The value previews are their own remembered key: rebuilding them inline would rebuild the
         // whole model on every recomposition.
-        assertTrue(source.contains("val settingsItemValues = remember("))
+        assertTrue(source.contains("val settingsItemValues = rememberSharedSettingsItemValues("))
     }
 
     @Test

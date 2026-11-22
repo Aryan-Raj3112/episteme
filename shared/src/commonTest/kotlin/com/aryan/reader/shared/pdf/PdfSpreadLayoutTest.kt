@@ -76,6 +76,25 @@ class PdfSpreadLayoutTest {
     }
 
     @Test
+    fun `right to left pagination mirrors the displayed spread order`() {
+        val settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
+
+        // Logical order is what labels and progress use; display order mirrors it.
+        assertEquals(listOf(2, 3), PdfSpreadLayout.visiblePageIndicesForDisplay(3, pageCount = 10, settings = settings, isRightToLeft = false))
+        assertEquals(listOf(3, 2), PdfSpreadLayout.visiblePageIndicesForDisplay(3, pageCount = 10, settings = settings, isRightToLeft = true))
+        // Single page, a lone final page, and the standalone first page have
+        // nothing to mirror.
+        assertEquals(listOf(4), PdfSpreadLayout.visiblePageIndicesForDisplay(4, pageCount = 5, settings = settings, isRightToLeft = true))
+        assertEquals(listOf(3), PdfSpreadLayout.visiblePageIndicesForDisplay(3, pageCount = 10, settings = ReaderSettings(), isRightToLeft = true))
+        val firstStandalone = ReaderSettings(
+            pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE,
+            pdfFirstPageStandaloneInSpread = true
+        )
+        assertEquals(listOf(0), PdfSpreadLayout.visiblePageIndicesForDisplay(0, pageCount = 6, settings = firstStandalone, isRightToLeft = true))
+        assertEquals(listOf(2, 1), PdfSpreadLayout.visiblePageIndicesForDisplay(2, pageCount = 6, settings = firstStandalone, isRightToLeft = true))
+    }
+
+    @Test
     fun `spread progress uses the visible spread end`() {
         val settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.TWO_PAGE)
 

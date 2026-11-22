@@ -129,7 +129,7 @@ fun PdfCustomizeToolsSheet(
 private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
     val title = stringResource(tool.titleRes)
     when (tool) {
-        PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.apps), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.SPLIT_VIEW -> Icon(painterResource(id = R.drawable.splitscreen_portrait), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = title, modifier = Modifier.size(20.dp))

@@ -262,7 +262,7 @@ internal fun PdfTopBar(
                                                 description = stringResource(R.string.tooltip_dictionary_desc),
                                                 onClick = onShowDictionarySettings
                                             ) {
-                                                Icon(painterResource(id = R.drawable.dictionary), contentDescription = stringResource(R.string.content_desc_dictionary_settings), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                Icon(com.aryan.reader.shared.ui.SharedReaderIcons.ExternalApps, contentDescription = stringResource(R.string.content_desc_dictionary_settings), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                             PdfReaderTool.SPLIT_VIEW -> if (onOpenSplit != null) {
                                                 TooltipIconButton(
@@ -412,6 +412,9 @@ internal fun PdfTopBar(
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
                                                 text = { Text(stringResource(R.string.toolbar_hidden_tools_menu)) },
                                                 onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded },
+                                                leadingIcon = {
+                                                    Icon(com.aryan.reader.shared.ui.SharedReaderIcons.Handyman, contentDescription = null, modifier = Modifier.size(20.dp))
+                                                },
                                                 trailingIcon = {
                                                     Icon(
                                                         Icons.Default.ArrowDropDown,
@@ -462,7 +465,10 @@ internal fun PdfTopBar(
                                         PdfOverflowMenuSection.OCR_LANGUAGE -> {
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
                                                 text = { Text(stringResource(R.string.menu_ocr_language)) },
-                                                onClick = { showMoreMenu = false; onShowOcrLanguage() }
+                                                onClick = { showMoreMenu = false; onShowOcrLanguage() },
+                                                leadingIcon = {
+                                                    Icon(com.aryan.reader.shared.ui.SharedReaderIcons.Translate, contentDescription = null, modifier = Modifier.size(20.dp))
+                                                }
                                             )
                                         }
                                         PdfOverflowMenuSection.VISUAL_OPTIONS -> {
@@ -476,6 +482,9 @@ internal fun PdfTopBar(
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
                                                 text = { Text(stringResource(R.string.menu_change_reading_mode)) },
                                                 onClick = { showReadingModeExpanded = !showReadingModeExpanded },
+                                                leadingIcon = {
+                                                    Icon(com.aryan.reader.shared.ui.SharedReaderIcons.MenuBook, contentDescription = null, modifier = Modifier.size(20.dp))
+                                                },
                                                 trailingIcon = {
                                                     Icon(
                                                         Icons.Default.ArrowDropDown,
@@ -524,6 +533,7 @@ internal fun PdfTopBar(
                                         PdfOverflowMenuSection.TAP_TO_TURN -> {
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetSwitchRow(
                                                 title = stringResource(R.string.menu_tap_to_turn_pages),
+                                                icon = com.aryan.reader.shared.ui.SharedReaderIcons.TouchApp,
                                                 checked = tapToNavigateEnabled,
                                                 enabled = displayMode == DisplayMode.PAGINATION,
                                                 onCheckedChange = { onToggleTapToNavigate() },
@@ -532,6 +542,7 @@ internal fun PdfTopBar(
                                         PdfOverflowMenuSection.PAGE_TURN_ANIM -> {
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetSwitchRow(
                                                 title = stringResource(R.string.menu_realistic_page_turns),
+                                                icon = com.aryan.reader.shared.ui.SharedReaderIcons.PageTurn,
                                                 checked = pageTurnAnimationEnabled,
                                                 enabled = displayMode == DisplayMode.PAGINATION,
                                                 onCheckedChange = { onTogglePageTurnAnimation() },
@@ -540,6 +551,7 @@ internal fun PdfTopBar(
                                         PdfOverflowMenuSection.KEEP_SCREEN_ON -> {
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetSwitchRow(
                                                 title = stringResource(R.string.menu_keep_screen_on),
+                                                icon = com.aryan.reader.shared.ui.SharedReaderIcons.KeepScreenOn,
                                                 checked = isKeepScreenOn,
                                                 onCheckedChange = { onToggleKeepScreenOn() },
                                             )
@@ -548,7 +560,10 @@ internal fun PdfTopBar(
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
                                                 text = { Text(stringResource(R.string.menu_auto_scroll)) },
                                                 enabled = !isTtsSessionActive && displayMode == DisplayMode.VERTICAL_SCROLL,
-                                                onClick = { showMoreMenu = false; onStartAutoScroll() }
+                                                onClick = { showMoreMenu = false; onStartAutoScroll() },
+                                                leadingIcon = {
+                                                    Icon(com.aryan.reader.shared.ui.SharedReaderIcons.AutoScroll, contentDescription = null, modifier = Modifier.size(20.dp))
+                                                }
                                             )
                                         }
                                         PdfOverflowMenuSection.TTS_SETTINGS -> {
@@ -758,7 +773,7 @@ private fun HiddenPdfToolMenuItem(
         },
         leadingIcon = {
             when (tool) {
-                PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = null, modifier = Modifier.size(20.dp))
+                PdfReaderTool.DICTIONARY -> Icon(com.aryan.reader.shared.ui.SharedReaderIcons.ExternalApps, contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.SPLIT_VIEW -> Icon(painterResource(id = R.drawable.splitscreen_portrait), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = null, modifier = Modifier.size(20.dp))
                 PdfReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = null, modifier = Modifier.size(20.dp))
@@ -933,7 +948,7 @@ fun PdfBottomBar(
                                 description = stringResource(R.string.tooltip_dictionary_desc),
                                 onClick = onShowDictionarySettings
                             ) {
-                                Icon(painterResource(id = R.drawable.dictionary), contentDescription = stringResource(R.string.content_desc_dictionary_settings), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Icon(com.aryan.reader.shared.ui.SharedReaderIcons.ExternalApps, contentDescription = stringResource(R.string.content_desc_dictionary_settings), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             PdfReaderTool.SPLIT_VIEW -> if (onOpenSplit != null) {
                                 TooltipIconButton(

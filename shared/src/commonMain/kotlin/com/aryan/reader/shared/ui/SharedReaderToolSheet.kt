@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -173,6 +174,9 @@ fun SharedReaderToolSheetRowItem(
                 Box(
                     modifier = Modifier
                         .size(32.dp)
+                        // The badge is decoration: the row's title already names the action, and the
+                        // icon composables the menus pass carry their own descriptions.
+                        .clearAndSetSemantics {}
                         .background(
                             if (enabled) {
                                 MaterialTheme.colorScheme.secondaryContainer

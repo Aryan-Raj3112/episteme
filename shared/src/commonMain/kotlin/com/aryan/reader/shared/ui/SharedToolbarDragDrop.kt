@@ -45,7 +45,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -570,7 +569,7 @@ fun SharedPdfToolbarDragIcon(tool: PdfReaderTool) {
     val icon: ImageVector = when (tool) {
         PdfReaderTool.DICTIONARY -> Icons.Default.Translate
         PdfReaderTool.THEME -> Icons.Default.Palette
-        PdfReaderTool.BRIGHTNESS -> Icons.Default.Tune
+        PdfReaderTool.BRIGHTNESS -> SharedReaderIcons.Contrast
         PdfReaderTool.LOCK_PANNING -> Icons.Default.LockOpen
         PdfReaderTool.SLIDER -> Icons.Default.Settings
         PdfReaderTool.TOC -> Icons.Default.Menu
@@ -593,19 +592,20 @@ fun SharedPdfToolbarDragIcon(tool: PdfReaderTool) {
 @Composable
 fun SharedEpubToolbarDragIcon(tool: ReaderTool) {
     val icon: ImageVector = when (tool) {
-        ReaderTool.DICTIONARY -> Icons.Default.Translate
-        ReaderTool.THEME -> Icons.Default.Palette
-        ReaderTool.BRIGHTNESS -> Icons.Default.Tune
-        ReaderTool.SLIDER -> Icons.Default.Settings
+        ReaderTool.DICTIONARY -> SharedReaderIcons.ExternalApps
+        ReaderTool.THEME -> SharedReaderIcons.Palette
+        // Same contrast glyph the bar shows for brightness; the generic "tune" sliders read as settings.
+        ReaderTool.BRIGHTNESS -> SharedReaderIcons.Contrast
+        ReaderTool.SLIDER -> SharedReaderIcons.Slider
         ReaderTool.TOC -> Icons.Default.Menu
-        ReaderTool.FORMAT -> Icons.Default.TextFields
+        ReaderTool.FORMAT -> SharedReaderIcons.FormatSize
         ReaderTool.SEARCH -> Icons.Default.Search
         ReaderTool.AI_FEATURES -> Icons.Default.Ai
-        ReaderTool.TTS_CONTROLS -> Icons.Default.GraphicEq
+        ReaderTool.TTS_CONTROLS -> SharedReaderIcons.TextToSpeech
         ReaderTool.BOOK_REPLACEMENTS -> Icons.Default.TextFields
         ReaderTool.FILE_INFO -> Icons.Default.Info
-        ReaderTool.SCREEN_ORIENTATION -> Icons.Default.ScreenRotation
-        ReaderTool.PERCEPTION_LINES -> Icons.Default.Visibility
+        ReaderTool.SCREEN_ORIENTATION -> SharedReaderIcons.ScreenRotation
+        ReaderTool.PERCEPTION_LINES -> SharedReaderIcons.PerceptionLines
         ReaderTool.BOOKMARK -> Icons.Default.Bookmark
         else -> Icons.Default.MoreVert
     }

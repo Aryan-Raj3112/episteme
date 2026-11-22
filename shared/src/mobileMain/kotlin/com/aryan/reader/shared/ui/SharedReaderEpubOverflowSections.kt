@@ -205,6 +205,9 @@ fun SharedReaderEpubOverflowSection(
             // itself is derived from the host's own tool order.
             SharedReaderOverflowExpanderItem(
                 label = labels.hiddenTools,
+                // The wrench-and-screwdriver reads as "the tools you put away", which is exactly
+                // what this list is.
+                leadingIcon = SharedReaderIcons.Handyman,
                 expanded = menuState.hiddenToolsExpanded.value,
                 onClick = { menuState.hiddenToolsExpanded.value = !menuState.hiddenToolsExpanded.value }
             )
@@ -240,6 +243,7 @@ fun SharedReaderEpubOverflowSection(
         EpubOverflowMenuSection.READING_MODE -> {
             SharedReaderOverflowExpanderItem(
                 label = labels.changeReadingMode,
+                leadingIcon = SharedReaderIcons.MenuBook,
                 expanded = menuState.readingModeExpanded.value,
                 onClick = { menuState.readingModeExpanded.value = !menuState.readingModeExpanded.value }
             )
@@ -293,6 +297,7 @@ fun SharedReaderEpubOverflowSection(
 
         EpubOverflowMenuSection.TAP_TO_TURN -> EpubOverflowSwitchItem(
             label = labels.tapToTurnPages,
+            leadingIcon = SharedReaderIcons.TouchApp,
             checked = state.tapToNavigateEnabled,
             enabled = state.isPaginated,
             onCheckedChange = callbacks.onToggleTapToNavigate,
@@ -304,6 +309,7 @@ fun SharedReaderEpubOverflowSection(
             } else {
                 labels.volumeButtonPageTurn
             },
+            leadingIcon = SharedReaderIcons.VolumeUp,
             checked = state.volumeScrollEnabled,
             enabled = callbacks.onToggleVolumeScroll != null,
             onCheckedChange = { callbacks.onToggleVolumeScroll?.invoke(it) },
@@ -311,6 +317,7 @@ fun SharedReaderEpubOverflowSection(
 
         EpubOverflowMenuSection.PAGE_TURN_ANIM -> EpubOverflowSwitchItem(
             label = labels.realisticPageTurns,
+            leadingIcon = SharedReaderIcons.PageTurn,
             checked = state.pageTurnAnimationEnabled,
             enabled = state.isPaginated,
             onCheckedChange = callbacks.onTogglePageTurnAnimation,
@@ -318,6 +325,7 @@ fun SharedReaderEpubOverflowSection(
 
         EpubOverflowMenuSection.KEEP_SCREEN_ON -> EpubOverflowSwitchItem(
             label = labels.keepScreenOn,
+            leadingIcon = SharedReaderIcons.KeepScreenOn,
             checked = state.keepScreenOn,
             onCheckedChange = callbacks.onToggleKeepScreenOn,
         )
@@ -333,6 +341,7 @@ fun SharedReaderEpubOverflowSection(
 
         EpubOverflowMenuSection.AUTO_SCROLL -> SharedReaderOverflowItem(
             label = labels.autoScroll,
+            leadingIcon = SharedReaderIcons.AutoScroll,
             // Android parity (EpubReaderControls, AUTO_SCROLL): needs a scrollable body and an idle
             // narration engine, and the item only ever starts auto-scroll — the surface stops it.
             enabled = !state.isTtsActive && state.readingMode == ReaderReadingMode.VERTICAL,

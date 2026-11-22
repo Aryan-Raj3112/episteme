@@ -420,8 +420,9 @@ fun SharedMobileEpubTopBar(
         onShowMoreChange(false)
     }
     val defaultHiddenToolItem: @Composable (ReaderTool, () -> Unit) -> Unit = { tool, dismiss ->
-        SharedReaderToolSheetRow(
-            title = tool.title,
+        SharedReaderToolSheetRowItem(
+            text = { Text(tool.title) },
+            leadingIcon = { SharedEpubToolbarDragIcon(tool) },
             onClick = {
                 when (tool) {
                     ReaderTool.THEME -> onTheme()
@@ -653,7 +654,7 @@ fun SharedMobileEpubTopBar(
                             modifier = Modifier.testTag("EpubTopDictionary")
                                 .semantics { contentDescription = dictionaryContentDescription }
                         ) {
-                            Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = inactiveTint)
+                            Icon(SharedReaderIcons.ExternalApps, contentDescription = null, tint = inactiveTint)
                         }
                         ReaderTool.AI_FEATURES -> if (aiAvailable) {
                             SharedTooltipIconButton(
@@ -1071,7 +1072,7 @@ fun SharedMobileEpubBottomBar(
                             modifier = Modifier.testTag("EpubBottomDictionary")
                                 .semantics { contentDescription = dictionaryContentDescription }
                         ) {
-                            Icon(SharedReaderIcons.Dictionary, contentDescription = null, tint = inactiveTint)
+                            Icon(SharedReaderIcons.ExternalApps, contentDescription = null, tint = inactiveTint)
                         }
                         ReaderTool.BRIGHTNESS -> SharedTooltipIconButton(
                             text = brightnessText,

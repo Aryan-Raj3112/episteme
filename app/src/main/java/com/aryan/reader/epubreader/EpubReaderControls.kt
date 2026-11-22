@@ -841,7 +841,7 @@ fun CustomizeToolsSheet(
 private fun ToolPreviewIcon(tool: ReaderTool, isSliderActive: Boolean = false) {
     val title = stringResource(tool.titleRes)
     when (tool) {
-        ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.apps), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.SLIDER -> Icon(

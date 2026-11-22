@@ -11729,12 +11729,14 @@ private fun PdfViewerPaginationPage(
         pagerPageIndex,
         totalDisplayPages,
         pdfSpreadSettings.pageSpreadMode,
-        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread,
+        rightToLeftPagination
     ) {
-        PdfSpreadLayout.visiblePageIndices(
+        PdfSpreadLayout.visiblePageIndicesForDisplay(
             pageIndex = paginationDisplayPageForPagerPage(pagerPageIndex),
             pageCount = totalDisplayPages,
-            settings = pdfSpreadSettings
+            settings = pdfSpreadSettings,
+            isRightToLeft = rightToLeftPagination
         )
     }
     val isVisiblePage = remember(pagerState.currentPage, pagerPageIndex) {

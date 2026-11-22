@@ -1459,13 +1459,27 @@ internal fun SharedMobilePdfPaginatedPages(
         } else {
             Modifier
         }
-        val spreadPages = remember(pagerPage, spreadStarts, pageCount, useTwoPageSpread, firstPageStandaloneInSpread) {
-            val start = spreadStarts.getOrElse(pagerPage) { 0 }
-            when {
-                !useTwoPageSpread -> listOf(start)
-                firstPageStandaloneInSpread && start == 0 -> listOf(0)
-                else -> listOf(start, start + 1).filter { it in 0 until pageCount }
-            }
+        val spreadPages = remember(
+            pagerPage,
+            spreadStarts,
+            pageCount,
+            useTwoPageSpread,
+            firstPageStandaloneInSpread,
+            rightToLeftPagination
+        ) {
+            PdfSpreadLayout.visiblePageIndicesForDisplay(
+                pageIndex = spreadStarts.getOrElse(pagerPage) { 0 },
+                pageCount = pageCount,
+                settings = ReaderSettings(
+                    pageSpreadMode = if (useTwoPageSpread) {
+                        ReaderPageSpreadMode.TWO_PAGE
+                    } else {
+                        ReaderPageSpreadMode.SINGLE
+                    },
+                    pdfFirstPageStandaloneInSpread = firstPageStandaloneInSpread
+                ),
+                isRightToLeft = rightToLeftPagination
+            )
         }
         SharedMobilePdfZoomViewport(
             camera = zoomCamera,
