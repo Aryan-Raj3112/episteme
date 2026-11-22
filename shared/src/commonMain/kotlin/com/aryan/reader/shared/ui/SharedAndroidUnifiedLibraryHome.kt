@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,7 +17,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,7 +27,6 @@ import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -49,9 +46,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -166,43 +160,14 @@ fun <T> SharedAndroidUnifiedLibraryHome(
             }
 
             books.isEmpty() -> {
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(horizontal = SharedSpacing.Xl)
-                        .testTag("UnifiedLibraryHomeEmpty"),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    // A tonal disc instead of a bare sentence: an empty screen is the one place the
-                    // library has room to look designed rather than unfinished.
-                    Surface(
-                        modifier = Modifier.size(96.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    ) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.LibraryBooks,
-                                contentDescription = null,
-                                modifier = Modifier.size(40.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(SharedSpacing.Lg))
-                    Text(
-                        strings.noBooks,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        textAlign = TextAlign.Center,
-                    )
-                    if (emptyActionLabel != null && onEmptyAction != null) {
-                        Spacer(Modifier.height(SharedSpacing.Lg))
-                        FilledTonalButton(onClick = onEmptyAction) { Text(emptyActionLabel) }
-                    }
-                }
+                SharedEmptyState(
+                    icon = Icons.AutoMirrored.Filled.LibraryBooks,
+                    title = strings.noBooks,
+                    modifier = Modifier.weight(1f),
+                    actionLabel = emptyActionLabel,
+                    onAction = onEmptyAction,
+                    testTag = "UnifiedLibraryHomeEmpty",
+                )
             }
 
             contentSearchActive -> {
@@ -297,15 +262,11 @@ private fun SharedHomeSectionHeader(
     onListViewChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = title.orEmpty(),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f).testTag("UnifiedLibraryHomeSectionTitle"),
-        )
+    SharedSectionHeader(
+        title = title,
+        modifier = modifier,
+        titleTestTag = "UnifiedLibraryHomeSectionTitle",
+    ) {
         TextButton(
             onClick = onControls,
             contentPadding = PaddingValues(horizontal = SharedSpacing.Sm),

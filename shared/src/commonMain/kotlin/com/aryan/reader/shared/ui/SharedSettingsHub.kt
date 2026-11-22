@@ -72,6 +72,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -645,7 +646,8 @@ private fun SettingsGroupContainer(content: @Composable () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = SharedSettingsTokens.groupShape(),
-        color = MaterialTheme.colorScheme.surfaceContainerLow
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = sharedCardBorder(),
     ) {
         Column(content = { content() })
     }
@@ -693,15 +695,19 @@ private fun SettingsRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(SpaceLg)
     ) {
-        Icon(
-            imageVector = item.action.iconForSettings(),
-            contentDescription = null,
-            modifier = Modifier.size(IconSize),
-            tint = when {
-                isDestructive -> MaterialTheme.colorScheme.error
-                item.enabled -> MaterialTheme.colorScheme.onSurfaceVariant
-                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-            }
+        SharedTonalIconBadge(
+            icon = item.action.iconForSettings(),
+            modifier = Modifier.alpha(if (item.enabled) 1f else 0.5f),
+            containerColor = if (isDestructive) {
+                MaterialTheme.colorScheme.errorContainer
+            } else {
+                MaterialTheme.colorScheme.secondaryContainer
+            },
+            contentColor = if (isDestructive) {
+                MaterialTheme.colorScheme.onErrorContainer
+            } else {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            },
         )
         Column(
             modifier = Modifier.weight(1f),
@@ -776,12 +782,7 @@ private fun SettingsCategoryRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(SpaceLg)
         ) {
-            Icon(
-                imageVector = category.destination.iconForSettingsDestination(),
-                contentDescription = null,
-                modifier = Modifier.size(IconSize),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            SharedTonalIconBadge(icon = category.destination.iconForSettingsDestination())
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(SpaceXxs)
@@ -848,15 +849,18 @@ private fun SettingsSearchResultRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(SpaceLg)
         ) {
-            Icon(
-                imageVector = result.destination.iconForSettingsDestination(),
-                contentDescription = null,
-                modifier = Modifier.size(IconSize),
-                tint = if (result.kind == SharedSettingsItemKind.DESTRUCTIVE) {
-                    MaterialTheme.colorScheme.error
+            SharedTonalIconBadge(
+                icon = result.destination.iconForSettingsDestination(),
+                containerColor = if (result.kind == SharedSettingsItemKind.DESTRUCTIVE) {
+                    MaterialTheme.colorScheme.errorContainer
                 } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                }
+                    MaterialTheme.colorScheme.secondaryContainer
+                },
+                contentColor = if (result.kind == SharedSettingsItemKind.DESTRUCTIVE) {
+                    MaterialTheme.colorScheme.onErrorContainer
+                } else {
+                    MaterialTheme.colorScheme.onSecondaryContainer
+                },
             )
             Column(
                 modifier = Modifier.weight(1f),
@@ -900,11 +904,12 @@ private fun SettingsEmptySearch(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(SpaceSm)
     ) {
-        Icon(
-            Icons.Default.Search,
-            contentDescription = null,
-            modifier = Modifier.size(32.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        SharedTonalIconBadge(
+            icon = Icons.Default.Search,
+            size = 56.dp,
+            iconSize = 28.dp,
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Text(
             text = readerString("desktop_no_settings_found", "No settings found"),

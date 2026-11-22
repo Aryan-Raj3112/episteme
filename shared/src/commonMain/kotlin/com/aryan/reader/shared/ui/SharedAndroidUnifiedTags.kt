@@ -6,20 +6,18 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Tag as TagIcon
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -53,14 +51,18 @@ fun SharedAndroidUnifiedTags(
 ) {
     if (tags.isEmpty()) {
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(noTagsLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SharedEmptyState(
+                icon = Icons.Default.TagIcon,
+                title = noTagsLabel,
+                testTag = "UnifiedTagsEmpty",
+            )
         }
         return
     }
     LazyColumn(
         modifier.fillMaxSize(),
-        contentPadding = PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(SharedSpacing.Lg),
+        verticalArrangement = Arrangement.spacedBy(SharedSpacing.Md),
     ) {
         items(tags, key = { it.id }) { tag ->
             UnifiedTagCard(
@@ -79,29 +81,34 @@ private fun UnifiedTagCard(
     onClick: () -> Unit,
 ) {
     val tagColor = tag.color?.let(::Color) ?: SharedTagColorFallback
-    ElevatedCard(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { onClick() }
             .testTag("UnifiedTagRow_${tag.id}"),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = sharedCardBorder(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+            Modifier.fillMaxWidth().padding(horizontal = SharedSpacing.Lg, vertical = SharedSpacing.Md),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
         ) {
-            Surface(shape = CircleShape, color = tagColor.copy(alpha = 0.18f)) {
-                Icon(
-                    Icons.Default.TagIcon,
-                    contentDescription = null,
-                    tint = tagColor,
-                    modifier = Modifier.padding(8.dp).size(18.dp),
-                )
+            // The tag's own colour is the row's identity, so it stays the badge container rather
+            // than being flattened into a neutral one.
+            Surface(shape = RoundedCornerShape(12.dp), color = tagColor.copy(alpha = 0.20f)) {
+                Box(Modifier.size(36.dp), contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.TagIcon,
+                        contentDescription = null,
+                        tint = tagColor,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SharedSpacing.Xxs)) {
                 Text(
                     tag.name,
                     style = MaterialTheme.typography.titleMedium,
@@ -115,7 +122,11 @@ private fun UnifiedTagCard(
                     style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null)
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

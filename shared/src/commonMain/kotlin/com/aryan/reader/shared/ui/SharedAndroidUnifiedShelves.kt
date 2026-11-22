@@ -27,7 +27,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -103,7 +103,11 @@ fun <S, B> SharedAndroidUnifiedShelves(
     if (selectedShelf == null) {
         if (visibleShelves.isEmpty()) {
             Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(noShelvesLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SharedEmptyState(
+                    icon = Icons.Default.Folder,
+                    title = noShelvesLabel,
+                    testTag = "UnifiedShelvesEmpty",
+                )
             }
         } else {
             LazyColumn(
@@ -156,7 +160,11 @@ fun <S, B> SharedAndroidUnifiedShelves(
             }
             if (childShelves.isEmpty() && selectedBooks.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(emptyShelfLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    SharedEmptyState(
+                        icon = Icons.Default.Folder,
+                        title = emptyShelfLabel,
+                        testTag = "UnifiedShelfEmpty",
+                    )
                 }
             } else {
                 val resolvedListItem = bookListItem.takeIf { useListView }
@@ -227,18 +235,28 @@ private fun UnifiedShelfCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ElevatedCard(
+    Card(
         modifier = modifier.fillMaxWidth().clickable { onClick() },
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = sharedCardBorder(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
-        Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Folder, null, Modifier.size(28.dp), tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
+        Row(
+            Modifier.fillMaxWidth().padding(SharedSpacing.Lg),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
+        ) {
+            SharedTonalIconBadge(Icons.Default.Folder)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(SharedSpacing.Xxs)) {
                 Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(countLabel, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(Icons.AutoMirrored.Filled.ArrowForward, null)
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowForward,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

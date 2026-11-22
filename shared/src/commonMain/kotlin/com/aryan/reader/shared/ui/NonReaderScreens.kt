@@ -235,7 +235,7 @@ fun SharedHomeScreen(
                 )
             } else {
                 SharedEmptyState(
-                    icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                    icon = Icons.AutoMirrored.Filled.LibraryBooks,
                     title = readerString("no_recent_files", "No recent files"),
                     body = "Open books from the library and they will appear here.",
                     actionLabel = "Import files",
@@ -1317,7 +1317,7 @@ private fun LibraryContent(
                         )
                     } else {
                         SharedEmptyState(
-                            icon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                            icon = Icons.Default.Search,
                             title = if (state.rawLibraryBooks.isEmpty()) "Your library is empty" else "No books match",
                             body = if (state.rawLibraryBooks.isEmpty()) "Import files into app storage or add a folder from the toolbar." else "Adjust search, sort, or filters to see more books.",
                             actionLabel = if (state.rawLibraryBooks.isEmpty()) "Import files" else "Clear filters",

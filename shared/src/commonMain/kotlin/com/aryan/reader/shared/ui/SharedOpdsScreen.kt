@@ -1,6 +1,5 @@
 package com.aryan.reader.shared.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -168,7 +167,7 @@ fun SharedOpdsScreen(
             }
             Surface(
                 color = MaterialTheme.colorScheme.errorContainer,
-                shape = RoundedCornerShape(8.dp),
+                shape = sharedCardShape(),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(16.dp)
@@ -541,7 +540,11 @@ private fun SharedOpdsFeedView(
         val entries = state.currentFeed?.entries.orEmpty()
         if (entries.isEmpty() && !state.isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(readerString("feed_empty", "This feed is empty."))
+                SharedEmptyState(
+                    icon = Icons.Default.Cloud,
+                    title = readerString("feed_empty", "This feed is empty."),
+                    testTag = "OpdsFeedEmpty",
+                )
             }
         } else {
             LazyColumn(
@@ -589,19 +592,16 @@ private fun SharedOpdsDownloadLocationCard(
 ) {
     Surface(
         onClick = onClick,
-        shape = MaterialTheme.shapes.medium,
+        shape = sharedCardShape(),
         color = MaterialTheme.colorScheme.surfaceContainer,
+        border = sharedCardBorder(),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(SharedSpacing.Lg),
         ) {
-            Icon(
-                Icons.Default.Download,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
+            SharedTonalIconBadge(icon = Icons.Default.Download)
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -749,19 +749,16 @@ private fun SharedOpdsCatalogCard(
     if (mobileLayout) {
         Surface(
             onClick = onOpenCatalog,
-            shape = MaterialTheme.shapes.medium,
+            shape = sharedCardShape(),
             color = MaterialTheme.colorScheme.surfaceContainer,
+            border = sharedCardBorder(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(16.dp),
+                modifier = Modifier.padding(SharedSpacing.Lg),
             ) {
-                Icon(
-                    Icons.Default.FolderSpecial,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                )
+                SharedTonalIconBadge(icon = Icons.Default.FolderSpecial)
                 Spacer(Modifier.width(16.dp))
                 Column(Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -806,7 +803,7 @@ private fun SharedOpdsCatalogCard(
 
     Surface(
         onClick = onOpenCatalog,
-        shape = RoundedCornerShape(8.dp),
+        shape = sharedCardShape(),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -816,7 +813,7 @@ private fun SharedOpdsCatalogCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = sharedCardShape(),
                     color = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 ) {
@@ -868,25 +865,15 @@ private fun SharedOpdsCatalogCard(
 
 @Composable
 private fun SharedOpdsEmptyState(onAddCatalog: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
+    SharedEmptyState(
+        icon = Icons.Default.Cloud,
+        title = readerString("desktop_opds_no_catalogs", "No catalogs"),
+        body = readerString("desktop_opds_no_catalogs_desc", "Add an OPDS catalog to browse remote books."),
+        actionLabel = readerString("fab_add_catalog", "Add catalog"),
+        onAction = onAddCatalog,
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-    ) {
-        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
-                Text(readerString("desktop_opds_no_catalogs", "No catalogs"), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text(readerString("desktop_opds_no_catalogs_desc", "Add an OPDS catalog to browse remote books."), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = onAddCatalog) {
-                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(readerString("fab_add_catalog", "Add catalog"))
-                }
-            }
-        }
-    }
+        testTag = "OpdsEmptyState",
+    )
 }
 
 @Composable
@@ -936,7 +923,7 @@ private fun SharedOpdsFacetMenu(
 private fun SharedOpdsNavigationCard(entry: OpdsEntry, onOpenFeedUrl: (String) -> Unit) {
     Surface(
         onClick = { entry.navigationUrl?.let(onOpenFeedUrl) },
-        shape = RoundedCornerShape(8.dp),
+        shape = sharedCardShape(),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         modifier = Modifier.fillMaxWidth()
     ) {

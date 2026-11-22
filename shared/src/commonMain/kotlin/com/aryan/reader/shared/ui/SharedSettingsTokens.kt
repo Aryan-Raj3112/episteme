@@ -30,10 +30,13 @@ internal object SharedSettingsTokens {
     val RowVerticalPadding = 12.dp
     val IconSize = 24.dp
     val ChevronSize = 20.dp
-    val DividerInset = 56.dp
+    /** Leading badge in a row: the icon sits inside it, so the divider starts at its end. */
+    val IconBadgeSize = 36.dp
+    /** Row padding + badge + the gap before the title, so dividers start under the text. */
+    val DividerInset = 68.dp
 
     val ExpandedBreakpoint = 840.dp
 
     @Composable
-    fun groupShape() = MaterialTheme.shapes.medium
+    fun groupShape() = sharedCardShape()
 }
