@@ -723,10 +723,17 @@ internal fun mobileUnifiedLibraryBooks(
 }
 
 /**
- * Picks the "Continue reading" card: the most recently touched book that is
- * partway through, else the newest book overall.
+ * Picks the "Continue reading" card: the book the reader touched last.
+ *
+ * Progress is deliberately not part of the choice. The card used to rank only books that were
+ * "partway through", so opening a new book left the card pointing at an older one, and a book
+ * opened at 0% could never become the card at all - the reader pressed a book, came home, and the
+ * strip still advertised something else. "Continue" means *pick up what you were just in*: the
+ * newest activity timestamp wins, whatever its progress. A finished book is still the last thing
+ * that was read, and the card's own progress badge says so.
+ *
+ * `timestamp` is the reader's last-activity stamp: opening a book bumps it (`addFileToRecent`),
+ * and so does saving a reading position, so it already orders books the way a reader expects.
  */
 fun mobileUnifiedContinueReadingBook(books: List<BookItem>): BookItem? =
-    books.filter { (it.progressPercentage ?: 0f) in 0.01f..<100f }
-        .maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) }
-        ?: books.maxByOrNull { it.timestamp }
+    books.maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) }

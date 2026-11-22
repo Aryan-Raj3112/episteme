@@ -191,12 +191,25 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `unified continue reading prefers most recently positioned active book`() {
+    fun `unified continue reading follows the last opened book whatever its progress`() {
         val older = book(id = "older", displayName = "Older.epub", progress = 20f, positionModified = 20L)
         val newer = book(id = "newer", displayName = "Newer.epub", progress = 80f, positionModified = 40L)
         val finished = book(id = "finished", displayName = "Finished.epub", progress = 100f, positionModified = 80L)
 
-        assertEquals(newer, mobileUnifiedContinueReadingBook(listOf(older, newer, finished)))
+        assertEquals(finished, mobileUnifiedContinueReadingBook(listOf(older, newer, finished)))
+    }
+
+    @Test
+    fun `unified continue reading picks a book opened at zero progress over an older one in progress`() {
+        val partway = book(id = "partway", displayName = "Partway.epub", progress = 42f, positionModified = 20L)
+        val justOpened = book(
+            id = "just-opened",
+            displayName = "JustOpened.epub",
+            progress = 0f,
+            positionModified = 90L,
+        )
+
+        assertEquals(justOpened, mobileUnifiedContinueReadingBook(listOf(partway, justOpened)))
     }
 
     @Test

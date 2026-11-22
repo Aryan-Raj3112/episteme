@@ -66,11 +66,20 @@ class UnifiedLibraryScreenTest {
     }
 
     @Test
-    fun continueReadingPrefersMostRecentlyReadInProgressBook() {
+    fun continueReadingPrefersTheLastOpenedBook() {
         val older = book("Older", 30f, timestamp = 10L)
         val newer = book("Newer", 60f, timestamp = 20L)
+        val finished = book("Finished", 100f, timestamp = 30L)
 
-        assertSame(newer, findContinueReadingBook(listOf(older, newer)))
+        assertSame(finished, findContinueReadingBook(listOf(older, newer, finished)))
+    }
+
+    @Test
+    fun continueReadingFollowsABookOpenedAtZeroProgress() {
+        val partway = book("Partway", 42f, timestamp = 10L)
+        val justOpened = book("JustOpened", 0f, timestamp = 40L)
+
+        assertSame(justOpened, findContinueReadingBook(listOf(partway, justOpened)))
     }
 
     @Test
