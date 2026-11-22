@@ -880,7 +880,7 @@ private fun HiddenEpubToolMenuItem(
     onOpenScreenOrientation: () -> Unit,
     onOpenPerceptionLines: () -> Unit,
 ) {
-    DropdownMenuItem(
+    com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
         text = { Text(stringResource(tool.titleRes)) },
         onClick = {
             showMoreMenu()

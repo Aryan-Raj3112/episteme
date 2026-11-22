@@ -34,8 +34,12 @@ import org.junit.runner.RunWith
  *
  * Reported: some icons in the reader's morevert menu were black on a black background in dark mode.
  * The renderer passed `Color.Unspecified` as the icon tint, which `Icon` reads as "do not tint" — it
- * then paints the vector's own fill, and every Material icon vector is black. Rows now take the
- * menu's own leading-icon colour instead, so painting a row with a distinctive scheme shows it.
+ * then paints the vector's own fill, and every Material icon vector is black.
+ *
+ * The rows now live in the tool sheet and paint their leading icon inside a tonal badge, so the icon
+ * takes the badge's own content colour (`onSecondaryContainer`). The row must still never fall back
+ * to the vector's black fill, which is what this pins: give that slot a distinctive colour and any
+ * pixel carrying it can only have come from the icon.
  */
 @RunWith(AndroidJUnit4::class)
 class EpubOverflowMenuIconTintTest {
@@ -47,11 +51,12 @@ class EpubOverflowMenuIconTintTest {
         val iconColor = Color.Red
         composeTestRule.setContent {
             CompositionLocalProvider(LocalSharedStringResolver provides androidSharedStringResolver(context)) {
-                // Text stays on `onSurface`, which the menu's leading icons never use — so any red
-                // pixel in the capture can only come from a tinted icon.
+                // Text stays on `onSurface`, which the row's leading icon never uses — so any red
+                // pixel in the capture can only come from a correctly tinted icon.
                 MaterialTheme(
                     colorScheme = lightColorScheme(
-                        onSurfaceVariant = iconColor,
+                        onSecondaryContainer = iconColor,
+                        onSurfaceVariant = Color(0xFF49454F),
                         onSurface = Color(0xFF1D1B20),
                     )
                 ) {

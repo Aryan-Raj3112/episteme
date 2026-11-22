@@ -420,8 +420,8 @@ fun SharedMobileEpubTopBar(
         onShowMoreChange(false)
     }
     val defaultHiddenToolItem: @Composable (ReaderTool, () -> Unit) -> Unit = { tool, dismiss ->
-        DropdownMenuItem(
-            text = { Text(tool.title) },
+        SharedReaderToolSheetRow(
+            title = tool.title,
             onClick = {
                 when (tool) {
                     ReaderTool.THEME -> onTheme()
@@ -501,6 +501,7 @@ fun SharedMobileEpubTopBar(
     )
     SharedReaderToolbarSurface(
         height = SharedReaderEpubTopBarHeight + topInset,
+        edge = SharedReaderBarEdge.TOP,
         modifier = modifier.testTag(SharedMobileEpubAxTags.TOP_BAR)
     ) {
         SharedEpubTopToolbarRow(topInset = topInset) {
@@ -576,6 +577,7 @@ fun SharedMobileEpubTopBar(
                             text = sliderText,
                             description = sliderDescription,
                             onClick = onOpenSlider,
+                            active = isSliderActive,
                             modifier = Modifier.testTag("EpubTopSlider")
                                 .semantics { contentDescription = sliderContentDescription }
                         ) {
@@ -589,6 +591,7 @@ fun SharedMobileEpubTopBar(
                             text = readAloudText,
                             description = readAloudDescription,
                             onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
+                            active = readAloudActive,
                             modifier = Modifier.testTag("EpubTopTts")
                                 .semantics { contentDescription = readAloudContentDescription }
                         ) {
@@ -626,6 +629,7 @@ fun SharedMobileEpubTopBar(
                                 text = linesText,
                                 description = linesDescription,
                                 onClick = onPerceptionLines,
+                                active = perceptionLinesVisible,
                                 modifier = Modifier.testTag("EpubTopPerceptionLines")
                                     .semantics { contentDescription = linesText }
                             ) {
@@ -705,10 +709,15 @@ fun SharedMobileEpubTopBar(
                     ) {
                         Icon(Icons.Default.MoreVert, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
                     }
-                    SharedDropdownMenu(expanded = showMore, onDismissRequest = { onShowMoreChange(false) }) {
-                        // Every row below is rendered by the shared section renderer. Both hosts call it
-                        // with their own labels and state, so the menu's structure, gating and order can
-                        // only change in one place (see SharedReaderEpubOverflowSections.kt).
+                    // Tools open as a sheet rather than a dropdown anchored under a 56dp bar: see
+                    // `SharedReaderOverflowSheet` for why. Every row below is still rendered by the
+                    // shared section renderer, so the menu's structure, gating and order can only
+                    // change in one place (see SharedReaderEpubOverflowSections.kt).
+                    SharedReaderOverflowSheet(
+                        visible = showMore,
+                        onDismiss = { onShowMoreChange(false) },
+                        title = moreText,
+                    ) {
                         SharedReaderOverflowSectionList(overflowSections) { section ->
                             SharedReaderEpubOverflowSection(
                                 section = section,
@@ -857,21 +866,6 @@ internal fun SharedMobileEpubToolbarCustomizationSheet(
     }
 }
 
-@Composable
-internal fun SharedMobileEpubSwitchMenuItem(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    enabled: Boolean = true
-) {
-    DropdownMenuItem(
-        text = { Text(label) },
-        enabled = enabled,
-        onClick = { onCheckedChange(!checked) },
-        trailingIcon = { Switch(checked = checked, enabled = enabled, onCheckedChange = onCheckedChange) }
-    )
-}
-
 /**
  * The EPUB reader's bottom chrome - Android's benchmark bar, and now the only implementation.
  *
@@ -987,6 +981,7 @@ fun SharedMobileEpubBottomBar(
     }
     SharedReaderToolbarSurface(
         height = SharedReaderEpubBottomBarHeight + bottomInset,
+        edge = SharedReaderBarEdge.BOTTOM,
         modifier = modifier.testTag(SharedMobileEpubAxTags.BOTTOM_BAR)
     ) {
         Column(Modifier.fillMaxWidth()) {
@@ -1033,13 +1028,18 @@ fun SharedMobileEpubBottomBar(
                         ReaderTool.BOOKMARK -> SharedTooltipIconButton(
                             text = bookmarkText,
                             onClick = onBookmark,
+                            active = isBookmarked,
                             modifier = Modifier.testTag("EpubBottomBookmark")
                                 .semantics { contentDescription = bookmarkText }
                         ) {
                             Icon(
                                 if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
                                 contentDescription = null,
-                                tint = inactiveTint
+                                tint = if (isBookmarked) {
+                                    MaterialTheme.colorScheme.onSecondaryContainer
+                                } else {
+                                    inactiveTint
+                                }
                             )
                         }
                         ReaderTool.VISUAL_OPTIONS -> SharedTooltipIconButton(
@@ -1054,6 +1054,7 @@ fun SharedMobileEpubBottomBar(
                             text = sliderText,
                             description = sliderDescription,
                             onClick = onOpenSlider,
+                            active = isSliderActive,
                             modifier = Modifier.testTag("EpubBottomSlider")
                                 .semantics { contentDescription = sliderContentDescription }
                         ) {
@@ -1100,6 +1101,7 @@ fun SharedMobileEpubBottomBar(
                                 text = linesText,
                                 description = linesDescription,
                                 onClick = onPerceptionLines,
+                                active = perceptionLinesVisible,
                                 modifier = Modifier.testTag("EpubBottomPerceptionLines")
                                     .semantics { contentDescription = linesText }
                             ) {
@@ -1129,6 +1131,7 @@ fun SharedMobileEpubBottomBar(
                             text = readAloudText,
                             description = readAloudDescription,
                             onClick = { if (readAloudActive) onReadAloudStop() else onReadAloudToggle() },
+                            active = readAloudActive,
                             modifier = Modifier.testTag("EpubBottomTts")
                                 .semantics { contentDescription = readAloudContentDescription }
                         ) {

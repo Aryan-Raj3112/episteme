@@ -199,6 +199,7 @@ fun TooltipIconButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     description: String? = null,
+    active: Boolean = false,
     content: @Composable () -> Unit
 ) {
     com.aryan.reader.shared.ui.SharedTooltipIconButton(
@@ -207,6 +208,7 @@ fun TooltipIconButton(
         modifier = modifier,
         enabled = enabled,
         description = description,
+        active = active,
         content = content,
     )
 }

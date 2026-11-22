@@ -20,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
@@ -832,7 +833,12 @@ class EpubReaderScreenTest {
         composeTestRule.waitUntil(timeoutMillis = 10_000) {
             composeTestRule.onAllNodesWithText(value).fetchSemanticsNodes().isNotEmpty()
         }
-        composeTestRule.onAllNodesWithText(value)[0].performClick()
+        val node = composeTestRule.onAllNodesWithText(value)[0]
+        // The tool menu is a scrolling sheet now, so a row can be composed but below the fold; a
+        // click at its laid-out position would land outside the window. Scroll it in first, and
+        // ignore nodes that have no scrollable ancestor (the rest of the reader's sheets).
+        runCatching { node.performScrollTo() }
+        node.performClick()
     }
 
     private fun openOverflowMenu() {

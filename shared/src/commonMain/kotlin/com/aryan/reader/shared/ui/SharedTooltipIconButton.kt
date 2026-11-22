@@ -5,6 +5,7 @@ package com.aryan.reader.shared.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.PlainTooltip
@@ -32,6 +33,14 @@ fun SharedTooltipIconButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     description: String? = null,
+    /**
+     * True when the tool is currently doing something (playing, editing, locked, highlighting).
+     *
+     * Icon-only chrome has no other way to say "on": tinting the glyph alone was invisible at
+     * 24dp in sunlight and indistinguishable from the pressed state, so an active tool gets the
+     * same tonal container an M3 selected control gets.
+     */
+    active: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     val tooltipState = rememberTooltipState(isPersistent = true)
@@ -92,8 +101,14 @@ fun SharedTooltipIconButton(
         },
         state = tooltipState,
     ) {
-        IconButton(onClick = onClick, modifier = modifier, enabled = enabled) {
-            content()
+        if (active) {
+            FilledTonalIconButton(onClick = onClick, modifier = modifier, enabled = enabled) {
+                content()
+            }
+        } else {
+            IconButton(onClick = onClick, modifier = modifier, enabled = enabled) {
+                content()
+            }
         }
     }
 }
