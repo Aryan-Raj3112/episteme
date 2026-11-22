@@ -13,6 +13,14 @@ internal object SharedUiTokens {
     val compactGap = 8.dp
     val contentGap = 12.dp
     val sidebarWidth = 220.dp
+
+    /**
+     * M3 expressive corner scale. `large` increased is 20dp and `extra large` increased is 32dp;
+     * the library uses them so cards and the continue-reading hero read as one family instead of
+     * the flat 16/28dp baseline pair.
+     */
+    val cardRadius = 20.dp
+    val heroRadius = 32.dp
 }
 
 @Composable

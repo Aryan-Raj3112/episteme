@@ -369,6 +369,7 @@ internal fun UnifiedLibraryHome(
             onClearFilters != null && (filter != UnifiedLibraryFilter.ALL || query.isNotBlank())
         },
         onEmptyAction = onClearFilters,
+        sectionTitle = stringResource(R.string.unified_library_your_books),
         modifier = modifier,
     )
 }

@@ -3,6 +3,7 @@ package com.aryan.reader
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -39,6 +40,8 @@ class SharedAndroidUnifiedLibraryHomeStateTest {
         isLoading: Boolean = false,
         emptyActionLabel: String? = null,
         onEmptyAction: (() -> Unit)? = null,
+        sectionTitle: String? = null,
+        onControls: () -> Unit = {},
     ) {
         composeTestRule.setContent {
             MaterialTheme {
@@ -52,7 +55,7 @@ class SharedAndroidUnifiedLibraryHomeStateTest {
                     strings = strings,
                     itemKey = { it },
                     onFilterChange = {},
-                    onControls = {},
+                    onControls = onControls,
                     onAdvancedFilters = {},
                     onListViewChange = {},
                     continueCard = { _, _ -> },
@@ -61,6 +64,7 @@ class SharedAndroidUnifiedLibraryHomeStateTest {
                     isLoading = isLoading,
                     emptyActionLabel = emptyActionLabel,
                     onEmptyAction = onEmptyAction,
+                    sectionTitle = sectionTitle,
                 )
             }
         }
@@ -84,6 +88,29 @@ class SharedAndroidUnifiedLibraryHomeStateTest {
         composeTestRule.runOnIdle {
             assertThat(cleared).isTrue()
         }
+    }
+
+    @Test
+    fun theHeaderCarriesTheSectionTitleAndTheSortControl() {
+        var controlsOpened = false
+        setHome(sectionTitle = "Your books", onControls = { controlsOpened = true })
+
+        composeTestRule.onNodeWithTag("UnifiedLibraryHomeSectionTitle").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Your books").assertIsDisplayed()
+
+        composeTestRule.onNodeWithTag("UnifiedLibraryHomeSort").performClick()
+
+        composeTestRule.runOnIdle {
+            assertThat(controlsOpened).isTrue()
+        }
+    }
+
+    @Test
+    fun anEmptyLibraryShowsTheIllustratedStateNotJustASentence() {
+        setHome(sectionTitle = "Your books")
+
+        composeTestRule.onNodeWithTag("UnifiedLibraryHomeEmpty").assertExists()
+        composeTestRule.onNodeWithText("No books in this view").assertIsDisplayed()
     }
 
     @Test

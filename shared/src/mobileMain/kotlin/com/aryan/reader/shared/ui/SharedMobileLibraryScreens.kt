@@ -718,6 +718,7 @@ fun SharedMobileUnifiedLibraryScreen(
                                     filterLabels = MobileUnifiedLibraryFilter.entries.associateWith { option -> readerString(option.stringKey, option.fallbackLabel) },
                                 ),
                                 itemKey = { it.id },
+                                sectionTitle = readerString("unified_library_your_books", "Your books"),
                                 onFilterChange = { filter = it },
                                 onControls = { showLibraryControls = true },
                                 onAdvancedFilters = {

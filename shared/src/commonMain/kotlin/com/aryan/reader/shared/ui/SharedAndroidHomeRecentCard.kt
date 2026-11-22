@@ -17,17 +17,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,18 +68,37 @@ fun SharedAndroidHomeRecentCard(
     fileTypeBadge: @Composable (compact: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    ElevatedCard(
+    val shape = RoundedCornerShape(SharedUiTokens.cardRadius)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    // Press reads as the card sinking into the grid. 0.02 is small enough that neighbouring cells
+    // never appear to move, and Compose scales it to zero when the platform asks for less motion.
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.98f else 1f,
+        label = "HomeRecentFileCardPress",
+    )
+    Card(
         modifier = modifier
             .testTag("HomeRecentFileCard_$bookId")
-            .graphicsLayer { alpha = if (isAvailable) 1f else 0.8f }
-            .then(if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large) else Modifier)
-            .clip(MaterialTheme.shapes.large)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        // Selection is carried by the border and the check badge over the cover. Raising the card
-        // as well made selected cells look lifted out of the grid rather than chosen.
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp),
+            .graphicsLayer {
+                alpha = if (isAvailable) 1f else 0.8f
+                scaleX = pressScale
+                scaleY = pressScale
+            }
+            .then(if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
+            .clip(shape)
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = LocalIndication.current,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        // Tonal fill plus a hairline instead of a drop shadow: on a grid of six or more cards the
+        // shadows stacked into a grey haze, and M3 separates surfaces by tone.
+        border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(Modifier.fillMaxWidth()) {
             BoxWithConstraints(Modifier.fillMaxWidth().aspectRatio(0.74f)) {
@@ -94,7 +120,9 @@ fun SharedAndroidHomeRecentCard(
                 if (showStatusBadges) statusBadges(Modifier.align(Alignment.TopStart).padding(10.dp))
                 if (!isAvailable) {
                     Box(
-                        Modifier.matchParentSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)),
+                        // 0.35 rather than 0.5: the cover still has to be recognisable, because
+                        // "not on this device" is a state to understand, not a blank tile.
+                        Modifier.matchParentSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.35f)),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (isDownloading) CircularProgressIndicator(color = Color.White)

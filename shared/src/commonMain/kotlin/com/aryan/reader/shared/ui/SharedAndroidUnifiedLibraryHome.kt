@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,7 +27,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.FilledTonalButton
@@ -37,6 +37,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
@@ -48,7 +49,9 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -97,6 +100,11 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     /** Empty-state action ("Clear filters"), shown only when the host reports one. */
     emptyActionLabel: String? = null,
     onEmptyAction: (() -> Unit)? = null,
+    /**
+     * Section title above the grid ("Your books"). Null keeps the header row for the actions but
+     * leaves the title out, which is what hosts that already show a title elsewhere want.
+     */
+    sectionTitle: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val resolvedGridCells = gridCells ?: widthClass.bookGridCells()
@@ -109,54 +117,37 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     Column(modifier.fillMaxSize().padding(horizontal = SharedSpacing.Lg)) {
         openTabsContent()
         continueReading?.let { continueCard(it, Modifier.padding(top = density.continueCardTopGap)) }
-        // The chip row scrolls; the two icon actions are pinned outside it. On a 360dp phone the
-        // chips alone are wider than the screen, so keeping the actions inside the scroller made
-        // advanced filters and the grid/list toggle reachable only by a scroll with no affordance.
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = density.filterRowTopGap),
+        // Hierarchy is carried by one header row: what this section is, how it is ordered, and the
+        // two view controls. The status filters get their own row underneath, which is also what
+        // lets the chip row fit on a 360dp phone now that sort no longer competes for its width.
+        SharedHomeSectionHeader(
+            title = sectionTitle,
+            sortLabel = sortLabel,
+            advancedFilterCount = advancedFilterCount,
+            useListView = useListView,
+            contentSearchActive = contentSearchActive,
+            strings = strings,
+            onControls = onControls,
+            onAdvancedFilters = onAdvancedFilters,
+            onListViewChange = onListViewChange,
+            modifier = Modifier.padding(top = density.filterRowTopGap),
+        )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(SharedSpacing.Sm),
             verticalAlignment = Alignment.CenterVertically,
+            contentPadding = PaddingValues(
+                start = SharedSpacing.Xxs,
+                end = SharedSpacing.Xxs,
+                top = SharedSpacing.Xs,
+            ),
         ) {
-            LazyRow(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(SharedSpacing.Sm),
-                verticalAlignment = Alignment.CenterVertically,
-                contentPadding = PaddingValues(horizontal = SharedSpacing.Xxs),
-            ) {
-                items(MobileUnifiedLibraryFilter.entries) { option ->
-                    FilterChip(
-                        selected = filter == option,
-                        onClick = { onFilterChange(option) },
-                        label = { Text(strings.filterLabels.getValue(option)) },
-                    )
-                }
-                item {
-                    // Sort is a menu trigger, not a peer of the status filters, so it carries a
-                    // disclosure icon instead of looking like a fifth filter chip.
-                    AssistChip(
-                        onClick = onControls,
-                        label = { Text(sortLabel) },
-                        trailingIcon = {
-                            Icon(
-                                Icons.Default.ArrowDropDown,
-                                contentDescription = null,
-                                modifier = Modifier.size(FilterChipDefaults.IconSize),
-                            )
-                        },
-                    )
-                }
-            }
-            BadgedBox(badge = { if (advancedFilterCount > 0) Badge { Text(advancedFilterCount.toString()) } }) {
-                IconButton(onClick = onAdvancedFilters) {
-                    Icon(Icons.Default.FilterList, contentDescription = strings.filterBooks)
-                }
-            }
-            if (!contentSearchActive) {
-                IconButton(onClick = { onListViewChange(!useListView) }) {
-                    Icon(
-                        if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
-                        contentDescription = if (useListView) strings.gridView else strings.listView,
-                    )
-                }
+            items(MobileUnifiedLibraryFilter.entries) { option ->
+                FilterChip(
+                    selected = filter == option,
+                    onClick = { onFilterChange(option) },
+                    label = { Text(strings.filterLabels.getValue(option)) },
+                )
             }
         }
         when {
@@ -176,14 +167,35 @@ fun <T> SharedAndroidUnifiedLibraryHome(
 
             books.isEmpty() -> {
                 Column(
-                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = SharedSpacing.Xl),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = SharedSpacing.Xl)
+                        .testTag("UnifiedLibraryHomeEmpty"),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
+                    // A tonal disc instead of a bare sentence: an empty screen is the one place the
+                    // library has room to look designed rather than unfinished.
+                    Surface(
+                        modifier = Modifier.size(96.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.LibraryBooks,
+                                contentDescription = null,
+                                modifier = Modifier.size(40.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(SharedSpacing.Lg))
                     Text(
                         strings.noBooks,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                         textAlign = TextAlign.Center,
                     )
                     if (emptyActionLabel != null && onEmptyAction != null) {
@@ -261,6 +273,62 @@ fun <T> SharedAndroidUnifiedLibraryHome(
                         ) { items(books, key = itemKey) { bookCard(it) } }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Home's header: the section name on the left, then order and view controls on the right.
+ *
+ * Sort is a menu trigger rather than a filter, so it reads as a text button with a disclosure
+ * caret instead of a chip that looks like a fifth status filter.
+ */
+@Composable
+private fun SharedHomeSectionHeader(
+    title: String?,
+    sortLabel: String,
+    advancedFilterCount: Int,
+    useListView: Boolean,
+    contentSearchActive: Boolean,
+    strings: SharedAndroidUnifiedHomeStrings,
+    onControls: () -> Unit,
+    onAdvancedFilters: () -> Unit,
+    onListViewChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = title.orEmpty(),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f).testTag("UnifiedLibraryHomeSectionTitle"),
+        )
+        TextButton(
+            onClick = onControls,
+            contentPadding = PaddingValues(horizontal = SharedSpacing.Sm),
+            modifier = Modifier.testTag("UnifiedLibraryHomeSort"),
+        ) {
+            Text(sortLabel, maxLines = 1)
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                modifier = Modifier.size(FilterChipDefaults.IconSize),
+            )
+        }
+        BadgedBox(badge = { if (advancedFilterCount > 0) Badge { Text(advancedFilterCount.toString()) } }) {
+            IconButton(onClick = onAdvancedFilters) {
+                Icon(Icons.Default.FilterList, contentDescription = strings.filterBooks)
+            }
+        }
+        if (!contentSearchActive) {
+            IconButton(onClick = { onListViewChange(!useListView) }) {
+                Icon(
+                    if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
+                    contentDescription = if (useListView) strings.gridView else strings.listView,
+                )
             }
         }
     }
