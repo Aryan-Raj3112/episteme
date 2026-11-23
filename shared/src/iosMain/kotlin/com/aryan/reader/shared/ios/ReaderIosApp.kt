@@ -127,7 +127,7 @@ import com.aryan.reader.shared.ImportedBookFile
 import com.aryan.reader.shared.LibraryAction
 import com.aryan.reader.shared.LibraryFilters
 import com.aryan.reader.shared.LocalFolderSyncEngine
-import com.aryan.reader.shared.MAX_OPEN_PDF_TABS
+import com.aryan.reader.shared.MAX_OPEN_TABS_PER_KIND
 import com.aryan.reader.shared.MobileExternalFileCloseAction
 import com.aryan.reader.shared.MobileHandoffCleanupPolicy
 import com.aryan.reader.shared.MobileHandoffEnvelope
@@ -209,7 +209,7 @@ import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.SharedFontFiles
 import com.aryan.reader.shared.SharedGoogleFontsDownloadOutcome
 import com.aryan.reader.shared.googleFontCatalogEntry
-import com.aryan.reader.shared.canOpenMobilePdfTab
+import com.aryan.reader.shared.canOpenMobileTab
 import com.aryan.reader.shared.canUseCloudSync
 import com.aryan.reader.shared.cloudSyncSetupRoute
 import com.aryan.reader.shared.cloudSnapshotHasLocalUpdates
@@ -241,7 +241,7 @@ import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.withMobileBookOpened
 import com.aryan.reader.shared.withMobileBookClosed
 import com.aryan.reader.shared.withMobileTabsEnabled
-import com.aryan.reader.shared.withReconciledMobilePdfTabs
+import com.aryan.reader.shared.withReconciledMobileTabs
 import com.aryan.reader.shared.withMobileLibrarySearchActive
 import com.aryan.reader.shared.withMobileLibrarySearchInsideFiles
 import com.aryan.reader.shared.withMobileLibrarySearchQuery
@@ -416,6 +416,11 @@ import com.aryan.reader.shared.toLocalBindingView
 import com.aryan.reader.shared.PdfSplitPane
 import com.aryan.reader.shared.PdfSplitWorkspaceAction
 import com.aryan.reader.shared.PdfSplitWorkspaceState
+import com.aryan.reader.shared.ReaderTabKind
+import com.aryan.reader.shared.activeTabFor
+import com.aryan.reader.shared.openTabIdsFor
+import com.aryan.reader.shared.isDerivedReflowBookId
+import com.aryan.reader.shared.readerTabKind
 import com.aryan.reader.shared.samePdfDocument
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -4822,16 +4827,17 @@ private fun ReaderIosApp(
         }
         // Android parity (`MainViewModel` open/switch): prune deleted ids
         // before the cap check so a stale tab can never falsely block a new one.
-        if (!temporary && book.type == FileType.PDF && state.isTabsEnabled) {
-            state = state.withReconciledMobilePdfTabs()
+        val tabKind = book.readerTabKind()
+        if (!temporary && tabKind != null && state.isTabsEnabled) {
+            state = state.withReconciledMobileTabs()
         }
         if (
             !temporary &&
-            book.type == FileType.PDF &&
+            tabKind != null &&
             state.isTabsEnabled &&
-            !canOpenMobilePdfTab(state.openTabIds, book.id)
+            !canOpenMobileTab(state.openTabIdsFor(tabKind), book.id)
         ) {
-            showMessage("Maximum of $MAX_OPEN_PDF_TABS tabs allowed. Please close a tab first.")
+            showMessage("Maximum of $MAX_OPEN_TABS_PER_KIND tabs allowed. Please close a tab first.")
             return
         }
         state = if (temporary) {
@@ -5657,15 +5663,43 @@ private fun ReaderIosApp(
         state = state.withMobileTabsEnabled(enabled)
     }
 
+    /**
+     * Whether this host still owns the screen. The reflow reader has one session at a time, so the
+     * active book is the whole check; a callback arriving for a replaced host would otherwise
+     * close or open a tab on the wrong reader.
+     */
+    fun iosIsHostingReader(book: BookItem): Boolean = activeReaderBook?.id == book.id
+
+    /**
+     * Closes a reflow tab. Mirrors the PDF strip's close: the reader follows the set's next active
+     * tab only when the closed tab was the one on screen, and closing another reader's tab never
+     * touches this reader.
+     */
+    fun closeIosTextTab(tab: BookItem, readerBookInHost: BookItem) {
+        val closingActiveTab = tab.id == state.activeTextTabBookId
+        state = state.withMobileBookClosed(ReaderTabKind.TEXT, tab.id)
+        finishManagedExternalOpen(tab)
+        if (!closingActiveTab || readerBookInHost.id != tab.id) return
+        val nextBook = state.activeTabFor(ReaderTabKind.TEXT)?.let { nextId ->
+            state.rawLibraryBooks.firstOrNull { it.id == nextId }
+        }
+        if (nextBook == null) {
+            closeActiveReader(readerBookInHost)
+        } else {
+            activeReaderBook = nextBook
+            persistIosReaderSession(nextBook)
+        }
+    }
+
     fun closeHomeTab(book: BookItem) {
         state = state.closeTab(book.id)
         // Android parity (`MainViewModel.closeTab` -> `switchTab(next)`):
         // closing the currently open book from Home must move the reader to
         // the next active tab instead of leaving it on a closed book.
         if (activeReaderBook?.id != book.id) return
-        val nextBook = state.activeTabBookId?.let { nextId ->
-            state.rawLibraryBooks.firstOrNull { it.id == nextId }
-        }
+        val nextBook = book.readerTabKind()
+            ?.let { kind -> state.activeTabFor(kind) }
+            ?.let { nextId -> state.rawLibraryBooks.firstOrNull { it.id == nextId } }
         if (nextBook == null) {
             clearIosReaderSession()
             state = state.withoutMobileReaderSession()
@@ -5678,8 +5712,9 @@ private fun ReaderIosApp(
 
     fun closeAllHomeTabs() {
         // Android parity (`MainViewModel.closeAllTabs`): closing every tab
-        // exits the reader instead of leaving a selection behind.
-        state = state.reduce(AppAction.AllTabsClosed)
+        // exits the reader instead of leaving a selection behind. Home's strip
+        // is the fixed-layout set, so only that set closes.
+        state = state.reduce(AppAction.BookTabsClosed(ReaderTabKind.FIXED_LAYOUT))
             .copy(openTabs = emptyList())
             .withoutMobileReaderSession()
         clearIosReaderSession()
@@ -5711,15 +5746,17 @@ private fun ReaderIosApp(
         }
     }
 
-    LaunchedEffect(state.rawLibraryBooks, state.activeTabBookId) {
+    LaunchedEffect(state.rawLibraryBooks, state.activeTabBookId, state.activeTextTabBookId) {
         // Any library deletion path prunes tabs via `removeIosBooks`; when
         // the pruned book is the open reader, follow Android's close/switch
-        // behavior instead of staying on a deleted file.
+        // behavior instead of staying on a deleted file. The next tab comes
+        // from the reader's own kind, so a deleted PDF never lands the user in
+        // a text book (and vice versa).
         val current = activeReaderBook ?: return@LaunchedEffect
         if (state.rawLibraryBooks.any { it.id == current.id }) return@LaunchedEffect
-        val nextBook = state.activeTabBookId?.let { nextId ->
-            state.rawLibraryBooks.firstOrNull { it.id == nextId }
-        }
+        val nextBook = current.readerTabKind()
+            ?.let { kind -> state.activeTabFor(kind) }
+            ?.let { nextId -> state.rawLibraryBooks.firstOrNull { it.id == nextId } }
         if (nextBook == null) {
             clearIosReaderSession()
             state = state.withoutMobileReaderSession()
@@ -6455,10 +6492,10 @@ private fun ReaderIosApp(
             onClosePdfTab = { tab ->
                 if (!pdfTabsEnabled || !acceptsCurrentHostCallback()) return@SharedMobilePdfReaderHost
                 val closingActiveTab = tab.id == state.activeTabBookId
-                state = state.withMobileBookClosed(tab.id)
+                state = state.withMobileBookClosed(ReaderTabKind.FIXED_LAYOUT, tab.id)
                 finishManagedExternalOpen(tab)
                 if (closingActiveTab) {
-                    val nextBook = state.activeTabBookId?.let { nextId ->
+                    val nextBook = state.activeTabFor(ReaderTabKind.FIXED_LAYOUT)?.let { nextId ->
                         state.rawLibraryBooks.firstOrNull { it.id == nextId }
                     }
                     if (nextBook == null) {
@@ -7005,6 +7042,32 @@ private fun ReaderIosApp(
                                     iosPendingLibrarySearchDeepLink = null
                                 }
                             },
+                            // Reflow tabs, separate from the PDF set so a tap always stays inside this
+                            // engine. A derived "Text view" session owns no tab, hence no strip.
+                            textTabs = if (state.isTabsEnabled) state.textOpenTabs else emptyList(),
+                            activeTextTabBookId = state.activeTextTabBookId,
+                            textTabsEnabled = state.isTabsEnabled,
+                            tabStripHidden = book.id.isDerivedReflowBookId() ||
+                                book.readerTabKind() != ReaderTabKind.TEXT,
+                            onOpenTextTab = { tab ->
+                                if (iosIsHostingReader(book) && tab.id != book.id) {
+                                    openLibraryBook(tab)
+                                }
+                            },
+                            onCloseTextTab = { tab ->
+                                if (iosIsHostingReader(book)) {
+                                    closeIosTextTab(tab, readerBookInHost = book)
+                                }
+                            },
+                            newTextTabCandidates = state.rawLibraryBooks.filter {
+                                it.readerTabKind() == ReaderTabKind.TEXT
+                            },
+                            onNewTextTabPicked = { tab ->
+                                if (iosIsHostingReader(book) && tab.id != book.id) {
+                                    openLibraryBook(tab)
+                                }
+                            },
+                            usePdfFileNameAsDisplayName = state.usePdfFileNameAsDisplayName,
                             onReaderStateChange = { snapshot ->
                                 val currentBook = activeReaderBook?.takeIf { it.id == book.id } ?: readerBook
                                 val sessionBook = currentBook.copy(
@@ -10518,7 +10581,11 @@ private fun SharedReaderScreenState.toggleLibraryPinned(bookId: String): SharedR
 }
 
 private fun SharedReaderScreenState.closeTab(bookId: String): SharedReaderScreenState {
-    return withMobileBookClosed(bookId)
+    // Home and the library rows close a tab by id alone, so the set is resolved from the
+    // library row: a book belongs to exactly one reader.
+    val kind = rawLibraryBooks.firstOrNull { it.id == bookId }?.readerTabKind()
+        ?: ReaderTabKind.FIXED_LAYOUT
+    return withMobileBookClosed(kind, bookId)
 }
 
 private fun SharedReaderScreenState.withIosImportsFolder(importedBooks: List<BookItem>): SharedReaderScreenState {

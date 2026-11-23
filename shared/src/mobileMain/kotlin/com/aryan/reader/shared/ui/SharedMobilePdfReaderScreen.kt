@@ -5391,47 +5391,30 @@ fun SharedMobilePdfReaderHost(
     if (showNewPdfTabSheet) {
         ModalBottomSheet(onDismissRequest = { showNewPdfTabSheet = false }) {
             val openIds = openPdfTabs.mapTo(mutableSetOf()) { it.id }
-            val candidates = availablePdfTabBooks
-                .filter { it.type == FileType.PDF && it.id !in openIds }
-                .sortedByDescending { it.timestamp }
-            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-                Text(
-                    readerString("title_add_pdf_to_tab", "Add PDF to tab"),
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(16.dp),
-                )
-                if (candidates.isEmpty()) {
-                    Text(
-                        readerString("msg_no_other_pdfs_found", "No other PDFs found"),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                        items(candidates, key = { "new_pdf_tab_${it.id}" }) { candidate ->
-                            ListItem(
-                                headlineContent = {
-                                    Text(
-                                        candidate.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                supportingContent = candidate.author?.let { author ->
-                                    { Text(author, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                },
-                                modifier = Modifier.clickable {
-                                    showNewPdfTabSheet = false
-                                    onOpenPdfTab(candidate)
-                                },
-                            )
-                            HorizontalDivider()
-                        }
+            val displayNameMode = LocalUsePdfFileNameAsDisplayName.current
+            val candidates = remember(availablePdfTabBooks, openIds, displayNameMode) {
+                availablePdfTabBooks
+                    .filter { it.type == FileType.PDF && it.id !in openIds }
+                    .sortedByDescending { it.timestamp }
+                    .map { book ->
+                        SharedReaderNewTabCandidate(
+                            bookId = book.id,
+                            title = book.cardTitle(displayNameMode),
+                            subtitle = book.author,
+                        )
                     }
-                }
             }
+            SharedReaderNewTabSheetContent(
+                title = readerString("title_add_pdf_to_tab", "Add PDF to tab"),
+                emptyMessage = readerString("msg_no_other_pdfs_found", "No other PDFs found"),
+                candidates = candidates,
+                onPick = { bookId ->
+                    showNewPdfTabSheet = false
+                    availablePdfTabBooks.firstOrNull { it.id == bookId }?.let(onOpenPdfTab)
+                },
+            )
         }
-        }
+    }
     }
 }
 
@@ -5443,63 +5426,23 @@ private fun SharedMobilePdfReaderTabStrip(
     onCloseTab: (BookItem) -> Unit,
     onNewTab: () -> Unit,
 ) {
-    LazyRow(
-        // Opaque, matching the bar above it: at 40% alpha the page text showed through the strip,
-        // so the chrome read as a rendering fault rather than a surface.
-        modifier = Modifier.fillMaxWidth().height(48.dp)
-            .background(MaterialTheme.colorScheme.surfaceContainer),
-        contentPadding = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues(),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        items(tabs, key = { "pdf_reader_tab_${it.id}" }) { tab ->
-            val selected = tab.id == activeBookId
-            val contentColor = if (selected) {
-                MaterialTheme.colorScheme.onSurface
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            }
-            Row(
-                modifier = Modifier
-                    .height(if (selected) 48.dp else 36.dp)
-                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-                    .background(if (selected) MaterialTheme.colorScheme.surface else Color.Transparent)
-                    .clickable { onOpenTab(tab) }
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 140.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = contentColor,
-                )
-                Spacer(Modifier.width(8.dp))
-                IconButton(onClick = { onCloseTab(tab) }, modifier = Modifier.size(20.dp)) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = readerString("close_tab", "Close tab"),
-                        modifier = Modifier.size(16.dp),
-                        tint = contentColor,
-                    )
-                }
-            }
-        }
-        item {
-            IconButton(
-                onClick = onNewTab,
-                modifier = Modifier.padding(start = 8.dp, bottom = 4.dp).size(36.dp),
-            ) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = readerString("content_desc_new_tab", "New tab"),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    val useFileName = LocalUsePdfFileNameAsDisplayName.current
+    SharedReaderTabStrip(
+        tabs = remember(tabs, useFileName) {
+            tabs.map { tab -> SharedReaderTab(tab.id, tab.cardTitle(useFileName)) }
+        },
+        activeBookId = activeBookId,
+        onSelect = { bookId -> tabs.firstOrNull { it.id == bookId }?.let(onOpenTab) },
+        onClose = { bookId -> tabs.firstOrNull { it.id == bookId }?.let(onCloseTab) },
+        onNewTab = onNewTab,
+        newTabContentDescription = readerString("content_desc_new_tab", "New tab"),
+        closeTabContentDescription = readerString("close_tab", "Close tab"),
+        modifier = Modifier.windowInsetsPadding(
+            WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+        ),
+    )
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -6497,16 +6440,11 @@ private fun SharedMobilePdfTabsDrawerPage(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
-        ListItem(
-            headlineContent = { Text(readerString("tabs", "Tabs")) },
-            supportingContent = { Text("${tabs.size}") },
-            trailingContent = {
-                TextButton(onClick = onNewTab) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text(readerString("content_desc_new_tab", "New tab"))
-                }
-            },
+        SharedDrawerTabsHeader(
+            title = readerString("active_tabs", "Active Tabs"),
+            openTabCount = tabs.size,
+            newTabContentDescription = readerString("content_desc_new_tab", "New tab"),
+            onNewTab = onNewTab,
         )
         ListItem(
             headlineContent = { Text(readerString("pdf_show_top_tab_strip", "Show top tab strip")) },
@@ -6521,32 +6459,19 @@ private fun SharedMobilePdfTabsDrawerPage(
             },
         )
         HorizontalDivider()
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize().padding(vertical = 8.dp)) {
             items(tabs, key = { "pdf_drawer_tab_${it.id}" }) { tab ->
-                ListItem(
-                    headlineContent = {
-                        Text(
-                            tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    supportingContent = tab.author?.let { author ->
-                        { Text(author, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    },
-                    leadingContent = if (tab.id == activeTabBookId) {
-                        { Icon(Icons.Default.Check, contentDescription = readerString("content_desc_enabled", "Selected")) }
-                    } else {
-                        null
-                    },
-                    trailingContent = {
-                        IconButton(onClick = { onCloseTab(tab) }) {
-                            Icon(Icons.Default.Close, contentDescription = readerString("close_tab", "Close tab"))
-                        }
-                    },
-                    modifier = Modifier.clickable { onOpenTab(tab) },
+                SharedDrawerTabRow(
+                    title = tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
+                    supportingText = tab.author,
+                    isSelected = tab.id == activeTabBookId,
+                    progress = tab.progressPercentage?.let { (it / 100f).coerceIn(0f, 1f) },
+                    onSelect = { onOpenTab(tab) },
+                    onClose = { onCloseTab(tab) },
+                    closeContentDescription = readerString("close_tab", "Close tab"),
+                    testTag = "PdfDrawerTab_${tab.id}",
+                    closeTestTag = "PdfDrawerTabClose_${tab.id}",
                 )
-                HorizontalDivider()
             }
         }
     }
