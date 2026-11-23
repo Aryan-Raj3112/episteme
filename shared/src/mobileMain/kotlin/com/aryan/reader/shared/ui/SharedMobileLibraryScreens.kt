@@ -1360,38 +1360,9 @@ fun SharedMobileHomeScreen(
         topBar = {
             if (showTopBar) {
                 if (isContextualMode) {
-                    SharedMobileContextualTopBar(
+                    SharedSelectionTopBar(
                         selectedCount = selectedIds.size,
                         onClose = actions::clearSelection,
-                        onSelectAll = actions::selectAll,
-                        onPin = actions::toggleSelectedPins,
-                        onAddToShelf = { showAddToShelf = true },
-                        onTag = { showTagDialog = true },
-                        onInfo = selectedIds.singleOrNull()?.let { id ->
-                            state.recentBooks.firstOrNull { it.id == id }?.let { book ->
-                                { infoBook = book }
-                            }
-                        },
-                        onSave = selectedIds.singleOrNull()?.let { id ->
-                            state.recentBooks.firstOrNull { it.id == id }
-                                ?.takeIf { it.canExportOriginalFile() }
-                                ?.let { book ->
-                                { actions.saveBook(book) }
-                            }
-                        },
-                        onShare = selectedIds.singleOrNull()?.let { id ->
-                            state.recentBooks.firstOrNull { it.id == id }
-                                ?.takeIf { it.canExportOriginalFile() }
-                                ?.let { book ->
-                                { actions.shareBook(book) }
-                            }
-                        },
-                        onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
-                            state.recentBooks.firstOrNull { it.id == id }?.let { book ->
-                                { actions.exportAnnotations(book) }
-                            }
-                        },
-                        onDelete = { showRemoveFromRecents = true }
                     )
                 } else {
                     SharedMobileHomeTopBar(
@@ -1515,16 +1486,50 @@ fun SharedMobileHomeScreen(
             }
         }
         val canRefresh = state.isSyncEnabled || state.syncedFolders.any { it.localSyncEnabled }
-        if (canRefresh) {
-            PullToRefreshBox(
-                isRefreshing = state.isRefreshing,
-                onRefresh = actions::refresh,
-                modifier = Modifier.fillMaxSize(),
-            ) {
+        Box(Modifier.fillMaxSize()) {
+            if (canRefresh) {
+                PullToRefreshBox(
+                    isRefreshing = state.isRefreshing,
+                    onRefresh = actions::refresh,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    homeContent()
+                }
+            } else {
                 homeContent()
             }
-        } else {
-            homeContent()
+            // The count and the way out stay in the bar; the actions float within thumb reach.
+            if (isContextualMode) {
+                SharedSelectionToolbar(
+                    selectedCount = selectedIds.size,
+                    onSelectAll = actions::selectAll,
+                    onPin = actions::toggleSelectedPins,
+                    onAddToShelf = { showAddToShelf = true },
+                    onTag = { showTagDialog = true },
+                    onInfo = selectedIds.singleOrNull()?.let { id ->
+                        state.recentBooks.firstOrNull { it.id == id }?.let { book -> { infoBook = book } }
+                    },
+                    onSave = selectedIds.singleOrNull()?.let { id ->
+                        state.recentBooks.firstOrNull { it.id == id }
+                            ?.takeIf { it.canExportOriginalFile() }
+                            ?.let { book -> { actions.saveBook(book) } }
+                    },
+                    onShare = selectedIds.singleOrNull()?.let { id ->
+                        state.recentBooks.firstOrNull { it.id == id }
+                            ?.takeIf { it.canExportOriginalFile() }
+                            ?.let { book -> { actions.shareBook(book) } }
+                    },
+                    onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
+                        state.recentBooks.firstOrNull { it.id == id }?.let { book -> { actions.exportAnnotations(book) } }
+                    },
+                    onDelete = { showRemoveFromRecents = true },
+                    onClear = actions::clearSelection,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 16.dp),
+                )
+            }
         }
     }
     if (showRemoveFromRecents) {
@@ -1806,44 +1811,59 @@ fun SharedMobileLibraryScreen(
         onTabAnimationFinished = { _, _ -> },
         nowNanos = { currentTimestamp() },
         bookContextualTopBar = {
-            SharedMobileContextualTopBar(
+            SharedSelectionTopBar(
                 selectedCount = selectedIds.size,
                 onClose = onClearSelection,
-                onSelectAll = {
-                    onSelectAll(sortedSearchedBooks.mapTo(linkedSetOf()) { it.id })
-                },
-                onPin = { onToggleSelectedPins(selectedIds) },
-                onAddToShelf = { showAddToShelf = true },
-                onTag = { showTagDialog = true },
-                onShare = selectedIds.singleOrNull()?.let { id ->
-                    state.libraryBooks.firstOrNull { it.id == id }
-                        ?.takeIf { it.canExportOriginalFile() }
-                        ?.let { book -> { onShareBook(book) } }
-                },
-                onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
-                    state.libraryBooks.firstOrNull { it.id == id }?.let { book ->
-                        { onExportAnnotations(book) }
-                    }
-                },
-                onInfo = selectedIds.singleOrNull()?.let { id ->
-                    state.libraryBooks.firstOrNull { it.id == id }?.let { book -> { infoBook = book } }
-                },
-                onSave = selectedIds.singleOrNull()?.let { id ->
-                    state.libraryBooks.firstOrNull { it.id == id }
-                        ?.takeIf { it.canExportOriginalFile() }
-                        ?.let { book -> { onSaveBook(book) } }
-                },
-                onDelete = { showDeleteBooks = true },
             )
         },
         shelfContextualTopBar = {
-            SharedMobileContextualTopBar(
+            SharedSelectionTopBar(
                 selectedCount = selectedShelves.size,
                 onClose = onClearSelection,
-                onSelectAll = null,
-                onPin = null,
-                onDelete = { showDeleteShelves = true },
             )
+        },
+        contextualToolbar = when {
+            isBookContextualMode -> {
+                {
+                    SharedSelectionToolbar(
+                        selectedCount = selectedIds.size,
+                        onSelectAll = { onSelectAll(sortedSearchedBooks.mapTo(linkedSetOf()) { it.id }) },
+                        onPin = { onToggleSelectedPins(selectedIds) },
+                        onAddToShelf = { showAddToShelf = true },
+                        onTag = { showTagDialog = true },
+                        onShare = selectedIds.singleOrNull()?.let { id ->
+                            state.libraryBooks.firstOrNull { it.id == id }
+                                ?.takeIf { it.canExportOriginalFile() }
+                                ?.let { book -> { onShareBook(book) } }
+                        },
+                        onExportAnnotations = selectedIds.singleOrNull()?.let { id ->
+                            state.libraryBooks.firstOrNull { it.id == id }?.let { book -> { onExportAnnotations(book) } }
+                        },
+                        onInfo = selectedIds.singleOrNull()?.let { id ->
+                            state.libraryBooks.firstOrNull { it.id == id }?.let { book -> { infoBook = book } }
+                        },
+                        onSave = selectedIds.singleOrNull()?.let { id ->
+                            state.libraryBooks.firstOrNull { it.id == id }
+                                ?.takeIf { it.canExportOriginalFile() }
+                                ?.let { book -> { onSaveBook(book) } }
+                        },
+                        onDelete = { showDeleteBooks = true },
+                        onClear = onClearSelection,
+                    )
+                }
+            }
+            isShelfContextualMode -> {
+                {
+                    SharedSelectionToolbar(
+                        selectedCount = selectedShelves.size,
+                        onSelectAll = null,
+                        onPin = null,
+                        onDelete = { showDeleteShelves = true },
+                        onClear = onClearSelection,
+                    )
+                }
+            }
+            else -> null
         },
         normalTopBarActions = {
             if (pagerState.currentPage == 0) {
@@ -2247,21 +2267,9 @@ private fun SharedMobileShelfDetail(
         modifier = modifier,
         topBar = {
             if (selectedShelfBooks.isNotEmpty()) {
-                SharedMobileContextualTopBar(
+                SharedSelectionTopBar(
                     selectedCount = selectedShelfBooks.size,
                     onClose = onClearSelection,
-                    onSelectAll = null,
-                    onPin = null,
-                    onTag = { showTagDialog = true },
-                    onInfo = selectedShelfBooks.singleOrNull()?.let { book -> { infoBook = book } },
-                    onSave = selectedShelfBooks.singleOrNull()
-                        ?.takeIf { it.canExportOriginalFile() }
-                        ?.let { book -> { onSaveBook(book) } },
-                    onShare = selectedShelfBooks.singleOrNull()
-                        ?.takeIf { it.canExportOriginalFile() }
-                        ?.let { book -> { onShareBook(book) } },
-                    onExportAnnotations = selectedShelfBooks.singleOrNull()?.let { book -> { onExportAnnotations(book) } },
-                    onDelete = { showRemoveBooks = true },
                 )
             } else if (isSearchActive) {
                 TopAppBar(
@@ -2392,7 +2400,8 @@ private fun SharedMobileShelfDetail(
             }
         },
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding)) {
+        Box(Modifier.fillMaxSize().padding(padding)) {
+        Column(Modifier.fillMaxSize()) {
             if (breadcrumbEntries.size > 1 && normalizedQuery.isBlank()) {
                 SharedMobileShelfBreadcrumb(
                     entries = breadcrumbEntries,
@@ -2472,6 +2481,31 @@ private fun SharedMobileShelfDetail(
                     )
                 }
                 }
+            }
+        }
+            // Removing books from a shelf is the shelf's own delete, so the icon stays the same
+            // even though the book survives it.
+            if (selectedShelfBooks.isNotEmpty()) {
+                SharedSelectionToolbar(
+                    selectedCount = selectedShelfBooks.size,
+                    onSelectAll = null,
+                    onPin = null,
+                    onTag = { showTagDialog = true },
+                    onInfo = selectedShelfBooks.singleOrNull()?.let { book -> { infoBook = book } },
+                    onSave = selectedShelfBooks.singleOrNull()
+                        ?.takeIf { it.canExportOriginalFile() }
+                        ?.let { book -> { onSaveBook(book) } },
+                    onShare = selectedShelfBooks.singleOrNull()
+                        ?.takeIf { it.canExportOriginalFile() }
+                        ?.let { book -> { onShareBook(book) } },
+                    onExportAnnotations = selectedShelfBooks.singleOrNull()?.let { book -> { onExportAnnotations(book) } },
+                    onDelete = { showRemoveBooks = true },
+                    onClear = onClearSelection,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 16.dp),
+                )
             }
         }
     }

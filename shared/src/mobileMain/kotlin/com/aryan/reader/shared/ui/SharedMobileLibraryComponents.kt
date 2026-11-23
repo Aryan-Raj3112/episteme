@@ -46,7 +46,6 @@ import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
@@ -55,9 +54,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.SelectAll
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material3.Button
@@ -509,112 +505,6 @@ internal fun SharedMobileSearchTopBar(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = readerString("content_desc_close_search", "Close search"),
                 )
-            }
-        }
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun SharedMobileContextualTopBar(
-    selectedCount: Int,
-    onClose: () -> Unit,
-    onSelectAll: (() -> Unit)?,
-    onPin: (() -> Unit)?,
-    onAddToShelf: (() -> Unit)? = null,
-    onTag: (() -> Unit)? = null,
-    onRename: (() -> Unit)? = null,
-    onInfo: (() -> Unit)? = null,
-    onSave: (() -> Unit)? = null,
-    onShare: (() -> Unit)? = null,
-    onExportAnnotations: (() -> Unit)? = null,
-    onDelete: (() -> Unit)? = null
-) {
-    var showMoreMenu by remember { mutableStateOf(false) }
-    CenterAlignedTopAppBar(
-        title = { Text(readerString("selected_count", "%1\$d selected", selectedCount)) },
-        navigationIcon = {
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "Clear selection")
-            }
-        },
-        actions = {
-            if (onInfo != null && selectedCount == 1) {
-                IconButton(onClick = onInfo) {
-                    Icon(Icons.Default.Info, contentDescription = "Book info")
-                }
-            }
-            if (onPin != null) {
-                IconButton(onClick = onPin) {
-                    Icon(Icons.Default.PushPin, contentDescription = "Pin")
-                }
-            }
-            if (onSelectAll != null) {
-                IconButton(onClick = onSelectAll) {
-                    Icon(Icons.Default.SelectAll, contentDescription = "Select all")
-                }
-            }
-            if (onDelete != null) {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove selected")
-                }
-            }
-            Box {
-                IconButton(onClick = { showMoreMenu = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "More actions")
-                }
-                SharedDropdownMenu(
-                    expanded = showMoreMenu,
-                    onDismissRequest = { showMoreMenu = false }
-                ) {
-                    onTag?.let { tag ->
-                        DropdownMenuItem(
-                            text = { Text(readerString("section_tags", "Tags")) },
-                            onClick = { showMoreMenu = false; tag() }
-                        )
-                    }
-                    onAddToShelf?.let { addToShelf ->
-                        DropdownMenuItem(
-                            text = { Text(readerString("desktop_add_to_shelf", "Add to shelf")) },
-                            leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
-                            onClick = { showMoreMenu = false; addToShelf() }
-                        )
-                    }
-                    onRename?.let { rename ->
-                        DropdownMenuItem(
-                            text = { Text(readerString("action_rename", "Rename")) },
-                            onClick = { showMoreMenu = false; rename() }
-                        )
-                    }
-                    if (selectedCount == 1) {
-                        onSave?.let { save ->
-                            DropdownMenuItem(
-                                text = { Text(readerString("action_save_copy_to_device", "Save copy to device")) },
-                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
-                                onClick = { showMoreMenu = false; save() }
-                            )
-                        }
-                        onShare?.let { share ->
-                            DropdownMenuItem(
-                                text = { Text(readerString("action_share_original_file", "Share original file")) },
-                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                                onClick = { showMoreMenu = false; share() }
-                            )
-                        }
-                        onExportAnnotations?.let { export ->
-                            DropdownMenuItem(
-                                text = { Text(readerString("action_export_annotations", "Export annotations")) },
-                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
-                                onClick = { showMoreMenu = false; export() }
-                            )
-                        }
-                    }
-                    DropdownMenuItem(
-                        text = { Text(readerString("action_clear", "Clear")) },
-                        leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
-                        onClick = { showMoreMenu = false; onClose() }
-                    )
-                }
             }
         }
     )
