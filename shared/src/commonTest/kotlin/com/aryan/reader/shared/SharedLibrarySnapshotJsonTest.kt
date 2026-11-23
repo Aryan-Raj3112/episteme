@@ -31,6 +31,31 @@ class SharedLibrarySnapshotJsonTest {
     }
 
     @Test
+    fun `snapshot json round trips both tab sets and defaults the text set when absent`() {
+        val snapshot = SharedLibrarySnapshot(
+            openTabIds = listOf("pdf-a", "pdf-b"),
+            activeTabBookId = "pdf-b",
+            textOpenTabIds = listOf("epub-a"),
+            activeTextTabBookId = "epub-a",
+        )
+
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(SharedLibrarySnapshotJson.encode(snapshot))
+
+        assertEquals(listOf("pdf-a", "pdf-b"), decoded.openTabIds)
+        assertEquals("pdf-b", decoded.activeTabBookId)
+        assertEquals(listOf("epub-a"), decoded.textOpenTabIds)
+        assertEquals("epub-a", decoded.activeTextTabBookId)
+
+        // Snapshots written before text tabs existed only ever had the fixed-layout set.
+        val legacy = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """{"schemaVersion":26,"openTabIds":["pdf-a"],"activeTabBookId":"pdf-a"}"""
+        )
+        assertEquals(listOf("pdf-a"), legacy.openTabIds)
+        assertEquals(emptyList(), legacy.textOpenTabIds)
+        assertEquals(null, legacy.activeTextTabBookId)
+    }
+
+    @Test
     fun `legacy ios copy behavior migrates to android keep behavior`() {
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(
             """{"schemaVersion":26,"externalFileBehavior":"COPY"}"""

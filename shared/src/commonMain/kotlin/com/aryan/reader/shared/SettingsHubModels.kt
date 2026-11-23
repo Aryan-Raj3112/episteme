@@ -600,7 +600,7 @@ private fun SharedSettingsHubInput.appLibraryCategory(): SharedSettingsCategoryS
                 item(
                     action = SharedSettingsAction.TABS_TOGGLE,
                     title = t("tabs_title", "Reader tabs"),
-                    summary = t("tabs_summary", "Keep multiple PDFs open instead of replacing the reader"),
+                    summary = t("tabs_summary", "Keep multiple books open in tabs instead of replacing the reader"),
                     kind = SharedSettingsItemKind.TOGGLE,
                     checked = isTabsEnabled,
                     keywords = listOf("tabs", "sessions")

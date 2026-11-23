@@ -41,6 +41,8 @@ data class LibraryFeatureState(
     val rawBooks: List<BookItem> = emptyList(),
     val shelves: List<Shelf> = emptyList(),
     val openTabs: List<BookItem> = emptyList(),
+    /** Text-reader tabs, projected alongside the fixed-layout set so neither is dropped. */
+    val textOpenTabs: List<BookItem> = emptyList(),
     val booksAvailableForAdding: List<BookItem> = emptyList(),
     val tags: List<Tag> = emptyList(),
 )
@@ -100,7 +102,8 @@ class SharedLibraryStateProjector(
             .withPinnedFirst(current.pinnedHomeBookIds) { it.id }
         val booksById = allLibraryBooks.associateBy { it.id }
         val tabState = current.tabs.reconcileAvailableBooks(booksById.keys)
-        val openTabs = tabState.openBookIds.mapNotNull(booksById::get)
+        val openTabs = tabState.fixedLayout.openBookIds.mapNotNull(booksById::get)
+        val textOpenTabs = tabState.text.openBookIds.mapNotNull(booksById::get)
         val shelfProjection = buildShelves(
             allLibraryBooks = allLibraryBooks,
             shelfRecords = input.shelfRecords,
@@ -145,6 +148,7 @@ class SharedLibraryStateProjector(
             },
             shelves = shelfProjection.shelves,
             openTabs = openTabs,
+            textOpenTabs = textOpenTabs,
             tabs = tabState,
             booksAvailableForAdding = booksAvailableForAdding,
             // Tag order is user-visible in the Tags section, filter sheet and pickers.

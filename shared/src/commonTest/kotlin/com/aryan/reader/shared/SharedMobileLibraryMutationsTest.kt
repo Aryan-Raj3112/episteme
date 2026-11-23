@@ -468,14 +468,14 @@ class SharedMobileLibraryMutationsTest {
     }
 
     @Test
-    fun `mobile PDF tab policy matches Android twenty tab limit`() {
-        val full = (1..MAX_OPEN_PDF_TABS).map { "book-$it" }
+    fun `mobile tab policy matches Android twenty tab per kind limit`() {
+        val full = (1..MAX_OPEN_TABS_PER_KIND).map { "book-$it" }
 
-        assertFalse(canOpenMobilePdfTab(full, "new-book"))
-        assertTrue(canOpenMobilePdfTab(full, "book-10"))
-        assertTrue(canOpenMobilePdfTab(full + " book-10 ", "book-10"))
-        assertFalse(canOpenMobilePdfTab(full, " "))
-        assertTrue(canOpenMobilePdfTab(full.dropLast(1), "new-book"))
+        assertFalse(canOpenMobileTab(full, "new-book"))
+        assertTrue(canOpenMobileTab(full, "book-10"))
+        assertTrue(canOpenMobileTab(full + " book-10 ", "book-10"))
+        assertFalse(canOpenMobileTab(full, " "))
+        assertTrue(canOpenMobileTab(full.dropLast(1), "new-book"))
     }
 
     @Test
@@ -575,7 +575,7 @@ class SharedMobileLibraryMutationsTest {
         assertEquals("second", state.activeTabBookId)
         assertEquals("second", state.selectedBookId)
 
-        val closed = state.withMobileBookClosed("second")
+        val closed = state.withMobileBookClosed(ReaderTabKind.FIXED_LAYOUT, "second")
 
         assertEquals(listOf("first"), closed.openTabIds)
         assertEquals(listOf("first"), closed.openTabs.map { it.id })
@@ -637,8 +637,8 @@ class SharedMobileLibraryMutationsTest {
             selectedFileType = FileType.PDF
         )
 
-        val opened = original.withMobileBookTabOpened("other")
-        val closed = opened.withMobileBookTabClosed("other")
+        val opened = original.withMobileBookTabOpened(ReaderTabKind.FIXED_LAYOUT, "other")
+        val closed = opened.withMobileBookTabClosed(ReaderTabKind.FIXED_LAYOUT, "other")
 
         assertEquals("selected", closed.selectedBookId)
         assertEquals("/books/selected.pdf", closed.selectedUriString)
@@ -651,7 +651,7 @@ class SharedMobileLibraryMutationsTest {
         val only = book(id = "only")
         val closed = SharedReaderScreenState(rawLibraryBooks = listOf(only))
             .withMobileBookOpened(only)
-            .withMobileBookClosed(only.id)
+            .withMobileBookClosed(ReaderTabKind.FIXED_LAYOUT, only.id)
 
         assertNull(closed.selectedBookId)
         assertNull(closed.selectedUriString)
@@ -766,8 +766,8 @@ class SharedMobileLibraryMutationsTest {
     }
 
     @Test
-    fun `reconciling mobile pdf tabs drops missing books and caps at twenty`() {
-        val library = (1..(MAX_OPEN_PDF_TABS + 5)).map { book(id = "book-$it") }
+    fun `reconciling mobile tabs drops missing books and caps each set at twenty`() {
+        val library = (1..(MAX_OPEN_TABS_PER_KIND + 5)).map { book(id = "book-$it") }
         val state = SharedReaderScreenState(
             rawLibraryBooks = library,
             openTabIds = listOf("missing") + library.map { it.id } + listOf(" book-1 "),
@@ -775,15 +775,15 @@ class SharedMobileLibraryMutationsTest {
             activeTabBookId = "missing",
         )
 
-        val reconciled = state.withReconciledMobilePdfTabs()
+        val reconciled = state.withReconciledMobileTabs()
 
-        assertEquals((1..MAX_OPEN_PDF_TABS).map { "book-$it" }, reconciled.openTabIds)
-        assertEquals((1..MAX_OPEN_PDF_TABS).map { "book-$it" }, reconciled.openTabs.map { it.id })
+        assertEquals((1..MAX_OPEN_TABS_PER_KIND).map { "book-$it" }, reconciled.openTabIds)
+        assertEquals((1..MAX_OPEN_TABS_PER_KIND).map { "book-$it" }, reconciled.openTabs.map { it.id })
         assertNull(reconciled.activeTabBookId)
     }
 
     @Test
-    fun `reconciling mobile pdf tabs keeps a surviving active tab`() {
+    fun `reconciling mobile tabs keeps a surviving active tab`() {
         val first = book(id = "first")
         val second = book(id = "second")
         val state = SharedReaderScreenState(
@@ -793,7 +793,7 @@ class SharedMobileLibraryMutationsTest {
             activeTabBookId = second.id,
         )
 
-        val reconciled = state.withReconciledMobilePdfTabs()
+        val reconciled = state.withReconciledMobileTabs()
 
         assertEquals(listOf(first.id, second.id), reconciled.openTabIds)
         assertEquals(second.id, reconciled.activeTabBookId)

@@ -235,11 +235,71 @@ data class AppAppearanceState(
     val customThemes: List<CustomAppTheme> = emptyList(),
 )
 
-data class AppTabState(
-    val isEnabled: Boolean = true,
+/**
+ * One reader engine's open tabs.
+ *
+ * [activeBookId] is the tab that reader is showing. It is not necessarily the book the app is
+ * showing: the PDF set keeps its active tab while the text reader is on screen, so both readers
+ * resume where they were left.
+ */
+data class AppTabGroup(
     val openBookIds: List<String> = emptyList(),
     val activeBookId: String? = null,
-)
+) {
+    fun reconciled(availableBookIds: Set<String>, maxOpenTabs: Int): AppTabGroup {
+        val openIds = openBookIds
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .filter { it in availableBookIds }
+            .take(maxOpenTabs.coerceAtLeast(0))
+            .toList()
+        return AppTabGroup(
+            openBookIds = openIds,
+            activeBookId = activeBookId?.takeIf { it in openIds },
+        )
+    }
+}
+
+/**
+ * Open tabs, one independent set per [ReaderTabKind].
+ *
+ * The two sets are deliberately separate: a tab tap never swaps the reader engine, chrome, or
+ * pagination model, so each reader only ever offers tabs it can open in place. [isEnabled] is a
+ * single user setting covering both sets.
+ */
+data class AppTabState(
+    val isEnabled: Boolean = true,
+    val fixedLayout: AppTabGroup = AppTabGroup(),
+    val text: AppTabGroup = AppTabGroup(),
+) {
+    /** The fixed-layout set. PDF-only call sites keep their original meaning through these aliases. */
+    val openBookIds: List<String> get() = fixedLayout.openBookIds
+    val activeBookId: String? get() = fixedLayout.activeBookId
+
+    fun group(kind: ReaderTabKind): AppTabGroup = when (kind) {
+        ReaderTabKind.FIXED_LAYOUT -> fixedLayout
+        ReaderTabKind.TEXT -> text
+    }
+
+    fun withGroup(kind: ReaderTabKind, group: AppTabGroup): AppTabState = when (kind) {
+        ReaderTabKind.FIXED_LAYOUT -> copy(fixedLayout = group)
+        ReaderTabKind.TEXT -> copy(text = group)
+    }
+
+    companion object {
+        /** Builds the historical single-set shape, which is always the fixed-layout set. */
+        fun ofFixedLayout(
+            isEnabled: Boolean = true,
+            openBookIds: List<String> = emptyList(),
+            activeBookId: String? = null,
+        ): AppTabState = AppTabState(
+            isEnabled = isEnabled,
+            fixedLayout = AppTabGroup(openBookIds, activeBookId),
+        )
+    }
+}
 
 /** Portable shelf-navigation and dialog state; persistence and repository writes remain platform adapters. */
 data class AppShelfState(
@@ -339,6 +399,17 @@ data class DeviceLimitReachedState(
 fun shouldShowDeviceLimitOverlay(deviceLimitState: DeviceLimitReachedState): Boolean =
     deviceLimitState.isLimitReached
 
+/**
+ * Pairs both tab sets with the one tabs-on/off setting. Tabs are kept as flat, independently
+ * persisted fields above because the screen state is compared field by field on every projection,
+ * and because a value derived from the selected file would empty out as soon as the reader closes.
+ */
+fun SharedReaderScreenState.toTabState(): AppTabState = AppTabState(
+    isEnabled = isTabsEnabled,
+    fixedLayout = AppTabGroup(openTabIds, activeTabBookId),
+    text = AppTabGroup(textOpenTabIds, activeTextTabBookId),
+)
+
 data class SharedReaderScreenState(
     val selectedBookId: String? = null,
     val selectedUriString: String? = null,
@@ -394,9 +465,14 @@ data class SharedReaderScreenState(
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val libraryFilters: LibraryFilters = LibraryFilters(),
     val isTabsEnabled: Boolean = true,
+    /** Fixed-layout (PDF-engine) tabs. */
     val openTabIds: List<String> = emptyList(),
     val openTabs: List<BookItem> = emptyList(),
     val activeTabBookId: String? = null,
+    /** Text (reflow-engine) tabs, kept separate so each reader only offers tabs it can open in place. */
+    val textOpenTabIds: List<String> = emptyList(),
+    val textOpenTabs: List<BookItem> = emptyList(),
+    val activeTextTabBookId: String? = null,
     val showExternalFileSavePromptFor: String? = null,
     val externalFileBehavior: String = "ASK",
     val useStrictFileFilter: Boolean = false,

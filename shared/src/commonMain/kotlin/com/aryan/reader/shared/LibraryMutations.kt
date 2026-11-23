@@ -398,6 +398,7 @@ object SharedLibraryEditor {
         if (folderBookIds.isEmpty()) return null
         val rootSourceFolder = folder.books.firstNotNullOfOrNull { it.sourceFolder }
         val remainingTabs = state.openTabIds.filterNot { it in folderBookIds }
+        val remainingTextTabs = state.textOpenTabIds.filterNot { it in folderBookIds }
         return SharedLibraryMutationResult(
             state = state.copy(
                 rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in folderBookIds },
@@ -406,6 +407,8 @@ object SharedLibraryEditor {
                 pinnedLibraryBookIds = state.pinnedLibraryBookIds - folderBookIds,
                 openTabIds = remainingTabs,
                 activeTabBookId = state.activeTabBookId?.takeUnless { it in folderBookIds },
+                textOpenTabIds = remainingTextTabs,
+                activeTextTabBookId = state.activeTextTabBookId?.takeUnless { it in folderBookIds },
                 syncedFolders = if (folder.parentShelfId == null && rootSourceFolder != null) {
                     state.syncedFolders.filterNot { it.uriString == rootSourceFolder }
                 } else {

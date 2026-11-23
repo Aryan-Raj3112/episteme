@@ -87,7 +87,7 @@ class SharedReducersTest {
     }
 
     @Test
-    fun `disabling or closing all tabs clears ids active tab and materialized tabs together`() {
+    fun `disabling tabs parks each set on its active tab while closing all clears it`() {
         val tab = BookItem(
             id = "pdf",
             path = "/books/pdf.pdf",
@@ -96,18 +96,21 @@ class SharedReducersTest {
             timestamp = 1L,
         )
         val state = SharedReaderScreenState(
+            rawLibraryBooks = listOf(tab),
             openTabIds = listOf(tab.id),
             activeTabBookId = tab.id,
             openTabs = listOf(tab),
         )
 
         val disabled = state.reduce(AppAction.TabsEnabledChanged(false))
-        val closedAll = state.reduce(AppAction.AllTabsClosed)
+        val closedAll = state.reduce(AppAction.BookTabsClosed(ReaderTabKind.FIXED_LAYOUT))
 
         assertEquals(false, disabled.isTabsEnabled)
-        assertEquals(emptyList(), disabled.openTabIds)
-        assertEquals(null, disabled.activeTabBookId)
-        assertEquals(emptyList(), disabled.openTabs)
+        // Disabling tabs parks the set on its active tab so re-enabling restores that reader
+        // (Android's long-standing behaviour, now the shared rule for both platforms).
+        assertEquals(listOf(tab.id), disabled.openTabIds)
+        assertEquals(tab.id, disabled.activeTabBookId)
+        assertEquals(listOf(tab), disabled.openTabs)
         assertEquals(emptyList(), closedAll.openTabIds)
         assertEquals(null, closedAll.activeTabBookId)
         assertEquals(emptyList(), closedAll.openTabs)
@@ -115,7 +118,7 @@ class SharedReducersTest {
 
     @Test
     fun `tab reconciliation removes unavailable duplicates and invalid active identity`() {
-        val state = AppTabState(
+        val state = AppTabState.ofFixedLayout(
             isEnabled = true,
             openBookIds = listOf("one", "missing", "one", "two"),
             activeBookId = "missing",
