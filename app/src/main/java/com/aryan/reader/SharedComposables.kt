@@ -99,7 +99,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -1014,13 +1013,11 @@ fun ReadingProgressSection(
             }
         }
         Spacer(modifier = Modifier.height(if (compact) 6.dp else 8.dp))
-        LinearProgressIndicator(
-            progress = { progress },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(if (compact) 5.dp else 6.dp),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+        com.aryan.reader.shared.ui.SharedProgressBar(
+            progress = progress,
+            modifier = Modifier.fillMaxWidth(),
+            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+            barHeight = if (compact) 5.dp else 6.dp,
         )
     }
 }

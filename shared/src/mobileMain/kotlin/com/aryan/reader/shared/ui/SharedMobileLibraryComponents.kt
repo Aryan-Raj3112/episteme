@@ -77,7 +77,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
@@ -1233,9 +1232,10 @@ internal fun SharedMobileLibraryListItem(
                 // always shows the progress bar + pill, even at 0%. Home grid
                 // keeps the >0f hide rule via the cover badge.
                 val listProgress = (book.progressPercentage ?: 0f).coerceIn(0f, 100f)
-                LinearProgressIndicator(
-                    progress = { listProgress / 100f },
+                SharedProgressBar(
+                    progress = listProgress / 100f,
                     modifier = Modifier.fillMaxWidth(),
+                    barHeight = 4.dp,
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(

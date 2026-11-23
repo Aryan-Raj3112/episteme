@@ -511,10 +511,11 @@ internal fun ProgressSection(progressPercentage: Float?) {
             Text("$percent%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(5.dp))
-        LinearProgressIndicator(
-            progress = { percent / 100f },
-            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)),
-            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+        SharedProgressBar(
+            progress = percent / 100f,
+            modifier = Modifier.fillMaxWidth(),
+            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+            barHeight = 5.dp,
         )
     }
 }

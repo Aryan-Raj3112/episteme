@@ -68,7 +68,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -527,13 +526,12 @@ private fun AudiobookContinueCard(
                     overflow = TextOverflow.Ellipsis
                 )
 
-                LinearProgressIndicator(
-                    progress = { item.progress },
+                com.aryan.reader.shared.ui.SharedProgressBar(
+                    progress = item.progress,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(top = 14.dp)
-                        .height(6.dp)
-                        .clip(CircleShape)
+                        .padding(top = 14.dp),
+                    barHeight = 6.dp,
                 )
 
                 Row(
@@ -1133,15 +1131,11 @@ private fun LegacyAudiobookMiniPlayer(
         onClick = onExpand
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            LinearProgressIndicator(
-                progress = {
-                    progress.coerceIn(0f, 1f)
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(3.dp),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest
+            com.aryan.reader.shared.ui.SharedProgressBar(
+                progress = progress,
+                modifier = Modifier.fillMaxWidth(),
+                trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                barHeight = 3.dp,
             )
 
             Row(
@@ -1659,15 +1653,14 @@ private fun ListenLibraryRow(
                 )
 
                 if (item.progress > 0f) {
-                    LinearProgressIndicator(
-                        progress = {
-                            item.progress.coerceIn(0f, 1f)
-                        },
+                    // Same wavy bar the rest of the library uses, so a half-finished audiobook and a
+                    // half-finished book report their position in one visual language.
+                    com.aryan.reader.shared.ui.SharedProgressBar(
+                        progress = item.progress,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 9.dp)
-                            .height(4.dp)
-                            .clip(CircleShape)
+                            .padding(top = 9.dp),
+                        barHeight = 4.dp,
                     )
                 }
 

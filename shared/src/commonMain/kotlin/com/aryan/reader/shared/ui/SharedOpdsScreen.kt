@@ -51,7 +51,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -512,7 +511,7 @@ private fun SharedOpdsFeedView(
                     }
                 }
                 if (state.isLoading) {
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    SharedIndeterminateProgressBar(modifier = Modifier.fillMaxWidth(), barHeight = 4.dp)
                 }
             }
         }
@@ -1057,9 +1056,9 @@ private fun SharedOpdsDownloadProgress(downloadState: SharedOpdsDownloadState?) 
         }
         Spacer(Modifier.height(4.dp))
         if (progress != null) {
-            LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            SharedProgressBar(progress = progress, modifier = Modifier.fillMaxWidth(), barHeight = 6.dp)
         } else {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            SharedIndeterminateProgressBar(modifier = Modifier.fillMaxWidth(), barHeight = 6.dp)
         }
     }
 }
@@ -1287,8 +1286,11 @@ private fun SharedAndroidOpdsEntryDetailsSheet(
                         progress?.let { Text("${(it * 100).toInt()}%", style = MaterialTheme.typography.titleMedium) }
                     }
                     Spacer(Modifier.height(8.dp))
-                    if (progress == null) LinearProgressIndicator(Modifier.fillMaxWidth().height(8.dp))
-                    else LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth().height(8.dp))
+                    if (progress == null) {
+                        SharedIndeterminateProgressBar(modifier = Modifier.fillMaxWidth(), barHeight = 6.dp)
+                    } else {
+                        SharedProgressBar(progress = progress, modifier = Modifier.fillMaxWidth(), barHeight = 6.dp)
+                    }
                 }
             } else if (uniqueAcquisitions.isNotEmpty() || entry.isStreamable) {
                 if (entry.isStreamable) {
