@@ -422,6 +422,9 @@ fun UnifiedLibraryScreen(
     }
     val advancedFilterCount = uiState.libraryFilters.activeFilterCount()
     val selectedItems = uiState.contextualActionItems
+    // Selection actions are shelf-scoped while a shelf is open in the Shelves section: delete
+    // removes from that shelf instead of deleting the book.
+    val isViewingShelf = section == UnifiedLibrarySection.SHELVES && selectedShelfId != null
 
     fun navigateShelfUp() {
         val parentId = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } }?.parentShelfId
@@ -690,25 +693,23 @@ fun UnifiedLibraryScreen(
                     }
                 }
             },
-            topBar = {
-                // Selection actions are shelf-scoped while a shelf is open in the Shelves
-                // section: delete removes from that shelf instead of deleting the book.
-                val isViewingShelf = section == UnifiedLibrarySection.SHELVES && selectedShelfId != null
-                if (selectedItems.isNotEmpty()) {
-                    ContextualTopAppBar(
-                        selectedItemCount = selectedItems.size,
-                        onNavIconClick = viewModel::clearContextualAction,
-                        onInfoClick = selectedItems.singleOrNull()?.let { item ->
+            selectionToolbar = if (selectedItems.isEmpty()) {
+                null
+            } else {
+                {
+                    com.aryan.reader.shared.ui.SharedSelectionToolbar(
+                        selectedCount = selectedItems.size,
+                        onSelectAll = viewModel::selectAllLibraryFiles,
+                        onPin = { viewModel.togglePinForContextualItems(isHome = false) },
+                        onAddToShelf = { viewModel.openAddSelectedToShelf(selectedItems.map { it.bookId }.toSet()) },
+                        onTag = { viewModel.openTagSelection(selectedItems.map { it.bookId }.toSet()) },
+                        onInfo = selectedItems.singleOrNull()?.let { item ->
                             {
                                 selectedBookForInfo = item
                                 showSelectedBookInfo = true
                             }
                         },
-                        onTagClick = { viewModel.openTagSelection(selectedItems.map { it.bookId }.toSet()) },
-                        onAddToShelfClick = { viewModel.openAddSelectedToShelf(selectedItems.map { it.bookId }.toSet()) },
-                        onPinClick = { viewModel.togglePinForContextualItems(isHome = false) },
-                        onSelectAllClick = viewModel::selectAllLibraryFiles,
-                        onSaveClick = selectedItems.singleOrNull()
+                        onSave = selectedItems.singleOrNull()
                             ?.takeIf { it.canExportOriginalFile() }
                             ?.let { item ->
                                 {
@@ -718,21 +719,29 @@ fun UnifiedLibraryScreen(
                                     ) { saveOriginalLauncher.launch(item.suggestedOriginalFileName()) }
                                 }
                             },
-                        onShareClick = selectedItems.singleOrNull()
+                        onShare = selectedItems.singleOrNull()
                             ?.takeIf { it.canExportOriginalFile() }
                             ?.let { item -> { shareOriginal(item) } },
-                        onExportAnnotationsClick = selectedItems.singleOrNull()
+                        onExportAnnotations = selectedItems.singleOrNull()
                             ?.let { item -> { showAnnotationExportFormatDialogFor = item } },
                         // Inside a shelf, "delete" means remove from that shelf; on the
                         // library surface it stays a destructive permanent delete.
-                        onDeleteClick = if (isViewingShelf) {
+                        onDelete = if (isViewingShelf) {
                             { showRemoveSelectedFromShelfConfirmation = true }
                         } else {
                             { showPermanentDeleteConfirmation = true }
                         },
-                        compactSelectionActions = true,
-                        overflowDeleteLabelRes = R.string.action_delete,
-                        onClearSelectionClick = viewModel::clearContextualAction
+                        onClear = viewModel::clearContextualAction,
+                    )
+                }
+            },
+            topBar = {
+                if (selectedItems.isNotEmpty()) {
+                    // The count and the way out stay up here; everything that acts on the
+                    // selection is within thumb reach at the bottom of the screen.
+                    com.aryan.reader.shared.ui.SharedSelectionTopBar(
+                        selectedCount = selectedItems.size,
+                        onClose = viewModel::clearContextualAction,
                     )
                 } else {
                     UnifiedLibraryTopBar(

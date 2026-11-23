@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -19,6 +20,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -46,6 +48,11 @@ fun SharedAndroidUnifiedScaffold(
     onRefresh: () -> Unit = {},
     /** Platforms that expose a reduce-motion setting swap sections without spatial movement. */
     reduceMotion: Boolean = false,
+    /**
+     * Floats over the content, bottom centre. Selection uses it for its action toolbar: the content
+     * must not reflow every time a book is selected or deselected.
+     */
+    selectionToolbar: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -57,7 +64,9 @@ fun SharedAndroidUnifiedScaffold(
         contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom),
         bottomBar = bottomBar,
         topBar = topBar,
-        floatingActionButton = if (showFloatingActionButton) {
+        // A selection toolbar takes the bottom-end corner for itself: leaving the FAB there too put
+        // two floating controls on top of each other, and the FAB does not act on a selection.
+        floatingActionButton = if (showFloatingActionButton && selectionToolbar == null) {
             {
                 // The library's book grid is inset from the content edge, so on a foldable
                 // iPhone the default 16dp end margin left the button straddling the grid
@@ -89,6 +98,7 @@ fun SharedAndroidUnifiedScaffold(
             { }
         },
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         // Section changes are a hierarchical move inside one surface, so they use the same
         // shared-axis tokens as the settings hub instead of Compose's default fade/slide spec.
         val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -115,6 +125,15 @@ fun SharedAndroidUnifiedScaffold(
             } else {
                 sectionContent(displayedSection, padding)
             }
+        }
+        selectionToolbar?.let { toolbar ->
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = SharedSpacing.Lg),
+            ) { toolbar() }
+        }
         }
     }
 }

@@ -381,6 +381,7 @@ fun SharedMobileUnifiedLibraryScreen(
     val contextualActions = selectionActions?.takeIf { selectionCapabilities.selectionActions }
     val isContextualMode = contextualActions != null && selectedIds.isNotEmpty()
 
+
     // The Tags destination owns its detail state; leaving it must not leave a
     // book-less tag detail behind (Android clears this in UnifiedLibraryScreen).
     LaunchedEffect(section) {
@@ -393,6 +394,33 @@ fun SharedMobileUnifiedLibraryScreen(
         if (clean.isEmpty()) return
         val external = onOpenTagEditor
         if (external != null) external(clean) else tagDialogBookIds = clean
+    }
+
+    // The action set is the same whether the top bar or the floating toolbar draws it, so it is
+    // built once here: the two cannot drift, and a capability that is off stays off in both.
+    val selectionToolbarActions = contextualActions?.let { actions ->
+        UnifiedSelectionActions(
+            selectAll = if (selectionCapabilities.selectAll) {
+                { actions.selectAll(visibleBooks.mapTo(linkedSetOf()) { it.id }) }
+            } else null,
+            pin = if (selectionCapabilities.pin) actions::toggleSelectedPins else null,
+            addToShelf = if (selectionCapabilities.addToShelf) ({ showAddToShelf = true }) else null,
+            tag = if (selectionCapabilities.tag) ({ requestTagEditor(selectedIds) }) else null,
+            info = if (selectionCapabilities.info) {
+                selectedBook?.let { book -> ({ infoBook = book }) }
+            } else null,
+            save = if (selectionCapabilities.save) {
+                selectedBook?.takeIf { it.canExportOriginalFile() }?.let { book -> ({ actions.saveBook(book) }) }
+            } else null,
+            share = if (selectionCapabilities.share) {
+                selectedBook?.takeIf { it.canExportOriginalFile() }?.let { book -> ({ actions.shareBook(book) }) }
+            } else null,
+            exportAnnotations = if (selectionCapabilities.exportAnnotations) {
+                selectedBook?.let { book -> ({ actions.exportAnnotations(book) }) }
+            } else null,
+            delete = if (selectionCapabilities.delete) ({ showDeleteBooks = true }) else null,
+            clear = actions::clearSelection,
+        )
     }
 
     fun applyUnifiedLibraryFilters(filters: LibraryFilters) {
@@ -505,6 +533,23 @@ fun SharedMobileUnifiedLibraryScreen(
         onAddAudiobook = { showAudiobookAddSheet = true },
         onNewShelf = { showCreateShelf = true },
         showFloatingActionButton = !isContextualMode,
+        selectionToolbar = selectionToolbarActions?.let { which ->
+            {
+                SharedSelectionToolbar(
+                    selectedCount = selectedIds.size,
+                    onSelectAll = which.selectAll,
+                    onPin = which.pin,
+                    onAddToShelf = which.addToShelf,
+                    onTag = which.tag,
+                    onInfo = which.info,
+                    onSave = which.save,
+                    onShare = which.share,
+                    onExportAnnotations = which.exportAnnotations,
+                    onDelete = which.delete,
+                    onClear = which.clear,
+                )
+            }
+        },
         canPullToSync = canPullToSyncLibrary(
             cloudSyncEnabled = state.isSyncEnabled,
             foldersWithLocalSyncEnabled = state.syncedFolders.map { it.localSyncEnabled },
@@ -514,32 +559,10 @@ fun SharedMobileUnifiedLibraryScreen(
         topBar = {
             if (isContextualMode) {
                 val actions = requireNotNull(contextualActions)
-                SharedMobileContextualTopBar(
+                // Only the count and the way out stay in the bar; the actions float at the bottom.
+                SharedSelectionTopBar(
                     selectedCount = selectedIds.size,
-                    onClose = actions::clearSelection,
-                    onSelectAll = if (selectionCapabilities.selectAll) {
-                        { actions.selectAll(visibleBooks.mapTo(linkedSetOf()) { it.id }) }
-                    } else null,
-                    onPin = if (selectionCapabilities.pin) actions::toggleSelectedPins else null,
-                    onAddToShelf = if (selectionCapabilities.addToShelf) {
-                        { showAddToShelf = true }
-                    } else null,
-                    onTag = if (selectionCapabilities.tag) {
-                        { requestTagEditor(selectedIds) }
-                    } else null,
-                    onInfo = if (selectionCapabilities.info) selectedBook?.let { book -> { infoBook = book } } else null,
-                    onSave = if (selectionCapabilities.save) {
-                        selectedBook?.takeIf { it.canExportOriginalFile() }?.let { book -> { actions.saveBook(book) } }
-                    } else null,
-                    onShare = if (selectionCapabilities.share) {
-                        selectedBook?.takeIf { it.canExportOriginalFile() }?.let { book -> { actions.shareBook(book) } }
-                    } else null,
-                    onExportAnnotations = if (selectionCapabilities.exportAnnotations) {
-                        selectedBook?.let { book -> { actions.exportAnnotations(book) } }
-                    } else null,
-                    onDelete = if (selectionCapabilities.delete) {
-                        { showDeleteBooks = true }
-                    } else null,
+                    onClose = requireNotNull(contextualActions)::clearSelection,
                 )
             } else {
                 Box(Modifier.fillMaxWidth()) {
@@ -2979,3 +3002,20 @@ private fun sharedMobileLibraryFilterLabels(): SharedMobileLibraryFilterLabels {
         apply = readerString("action_apply", "Apply"),
     )
 }
+
+/**
+ * The selection actions for the unified library, resolved once so the contextual top bar and the
+ * floating toolbar can never disagree about which capabilities are available.
+ */
+private data class UnifiedSelectionActions(
+    val selectAll: (() -> Unit)?,
+    val pin: (() -> Unit)?,
+    val addToShelf: (() -> Unit)?,
+    val tag: (() -> Unit)?,
+    val info: (() -> Unit)?,
+    val save: (() -> Unit)?,
+    val share: (() -> Unit)?,
+    val exportAnnotations: (() -> Unit)?,
+    val delete: (() -> Unit)?,
+    val clear: () -> Unit,
+)
