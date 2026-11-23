@@ -338,6 +338,12 @@ kotlin {
         commonMain.dependencies {
             implementation(compose.foundation)
             implementation(compose.material3)
+            // `compose.material3` still resolves the stable 1.9.0 line, which predates Material 3
+            // Expressive; the iOS klib happens to arrive at 1.11.0-alpha03 through materialkolor
+            // while Android and desktop stayed behind, so the same commonMain file compiled on one
+            // target and not the others. One explicit version aligns all of them, and 1.11.0-alpha03
+            // is what iOS was already building against.
+            implementation(libs.compose.material3.multiplatform)
             implementation(compose.ui)
             implementation(compose.components.resources)
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")

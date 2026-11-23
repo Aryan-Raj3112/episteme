@@ -56,7 +56,7 @@ fun SharedAndroidHomeBody(
         }
         if (isLoading) {
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.7f)) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { SharedLoadingIndicator() }
             }
         }
     }

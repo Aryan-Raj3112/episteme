@@ -153,7 +153,7 @@ fun SharedAndroidFolderSyncScreen(
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.small,
                     ) {
-                        if (isLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        if (isLoading) SharedLoadingIndicator(Modifier.size(18.dp))
                         else Icon(Icons.Default.Search, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(if (isLoading) strings.scanning else strings.scanAll)
