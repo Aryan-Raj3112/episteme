@@ -11,6 +11,8 @@ import com.aryan.reader.shared.reader.SharedBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.reader.parseMobileOpfMetaElements
 import com.aryan.reader.shared.reader.resolveMobileEpubSeries
+import org.apache.commons.compress.archivers.sevenz.SevenZFile
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import java.awt.Color
 import java.awt.Font
 import java.awt.RenderingHints
@@ -18,6 +20,7 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
+import java.io.InputStream
 import java.nio.file.StandardCopyOption
 import java.util.zip.ZipFile
 import javax.imageio.ImageIO
@@ -59,9 +62,10 @@ object DesktopFolderMetadataExtractor {
         FileType.DOCX,
         FileType.ODT,
         FileType.FODT,
-        // CBZ only: CBR/CB7/CBT need a libarchive-backed named-entry read that
-        // this extractor does not have yet.
-        FileType.CBZ
+        FileType.CBZ,
+        FileType.CBR,
+        FileType.CB7,
+        FileType.CBT
     )
     private val generatedCoverTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
     private val replaceableContentPreviewTypes = setOf(
@@ -193,8 +197,11 @@ object DesktopFolderMetadataExtractor {
                         textMetadataParsed = true
                     }
             }
-            FileType.CBZ -> {
-                val metadata = parseComicInfoMetadata(file)
+            FileType.CBZ,
+            FileType.CBR,
+            FileType.CB7,
+            FileType.CBT -> {
+                val metadata = parseComicInfoMetadata(file, book.type)
                 extractedTitle = sanitizeTitle(metadata.title)
                 extractedAuthor = sanitizeAuthor(metadata.author)
                 extractedDescription = sanitizeDescription(metadata.description)
@@ -256,16 +263,61 @@ object DesktopFolderMetadataExtractor {
         )
     }
 
-    private fun parseComicInfoMetadata(file: File): SharedComicInfoMetadata = runCatching {
-        ZipFile(file).use { zip ->
-            val entry = zip.entries().asSequence()
-                .firstOrNull { !it.isDirectory && isComicInfoArchivePath(it.name) }
-            entry
-                ?.takeIf { it.size <= MAX_COMIC_INFO_BYTES }
-                ?.let { zip.readComicInfoText(it.name) }
-                ?.let(::parseSharedComicInfoXml)
-        }
+    /**
+     * CBZ is pure ZIP; CBR goes through the libarchive binding the page reader
+     * uses; CB7 and CBT go through Commons Compress, which is already a desktop
+     * dependency. None of these adds a library.
+     */
+    private fun parseComicInfoMetadata(file: File, type: FileType): SharedComicInfoMetadata = runCatching {
+        when (type) {
+            FileType.CBZ -> readZipComicInfo(file)
+            FileType.CBR -> DesktopComicArchive.readComicInfoText(file, MAX_COMIC_INFO_BYTES)
+            FileType.CB7 -> readSevenZipComicInfo(file)
+            FileType.CBT -> readTarComicInfo(file)
+            else -> null
+        }?.let(::parseSharedComicInfoXml)
     }.getOrNull() ?: SharedComicInfoMetadata()
+
+    private fun readZipComicInfo(file: File): String? = ZipFile(file).use { zip ->
+        val entry = zip.entries().asSequence()
+            .firstOrNull { !it.isDirectory && isComicInfoArchivePath(it.name) }
+        entry
+            ?.takeIf { it.size <= MAX_COMIC_INFO_BYTES }
+            ?.let { zip.readComicInfoText(it.name) }
+    }
+
+    private fun readSevenZipComicInfo(file: File): String? {
+        SevenZFile.builder().setFile(file).get().use { archive ->
+            while (true) {
+                val entry = archive.nextEntry ?: return null
+                if (entry.isDirectory || !isComicInfoArchivePath(entry.name.orEmpty())) continue
+                if (entry.size <= 0L || entry.size > MAX_COMIC_INFO_BYTES) return null
+                return archive.getInputStream(entry).use { it.readBoundedComicInfo() }
+            }
+        }
+    }
+
+    private fun readTarComicInfo(file: File): String? {
+        TarArchiveInputStream(file.inputStream().buffered()).use { archive ->
+            while (true) {
+                val entry = archive.nextEntry ?: return null
+                if (entry.isDirectory || !isComicInfoArchivePath(entry.name.orEmpty())) continue
+                return archive.readBoundedComicInfo()
+            }
+        }
+    }
+
+    private fun InputStream.readBoundedComicInfo(): String? {
+        val collected = ByteArrayOutputStream()
+        val buffer = ByteArray(16 * 1024)
+        while (true) {
+            val read = read(buffer)
+            if (read < 0) break
+            if (collected.size() + read > MAX_COMIC_INFO_BYTES) return null
+            collected.write(buffer, 0, read)
+        }
+        return collected.toString(Charsets.UTF_8.name())
+    }
 
     /**
      * Bounded read: a ComicInfo entry declares its size, but a hostile or

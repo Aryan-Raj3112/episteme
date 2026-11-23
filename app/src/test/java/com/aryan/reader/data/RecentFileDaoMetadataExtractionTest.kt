@@ -103,6 +103,26 @@ class RecentFileDaoMetadataExtractionTest {
     }
 
     @Test
+    fun `every comic archive type is a text metadata candidate`() = runTest {
+        val comicTypes = listOf(FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT)
+        comicTypes.forEachIndexed { index, type ->
+            dao.insertOrUpdateFile(
+                recentFileEntity(
+                    bookId = "comic-$index",
+                    type = type,
+                    folderCoverMetadataParsed = true
+                )
+            )
+        }
+
+        assertEquals(comicTypes.size, dao.countFolderBooksNeedingTextMetadata("content://folder"))
+        assertEquals(
+            comicTypes.size,
+            dao.getFolderBooksNeedingTextMetadata("content://folder", limit = 10).size
+        )
+    }
+
+    @Test
     fun `metadata candidate query respects batch limit`() = runTest {
         dao.insertOrUpdateFile(recentFileEntity(bookId = "book-1", timestamp = 1_000L))
         dao.insertOrUpdateFile(recentFileEntity(bookId = "book-2", timestamp = 2_000L))

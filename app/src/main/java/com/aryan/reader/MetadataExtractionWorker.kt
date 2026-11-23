@@ -18,6 +18,7 @@ import com.aryan.reader.data.CloudFolderSyncRepository
 import com.aryan.reader.pdf.PdfiumCoreProvider
 import com.aryan.reader.pdf.PdfiumEngineProvider
 import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedComicInfoMetadata
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.parseSharedDocumentXmlMetadata
 import com.aryan.reader.shared.sharedDocumentMetadataArchivePath
@@ -58,9 +59,10 @@ class MetadataExtractionWorker(
             FileType.ODT,
             FileType.FODT,
             FileType.DOCX,
-            // CBZ only: CBR/CB7/CBT have no named-entry reader yet, and listing
-            // them here would keep every comic permanently pending extraction.
-            FileType.CBZ
+            FileType.CBZ,
+            FileType.CBR,
+            FileType.CB7,
+            FileType.CBT
         )
         private val CONTENT_THUMBNAIL_TYPES = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID) - FileType.EPUB
     }
@@ -242,14 +244,17 @@ class MetadataExtractionWorker(
                             }
                         }
                         FileType.PDF -> parsePdfTextMetadata(uri)
-                        FileType.CBZ -> {
+                        FileType.CBZ,
+                        FileType.CBR,
+                        FileType.CB7,
+                        FileType.CBT -> {
                             if (needsTextMetadata) {
-                                EmbeddedEbookMetadataExtractor.extract(
-                                    type = FileType.CBZ,
-                                    displayName = item.displayName,
+                                ComicInfoArchiveReader.read(
+                                    type = item.type,
                                     openStream = { openInputStream(uri) },
-                                    extractCover = false
-                                ).toTextMetadata()
+                                    openFileDescriptor = { openFileDescriptor(uri) },
+                                    cacheDir = appContext.cacheDir
+                                )?.toTextMetadata() ?: TextMetadata()
                             } else {
                                 TextMetadata()
                             }
@@ -606,6 +611,16 @@ class MetadataExtractionWorker(
         return value
             ?.trim()
             ?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+    }
+
+    private fun SharedComicInfoMetadata.toTextMetadata(): TextMetadata {
+        return TextMetadata(
+            title = title,
+            author = author,
+            description = description,
+            seriesName = seriesName,
+            seriesIndex = seriesIndex
+        )
     }
 
     private fun EmbeddedEbookMetadata.toTextMetadata(): TextMetadata {

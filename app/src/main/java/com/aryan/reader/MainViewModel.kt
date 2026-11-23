@@ -7017,26 +7017,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             seriesIndex = seriesIndex ?: finalBookMetadata.seriesIndex
             description = description ?: finalBookMetadata.description
         } else if (type in PDF_VIEWER_FILE_TYPES) {
-            if (type == FileType.CBZ && uri.scheme != "opds-pse") {
-                // A streamed OPDS comic has no archive to read; only local CBZ
-                // files carry a ComicInfo.xml sidecar.
+            if (type in COMIC_ARCHIVE_FILE_TYPES && uri.scheme != "opds-pse") {
+                // A streamed OPDS comic has no archive to read; only local files
+                // carry a ComicInfo.xml sidecar.
                 val comicMetadata = runCatching {
-                    EmbeddedEbookMetadataExtractor.extract(
-                        type = FileType.CBZ,
-                        displayName = displayName,
+                    ComicInfoArchiveReader.read(
+                        type = type,
                         openStream = { appContext.contentResolver.openInputStream(uri) },
-                        extractCover = false
+                        openFileDescriptor = { appContext.contentResolver.openFileDescriptor(uri, "r") },
+                        cacheDir = appContext.cacheDir
                     )
                 }.onFailure { Timber.w(it, "Failed to extract ComicInfo.xml for $displayName") }
-                    .getOrDefault(EmbeddedEbookMetadata())
+                    .getOrNull()
 
-                title = title ?: comicMetadata.title?.takeIf { it.isNotBlank() && !it.equals("content", ignoreCase = true) }
-                author = author ?: comicMetadata.author?.takeIf {
+                title = title ?: comicMetadata?.title?.takeIf { it.isNotBlank() && !it.equals("content", ignoreCase = true) }
+                author = author ?: comicMetadata?.author?.takeIf {
                     it.isNotBlank() && !it.equals("Unknown", ignoreCase = true)
                 }
-                description = description ?: comicMetadata.description
-                seriesName = seriesName ?: comicMetadata.seriesName
-                seriesIndex = seriesIndex ?: comicMetadata.seriesIndex
+                description = description ?: comicMetadata?.description
+                seriesName = seriesName ?: comicMetadata?.seriesName
+                seriesIndex = seriesIndex ?: comicMetadata?.seriesIndex
             }
             title = title ?: displayName
 

@@ -1,8 +1,6 @@
 package com.aryan.reader
 
 import android.util.Xml
-import com.aryan.reader.shared.isComicInfoArchivePath
-import com.aryan.reader.shared.parseSharedComicInfoXml
 import com.aryan.reader.shared.reader.parseMobileOpfMetaElements
 import com.aryan.reader.shared.reader.resolveMobileEpubSeries
 import org.xmlpull.v1.XmlPullParser
@@ -55,35 +53,8 @@ internal object EmbeddedEbookMetadataExtractor {
             FileType.EPUB -> extractEpub(openStream, extractCover)
             FileType.MOBI -> extractMobi(openStream, extractCover)
             FileType.FB2 -> extractFb2(displayName, openStream, extractCover)
-            FileType.CBZ -> extractComicInfo(openStream)
             else -> EmbeddedEbookMetadata()
         }
-    }
-
-    /**
-     * Reads the `ComicInfo.xml` sidecar of a comic archive.
-     *
-     * Only CBZ is listed here: CBR/CB7/CBT are served by libarchive through
-     * `ArchiveDocumentWrapper`, which walks image entries only and has no
-     * named-entry read.
-     *
-     * No cover is returned even though comic archives obviously have one. The
-     * page-0 cover path in `ContentThumbnailGenerator` is the single owner of
-     * comic covers, so a `ComicInfo.xml` read never claims the cover flag and
-     * can never leave a book marked "cover parsed" without a cover.
-     */
-    private fun extractComicInfo(openStream: () -> InputStream?): EmbeddedEbookMetadata {
-        val entry = openStream()?.use { input ->
-            readFirstZipTextEntry(input, MAX_XML_ENTRY_BYTES, ::isComicInfoArchivePath)
-        } ?: return EmbeddedEbookMetadata()
-        val metadata = parseSharedComicInfoXml(entry.text)
-        return EmbeddedEbookMetadata(
-            title = metadata.title,
-            author = metadata.author,
-            description = metadata.description,
-            seriesName = metadata.seriesName,
-            seriesIndex = metadata.seriesIndex
-        )
     }
 
     private fun extractEpub(openStream: () -> InputStream?, extractCover: Boolean): EmbeddedEbookMetadata {

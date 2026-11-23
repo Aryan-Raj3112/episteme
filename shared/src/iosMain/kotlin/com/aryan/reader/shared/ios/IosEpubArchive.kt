@@ -35,6 +35,7 @@ import com.aryan.reader.shared.mobi.reader_mobi_toc_count
 import com.aryan.reader.shared.mobi.reader_mobi_toc_entry
 import com.aryan.reader.shared.libarchive.ARCHIVE_EOF
 import com.aryan.reader.shared.libarchive.ARCHIVE_OK
+import cnames.structs.archive
 import com.aryan.reader.shared.libarchive.archive_entry_pathname_utf8
 import com.aryan.reader.shared.libarchive.archive_entry_size
 import com.aryan.reader.shared.libarchive.archive_error_string
@@ -45,6 +46,7 @@ import com.aryan.reader.shared.libarchive.archive_read_next_header
 import com.aryan.reader.shared.libarchive.archive_read_open_filename
 import com.aryan.reader.shared.libarchive.archive_read_support_filter_all
 import com.aryan.reader.shared.libarchive.archive_read_support_format_7zip
+import com.aryan.reader.shared.libarchive.archive_read_support_format_all
 import com.aryan.reader.shared.libarchive.archive_read_support_format_rar
 import com.aryan.reader.shared.libarchive.archive_read_support_format_rar5
 import com.aryan.reader.shared.libarchive.archive_entry_free
@@ -89,6 +91,7 @@ import com.aryan.reader.shared.reader.readComicTarEntries
 import com.aryan.reader.shared.opds.SharedOpdsStreamUri
 import com.aryan.reader.shared.opds.SharedOpdsStreamRequest
 import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.alloc
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.ByteVar
@@ -286,11 +289,141 @@ internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = r
                 coverBytes = firstImage?.let(archive::readBytes),
             )
         }
+        FileType.CBR,
+        FileType.CB7,
+        FileType.CBT -> extractIosLibarchiveComicPresentation(book)
         else -> IosBookPresentation()
     }
 }.getOrElse { throwable ->
     println("[ReaderLibraryIOS] Presentation extraction failed id=${book.id} type=${book.type} message=${throwable.message}")
     IosBookPresentation()
+}
+
+/**
+ * ComicInfo + first-page cover for the libarchive-backed comic archives.
+ *
+ * The cover matters even though this pass is about metadata: the library's
+ * pending-extraction gate keys on a missing cover, so returning metadata only
+ * would leave every sidecar-less CBR/CB7/CBT permanently pending and re-scan it
+ * on every launch. Two header-only passes are cheaper than decoding every page:
+ * one scan collects the sidecar and page names, one reopens to read the single
+ * naturally-first page.
+ */
+private fun extractIosLibarchiveComicPresentation(book: BookItem): IosBookPresentation {
+    val contents = withResolvedIosBookPath(book.path) { path -> scanIosComicArchive(path) }
+        ?: return IosBookPresentation()
+    val metadata = contents.comicInfoXml?.let(::parseSharedComicInfoXml)
+    val coverBytes = contents.firstImagePath?.let { target ->
+        withResolvedIosBookPath(book.path) { path -> readIosComicArchiveEntry(path, target) }
+    }
+    return IosBookPresentation(
+        title = metadata?.title,
+        author = metadata?.author,
+        description = metadata?.description,
+        seriesName = metadata?.seriesName,
+        seriesIndex = metadata?.seriesIndex,
+        coverBytes = coverBytes,
+    )
+}
+
+private data class IosComicArchiveContents(
+    val comicInfoXml: String?,
+    val firstImagePath: String?,
+)
+
+private fun scanIosComicArchive(path: String): IosComicArchiveContents? {
+    val archive = archive_read_new() ?: return null
+    try {
+        archive_read_support_filter_all(archive)
+        archive_read_support_format_all(archive)
+        if (archive_read_open_filename(archive, path, 64uL * 1024uL) != ARCHIVE_OK) return null
+        var comicInfoXml: String? = null
+        val imagePaths = mutableListOf<String>()
+        memScoped {
+            val entry = alloc<CPointerVar<archive_entry>>()
+            while (true) {
+                val result = archive_read_next_header(archive, entry.ptr)
+                if (result == ARCHIVE_EOF) break
+                if (result != ARCHIVE_OK) break
+                val current = entry.value ?: continue
+                val entryPath = archive_entry_pathname_utf8(current)?.toKString().orEmpty()
+                val entrySize = archive_entry_size(current)
+                if (isComicInfoArchivePath(entryPath)) {
+                    if (comicInfoXml == null && entrySize in 1..IosMaximumComicInfoBytes) {
+                        comicInfoXml = readIosComicArchiveEntryBytes(
+                            archive,
+                            entrySize,
+                            IosMaximumComicInfoBytes,
+                        )?.decodeToString()
+                    }
+                    continue
+                }
+                if (entryPath.isIosComicImagePath() && entrySize > 0L) imagePaths += entryPath
+            }
+        }
+        val firstImagePath = imagePaths.minWithOrNull(Comparator { a, b -> compareNatural(a, b) })
+        return IosComicArchiveContents(comicInfoXml, firstImagePath)
+    } finally {
+        archive_read_free(archive)
+    }
+}
+
+private fun readIosComicArchiveEntry(path: String, targetPath: String): ByteArray? {
+    val archive = archive_read_new() ?: return null
+    var bytes: ByteArray? = null
+    try {
+        archive_read_support_filter_all(archive)
+        archive_read_support_format_all(archive)
+        if (archive_read_open_filename(archive, path, 64uL * 1024uL) != ARCHIVE_OK) return null
+        memScoped {
+            val entry = alloc<CPointerVar<archive_entry>>()
+            while (true) {
+                val result = archive_read_next_header(archive, entry.ptr)
+                if (result == ARCHIVE_EOF) break
+                if (result != ARCHIVE_OK) break
+                val current = entry.value ?: continue
+                val entryPath = archive_entry_pathname_utf8(current)?.toKString().orEmpty()
+                if (entryPath != targetPath) continue
+                bytes = readIosComicArchiveEntryBytes(
+                    archive,
+                    archive_entry_size(current),
+                    IosMaximumComicImageBytes,
+                )
+                break
+            }
+        }
+    } finally {
+        archive_read_free(archive)
+    }
+    return bytes
+}
+
+private fun readIosComicArchiveEntryBytes(
+    archive: CPointer<archive>,
+    entrySize: Long,
+    maxBytes: Long,
+): ByteArray? {
+    if (entrySize <= 0L || entrySize > maxBytes) return null
+    val bytes = ByteArray(entrySize.toInt())
+    var offset = 0
+    var failed = false
+    bytes.usePinned { pinned ->
+        while (offset < bytes.size) {
+            val read = archive_read_data(
+                archive,
+                pinned.addressOf(offset),
+                (bytes.size - offset).convert(),
+            )
+            if (read < 0L) {
+                failed = true
+                break
+            }
+            if (read == 0L) break
+            offset += read.toInt()
+        }
+    }
+    if (failed || offset == 0) return null
+    return bytes.copyOf(offset)
 }
 
 private fun extractIosEpubPresentation(book: BookItem): IosBookPresentation {
@@ -2181,3 +2314,4 @@ private const val ZipMaximumEntryBytes = 512L * 1024L * 1024L
 private const val ZipMaximumTotalUncompressedBytes = 1L * 1024L * 1024L * 1024L
 private const val ZipMaximumArchiveBytes = 1L * 1024L * 1024L * 1024L
 private const val IosMaximumComicImageBytes = 128L * 1024L * 1024L
+private const val IosMaximumComicInfoBytes = 512L * 1024L
