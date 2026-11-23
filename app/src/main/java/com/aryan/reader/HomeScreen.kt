@@ -24,6 +24,9 @@ import android.content.ContextWrapper
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.Palette
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -85,6 +88,16 @@ import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
 import androidx.navigation.NavHostController
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.ui.SharedDrawerAccountFooter
+import com.aryan.reader.shared.ui.SharedDrawerGroupDivider
+import com.aryan.reader.shared.ui.SharedDrawerHeader
+import com.aryan.reader.shared.ui.SharedDrawerItem
+import com.aryan.reader.shared.ui.SharedDrawerLayout
+import com.aryan.reader.shared.ui.readerString
+import com.aryan.reader.shared.ui.SharedDrawerLegalLinks
+import com.aryan.reader.shared.ui.SharedDrawerSectionLabel
+import com.aryan.reader.shared.ui.SharedDrawerSwitchRow
+import com.aryan.reader.shared.ui.SharedSpacing
 import com.aryan.reader.shared.formatMicrosUsd
 import com.aryan.reader.shared.ui.AppIcon
 import com.aryan.reader.shared.ui.SharedMobileAppDestination
@@ -154,7 +167,6 @@ fun RecentFileCard(
     )
 }
 
-@Suppress("KotlinConstantConditions")
 @Composable
 internal fun AppDrawerContent(
     uiState: ReaderScreenState,
@@ -172,269 +184,242 @@ internal fun AppDrawerContent(
     showFonts: Boolean = true,
     showAiSettings: Boolean = true,
     showSupportProject: Boolean = false,
+    onAppThemeClick: (() -> Unit)? = null,
 ) {
     val isOss = BuildConfig.FLAVOR == "oss"
+    val user = uiState.currentUser
+    val uriHandler = LocalUriHandler.current
 
     ModalDrawerSheet {
-        Column(modifier = Modifier.fillMaxHeight()) {
+        SharedDrawerLayout(
+            header = {
+                if (!isOss && user != null) {
+                    SharedDrawerHeader(
+                        title = user.displayName ?: user.email ?: stringResource(R.string.desktop_signed_in),
+                        // Only repeat the address when it is not already the title.
+                        subtitle = user.email.takeIf { user.displayName != null },
+                        leading = {
+                            AndroidAccountAvatar(
+                                user = user,
+                                modifier = Modifier.size(44.dp),
+                                contentDescription = stringResource(R.string.content_desc_profile_picture),
+                            )
+                        },
+                    )
+                } else {
+                    SharedDrawerHeader(
+                        title = stringResource(if (isOss) R.string.app_name_oss else R.string.app_name),
+                        subtitle = if (!isOss && user == null) {
+                            stringResource(R.string.unified_library_drawer_title)
+                        } else null,
+                        leading = {
+                            AppIcon(
+                                contentDescription = stringResource(R.string.content_desc_app_icon),
+                                size = 44.dp,
+                                shape = RoundedCornerShape(14.dp),
+                                plateColor = MaterialTheme.colorScheme.secondaryContainer,
+                            )
+                        },
+                    )
+                }
+            },
+            footer = {
+                SharedDrawerLegalLinks(
+                    onPrivacyPolicyClick = { uriHandler.openUri(PRIVACY_POLICY_URL) },
+                    onTermsClick = { uriHandler.openUri(TERMS_URL) },
+                    onLicensesClick = { uriHandler.openUri(LICENSES_URL) },
+                )
+            },
+        ) {
             if (!isOss) {
-                if (uiState.currentUser != null) {
-                    // Signed-in: Show user info at the top
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        AndroidAccountAvatar(
-                            user = uiState.currentUser,
-                            modifier = Modifier.size(80.dp),
-                            contentDescription = stringResource(R.string.content_desc_profile_picture),
+                item { SharedDrawerSectionLabel(stringResource(R.string.account_title)) }
+                if (user == null) {
+                    item {
+                        SharedDrawerItem(
+                            icon = { Icon(Icons.Outlined.AccountCircle, contentDescription = null) },
+                            label = stringResource(R.string.drawer_sign_in),
+                            onClick = onSignInClick,
+                            modifier = Modifier.testTag("MobileDrawerSignIn"),
                         )
-                        uiState.currentUser.displayName?.let { name ->
-                            Text(text = name, style = MaterialTheme.typography.titleMedium)
-                        }
-                        uiState.currentUser.email?.let { email ->
-                            Text(text = email, style = MaterialTheme.typography.bodyMedium)
-                        }
-                        if (BuildConfig.FLAVOR == "pro") {
-                            Surface(
-                                color = MaterialTheme.colorScheme.tertiaryContainer,
-                                shape = CircleShape,
-                                modifier = Modifier.padding(top = 8.dp)
-                            ) {
-                                Row(modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.FormatListNumbered, contentDescription = stringResource(R.string.credits_tab), modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onTertiaryContainer)
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(safeStringResource(R.string.wallet_balance, formatMicrosUsd(uiState.walletMicros)), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onTertiaryContainer)
-                                }
-                            }
-                        }
+                    }
+                    item {
+                        LegalText(
+                            prefixText = stringResource(R.string.drawer_by_signing_in),
+                            modifier = Modifier.padding(horizontal = 28.dp, vertical = SharedSpacing.Sm),
+                            textAlign = TextAlign.Start,
+                        )
                     }
                 } else {
-                    // Signed-out: Show Sign In button at the top
-                    Spacer(modifier = Modifier.height(8.dp))
-                    NavigationDrawerItem(
-                        icon = { Icon(Icons.Outlined.AccountCircle, contentDescription = null) },
-                        label = { Text(stringResource(R.string.drawer_sign_in)) },
-                        selected = false,
-                        onClick = onSignInClick,
-                        modifier = Modifier.padding(horizontal = 12.dp)
-                    )
-
-                    // LegalText
-                    LegalText(
-                        prefixText = stringResource(R.string.drawer_by_signing_in),
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-                        textAlign = TextAlign.Start
-                    )
-                }
-
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
-                Spacer(modifier = Modifier.height(16.dp))
-
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.VerifiedUser, contentDescription = null) },
-                    label = {
-                        val text = if (uiState.isProUser) stringResource(R.string.drawer_pro_unlocked) else stringResource(R.string.drawer_upgrade_pro)
-                        Text(text)
-                    },
-                    selected = false,
-                    onClick = onUpgradeClick,
-                    modifier = Modifier.padding(horizontal = 12.dp)
-                )
-
-                // Sync Toggle Item
-                if (uiState.currentUser != null) {
-                    NavigationDrawerItem(
-                        icon = { Icon(painterResource(id = R.drawable.sync), contentDescription = null) },
-                        label = { Text(stringResource(R.string.drawer_sync_library)) },
-                        badge = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (!uiState.isProUser) {
-                                    Icon(
-                                        imageVector = Icons.Default.VerifiedUser,
-                                        contentDescription = stringResource(R.string.content_desc_pro_feature),
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                }
-                                Switch(
-                                    checked = uiState.isSyncEnabled, onCheckedChange = {
-                                        if (uiState.isProUser) onSyncToggle(it) else onSyncUpsellClick()
-                                    }, enabled = uiState.isProUser
-                                )
-                            }
-                        }, selected = false, onClick = {
-                            if (uiState.isProUser) {
-                                onSyncToggle(!uiState.isSyncEnabled)
+                    item {
+                        SharedDrawerItem(
+                            icon = { Icon(Icons.Default.VerifiedUser, contentDescription = null) },
+                            label = if (uiState.isProUser) {
+                                stringResource(R.string.drawer_pro_unlocked)
                             } else {
-                                onSyncUpsellClick()
-                            }
-                        }, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
+                                stringResource(R.string.drawer_upgrade_pro)
+                            },
+                            onClick = onUpgradeClick,
+                            trailing = if (BuildConfig.FLAVOR == "pro") {
+                                {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        shape = CircleShape,
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.FormatListNumbered,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(14.dp),
+                                            )
+                                            Text(
+                                                text = safeStringResource(
+                                                    R.string.wallet_balance,
+                                                    formatMicrosUsd(uiState.walletMicros),
+                                                ),
+                                                style = MaterialTheme.typography.labelMedium,
+                                            )
+                                        }
+                                    }
+                                }
+                            } else null,
+                        )
+                    }
+                    // Sync is a setting, so it is a whole-row switch while Pro is on, and an upsell
+                    // row while Pro is off: a disabled switch would swallow the way to fix it.
+                    item {
+                        if (uiState.isProUser) {
+                            SharedDrawerSwitchRow(
+                                icon = { Icon(Icons.Default.Sync, contentDescription = null) },
+                                label = stringResource(R.string.drawer_sync_library),
+                                supporting = if (uiState.isSyncEnabled) {
+                                    stringResource(R.string.drawer_folder_sync_desc)
+                                } else {
+                                    stringResource(R.string.folder_sync_library_sync_off)
+                                },
+                                checked = uiState.isSyncEnabled,
+                                onCheckedChange = onSyncToggle,
+                                modifier = Modifier.testTag("MobileDrawerSync"),
+                            )
+                        } else {
+                            SharedDrawerItem(
+                                icon = { Icon(Icons.Default.Sync, contentDescription = null) },
+                                label = stringResource(R.string.drawer_sync_library),
+                                supporting = stringResource(R.string.content_desc_pro_feature),
+                                onClick = onSyncUpsellClick,
+                                modifier = Modifier.testTag("MobileDrawerSync"),
+                            )
+                        }
+                    }
+                    if (uiState.canUseCloudFolderSync()) {
+                        item {
+                            SharedDrawerItem(
+                                icon = { Icon(Icons.Default.FolderSpecial, contentDescription = null) },
+                                label = stringResource(R.string.drawer_folder_sync),
+                                supporting = if (uiState.isSyncEnabled) {
+                                    stringResource(R.string.drawer_folder_sync_desc)
+                                } else {
+                                    stringResource(R.string.folder_sync_library_sync_off)
+                                },
+                                onClick = onFolderSyncSettingsClick,
+                                modifier = Modifier.testTag("MobileDrawerFolderSyncSettings"),
+                            )
+                        }
+                    }
                 }
-                if (uiState.canUseCloudFolderSync()) {
-                    NavigationDrawerItem(
-                        icon = { Icon(imageVector = Icons.Default.FolderSpecial, contentDescription = null) },
-                        label = {
-                            Column {
-                                Text(stringResource(R.string.drawer_folder_sync))
-                                Text(
-                                    if (uiState.isSyncEnabled) {
-                                        stringResource(R.string.drawer_folder_sync_desc)
-                                    } else {
-                                        stringResource(R.string.folder_sync_library_sync_off)
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        },
-                        badge = { Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null) },
-                        selected = false,
-                        onClick = onFolderSyncSettingsClick,
-                        modifier = Modifier
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                            .testTag("MobileDrawerFolderSyncSettings")
-                    )
-                }
-            } else {
-                // OSS Header
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    AppIcon(
-                        contentDescription = stringResource(R.string.content_desc_app_icon),
-                        size = 64.dp,
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = stringResource(R.string.app_name_oss), style = MaterialTheme.typography.titleMedium)
-                }
-                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
             }
 
-            NavigationDrawerItem(
-                icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                label = { Text(stringResource(R.string.settings)) },
-                selected = false,
-                onClick = onSettingsClick,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-
-            onAboutClick?.let { onClick ->
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Default.Info, contentDescription = null) },
-                    label = { Text(stringResource(R.string.about_title)) },
-                    selected = false,
-                    onClick = onClick,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                )
+            // Settings, fonts, AI and theme are all app-level: "Appearance" would be a stretch for
+            // Settings, and this drawer carries no reader appearance rows of its own.
+            item { SharedDrawerSectionLabel(readerString("drawer_section_app", "App")) }
+            onAppThemeClick?.let { onTheme ->
+                item {
+                    SharedDrawerItem(
+                        icon = { Icon(Icons.Default.Palette, contentDescription = null) },
+                        label = stringResource(R.string.app_theme_title),
+                        onClick = onTheme,
+                    )
+                }
             }
-
             if (showFonts) {
-                NavigationDrawerItem(
-                    icon = { Icon(painterResource(id = R.drawable.fonts), contentDescription = null) },
-                    label = { Text(stringResource(R.string.drawer_custom_fonts)) },
-                    selected = false,
-                    onClick = onFontsClick,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                )
+                item {
+                    SharedDrawerItem(
+                        icon = { Icon(painterResource(R.drawable.fonts), contentDescription = null) },
+                        label = stringResource(R.string.drawer_custom_fonts),
+                        onClick = onFontsClick,
+                    )
+                }
             }
-
             if (showAiSettings && !BuildConfig.IS_OFFLINE) {
-                NavigationDrawerItem(
-                    icon = { Icon(painterResource(id = R.drawable.ai), contentDescription = null) },
-                    label = { Text(stringResource(R.string.ai_settings_title)) },
-                    selected = false,
-                    onClick = onAiSettingsClick,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                item {
+                    SharedDrawerItem(
+                        icon = { Icon(painterResource(R.drawable.ai), contentDescription = null) },
+                        label = stringResource(R.string.ai_settings_title),
+                        onClick = onAiSettingsClick,
+                    )
+                }
+            }
+            item {
+                SharedDrawerItem(
+                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                    label = stringResource(R.string.settings),
+                    onClick = onSettingsClick,
                 )
             }
 
+            item { SharedDrawerGroupDivider() }
+            item { SharedDrawerSectionLabel(readerString("drawer_section_support", "Support")) }
+            onAboutClick?.let { onClick ->
+                item {
+                    SharedDrawerItem(
+                        icon = { Icon(Icons.Default.Info, contentDescription = null) },
+                        label = stringResource(R.string.about_title),
+                        onClick = onClick,
+                    )
+                }
+            }
             if (isOss || showSupportProject) {
-                NavigationDrawerItem(
-                    icon = { Icon(Icons.Outlined.FavoriteBorder, contentDescription = null) },
-                    label = { Text(stringResource(R.string.drawer_support_project)) },
-                    selected = false,
-                    onClick = { navController.navigateIfReady(SharedMobileAppDestination.SUPPORT_PROJECT) },
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                item {
+                    SharedDrawerItem(
+                        icon = { Icon(Icons.Outlined.FavoriteBorder, contentDescription = null) },
+                        label = stringResource(R.string.drawer_support_project),
+                        onClick = { navController.navigateIfReady(SharedMobileAppDestination.SUPPORT_PROJECT) },
+                    )
+                }
+            }
+            item {
+                SharedDrawerItem(
+                    icon = { Icon(painterResource(R.drawable.feedback), contentDescription = null) },
+                    label = stringResource(R.string.drawer_help_feedback),
+                    onClick = { navController.navigateIfReady(SharedMobileAppDestination.FEEDBACK) },
                 )
             }
 
-            NavigationDrawerItem(
-                icon = { Icon(painterResource(id = R.drawable.feedback), contentDescription = null) },
-                label = { Text(stringResource(R.string.drawer_help_feedback)) },
-                selected = false,
-                onClick = { navController.navigateIfReady(SharedMobileAppDestination.FEEDBACK) },
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-            )
-
-            if (!isOss) {
-                if (uiState.currentUser != null) {
+            if (!isOss && user != null) {
+                item { SharedDrawerGroupDivider() }
+                item {
+                    // Last row in the sheet, and the only destructive one.
                     NavigationDrawerItem(
-                        icon = { Icon(painterResource(id = R.drawable.logout), contentDescription = null) },
-                        label = { Text(stringResource(R.string.drawer_sign_out)) },
+                        icon = {
+                            Icon(
+                                painterResource(R.drawable.logout),
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.error,
+                            )
+                        },
+                        label = {
+                            Text(
+                                text = stringResource(R.string.drawer_sign_out),
+                                color = MaterialTheme.colorScheme.error,
+                            )
+                        },
                         selected = false,
                         onClick = onSignOutClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            // legal links
-            run {
-                val uriHandler = LocalUriHandler.current
-                val baseStyle = MaterialTheme.typography.labelMedium
-                var scaledTextStyle by remember { mutableStateOf(baseStyle) }
-
-                Text(
-                    text = stringResource(R.string.legal_footer_combined),
-                    style = scaledTextStyle,
-                    maxLines = 1,
-                    softWrap = false,
-                    onTextLayout = {
-                        if (it.didOverflowWidth) {
-                            scaledTextStyle =
-                                scaledTextStyle.copy(fontSize = scaledTextStyle.fontSize * 0.95)
-                        }
-                    },
-                    modifier = Modifier.height(0.dp)
-                )
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 8.dp, start = 8.dp, end = 8.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = stringResource(R.string.legal_privacy_policy),
-                        style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.clickable { uriHandler.openUri(PRIVACY_POLICY_URL) },
-                        softWrap = false
-                    )
-                    Text("  •  ", style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
-                    Text(
-                        text = stringResource(R.string.legal_terms_of_service),
-                        style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.clickable { uriHandler.openUri(TERMS_URL) },
-                        softWrap = false
-                    )
-                    Text("  •  ", style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.onSurfaceVariant))
-                    Text(
-                        text = stringResource(R.string.legal_licenses),
-                        style = scaledTextStyle.copy(color = MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.clickable { uriHandler.openUri(LICENSES_URL) },
-                        softWrap = false
+                        modifier = Modifier.padding(horizontal = SharedSpacing.Md, vertical = SharedSpacing.Xxs),
                     )
                 }
             }

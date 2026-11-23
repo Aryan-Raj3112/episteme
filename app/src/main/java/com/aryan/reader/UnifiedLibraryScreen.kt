@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -102,6 +104,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
@@ -127,6 +130,7 @@ import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.audiobook.ListenOverlayHost
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
@@ -566,7 +570,14 @@ fun UnifiedLibraryScreen(
                 onAiSettingsClick = {
                     scope.launch { drawerState.close() }
                     navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
-                }
+                },
+                currentUser = uiState.currentUser,
+                onAccountClick = {
+                    scope.launch {
+                        drawerState.close()
+                        accountDrawerState.open()
+                    }
+                },
             )
         },
         rail = {
@@ -1218,137 +1229,155 @@ private fun UnifiedLibraryDrawer(
     onSettingsClick: () -> Unit,
     onFontsClick: () -> Unit,
     onAiSettingsClick: () -> Unit,
+    currentUser: com.aryan.reader.shared.UserData?,
+    onAccountClick: () -> Unit,
 ) {
     ModalDrawerSheet(modifier = Modifier.fillMaxHeight()) {
-        Column(modifier = Modifier.fillMaxHeight()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                shape = RoundedCornerShape(bottomEnd = 28.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(start = 24.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    AppIcon(
-                        contentDescription = stringResource(R.string.content_desc_app_icon),
-                        size = 44.dp,
-                        shape = RoundedCornerShape(16.dp),
-                        plateColor = MaterialTheme.colorScheme.surface,
+        val appName = stringResource(R.string.app_name)
+        val destinationLabel = currentSection.drawerLabel()
+        // No account system in the open-source edition, so there is no one to be signed in as.
+        val isSignedIn = BuildConfig.FLAVOR != "oss" && currentUser != null
+        com.aryan.reader.shared.ui.SharedDrawerLayout(
+            header = {
+                com.aryan.reader.shared.ui.SharedDrawerHeader(
+                    title = appName,
+                    // The header reports the destination rather than repeating a tagline, so a
+                    // glance at the drawer tells the reader where they already are.
+                    subtitle = destinationLabel,
+                    leading = {
+                        AppIcon(
+                            contentDescription = stringResource(R.string.content_desc_app_icon),
+                            size = 44.dp,
+                            shape = RoundedCornerShape(14.dp),
+                            plateColor = MaterialTheme.colorScheme.secondaryContainer,
+                        )
+                    },
+                )
+            },
+            // The drawer is navigation, not a storefront: it shows who you are once you are
+            // signed in, and nothing at all when you are not. The edition without accounts never
+            // renders the row.
+            showFooterDivider = isSignedIn,
+            footer = {
+                if (isSignedIn) {
+                    com.aryan.reader.shared.ui.SharedDrawerAccountFooter(
+                        title = currentUser?.displayName
+                            ?: currentUser?.email
+                            ?: readerString("desktop_signed_in", "Signed in"),
+                        // Only repeat the address when it is not already the title.
+                        supporting = if (currentUser?.displayName != null) {
+                            currentUser?.email
+                        } else {
+                            readerString("account_and_sync", "Account & sync")
+                        },
+                        onClick = onAccountClick,
+                        leading = {
+                            AndroidAccountAvatar(
+                                user = currentUser!!,
+                                modifier = Modifier.size(36.dp),
+                                contentDescription = stringResource(R.string.content_desc_profile_picture),
+                            )
+                        },
                     )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text(stringResource(R.string.unified_library_drawer_title), style = MaterialTheme.typography.bodySmall)
-                    }
                 }
-            }
-
-            Text(
-                stringResource(R.string.library_title),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp)
-            )
+                com.aryan.reader.shared.ui.SharedDrawerVersionCaption(
+                    text = stringResource(R.string.about_version_name, BuildConfig.VERSION_NAME),
+                )
+            },
+        ) {
+            item { com.aryan.reader.shared.ui.SharedDrawerSectionLabel(stringResource(R.string.library_title)) }
             val drawerModel = mobileUnifiedLibraryDrawerModel(
                 MobileUnifiedLibraryDrawerCapabilities(
                     catalogsAvailable = !BuildConfig.IS_OFFLINE,
                     aiSettingsAvailable = !BuildConfig.IS_OFFLINE,
                 ),
             )
-            drawerModel.destinations.forEach { destination ->
-                when (destination) {
-                    MobileUnifiedLibraryDrawerDestination.HOME -> UnifiedLibraryDestination(
-                        stringResource(R.string.unified_library_home),
-                        currentSection == destination.section,
-                        { Icon(Icons.Default.Home, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> UnifiedLibraryDestination(
-                        stringResource(R.string.listen_title),
-                        currentSection == destination.section,
-                        { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.SHELVES -> UnifiedLibraryDestination(
-                        stringResource(R.string.tab_shelves),
-                        currentSection == destination.section,
-                        { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.TAGS -> UnifiedLibraryDestination(
-                        stringResource(R.string.section_tags),
-                        currentSection == destination.section,
-                        { Icon(Icons.Default.Tag, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.FOLDERS -> UnifiedLibraryDestination(
-                        stringResource(R.string.tab_folders),
-                        currentSection == destination.section,
-                        { Icon(Icons.Default.Folder, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.CATALOGS -> UnifiedLibraryDestination(
-                        stringResource(R.string.tab_catalogs),
-                        currentSection == destination.section,
-                        { Icon(painterResource(R.drawable.cloud), null) },
-                    ) { onSectionSelected(destination.section) }
-                }
+            items(drawerModel.destinations, key = { it.name }) { destination ->
+                com.aryan.reader.shared.ui.SharedDrawerItem(
+                    icon = { Icon(destination.drawerIcon(), contentDescription = null) },
+                    label = stringResource(destination.drawerLabelRes()),
+                    selected = currentSection == destination.section,
+                    // The pill is the selected signal; a heavier label on top of it was a second
+                    // emphasis for the same thing.
+                    onClick = { onSectionSelected(destination.section) },
+                )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
-            Text(stringResource(R.string.unified_library_appearance), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 28.dp, bottom = 8.dp))
-            drawerModel.appearance.forEach { appearance ->
-                when (appearance) {
-                    MobileUnifiedLibraryDrawerAppearance.THEME -> NavigationDrawerItem(
-                        icon = { Icon(Icons.Default.Palette, null) },
-                        label = { Text(stringResource(R.string.app_theme_title)) },
-                        selected = false,
-                        onClick = onThemeClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> NavigationDrawerItem(
-                        icon = { Icon(Icons.Default.Settings, null) },
-                        label = { Text(stringResource(R.string.settings)) },
-                        selected = false,
-                        onClick = onSettingsClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                    MobileUnifiedLibraryDrawerAppearance.FONTS -> NavigationDrawerItem(
-                        icon = { Icon(painterResource(R.drawable.fonts), null) },
-                        label = { Text(stringResource(R.string.drawer_custom_fonts)) },
-                        selected = false,
-                        onClick = onFontsClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                    MobileUnifiedLibraryDrawerAppearance.AI -> NavigationDrawerItem(
-                        icon = { Icon(painterResource(R.drawable.ai), null) },
-                        label = { Text(stringResource(R.string.ai_settings_title)) },
-                        selected = false,
-                        onClick = onAiSettingsClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                }
+            item { com.aryan.reader.shared.ui.SharedDrawerGroupDivider() }
+            item {
+                com.aryan.reader.shared.ui.SharedDrawerSectionLabel(
+                    stringResource(R.string.unified_library_appearance),
+                )
             }
-
-            Spacer(modifier = Modifier.weight(1f))
+            items(drawerModel.appearance, key = { it.name }) { appearance ->
+                com.aryan.reader.shared.ui.SharedDrawerItem(
+                    icon = {
+                        val res = appearance.drawerIconRes()
+                        if (res != null) {
+                            Icon(painterResource(res), contentDescription = null)
+                        } else {
+                            Icon(appearance.drawerVector(), contentDescription = null)
+                        }
+                    },
+                    label = stringResource(appearance.drawerLabelRes()),
+                    onClick = when (appearance) {
+                        MobileUnifiedLibraryDrawerAppearance.THEME -> onThemeClick
+                        MobileUnifiedLibraryDrawerAppearance.SETTINGS -> onSettingsClick
+                        MobileUnifiedLibraryDrawerAppearance.FONTS -> onFontsClick
+                        MobileUnifiedLibraryDrawerAppearance.AI -> onAiSettingsClick
+                    },
+                )
+            }
         }
     }
 }
 
-@Composable
-private fun UnifiedLibraryDestination(
-    label: String,
-    selected: Boolean,
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit,
-) {
-    NavigationDrawerItem(
-        icon = icon,
-        label = { Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
-        selected = selected,
-        onClick = onClick,
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-    )
+private fun MobileUnifiedLibraryDrawerDestination.drawerLabelRes(): Int = when (this) {
+    MobileUnifiedLibraryDrawerDestination.HOME -> R.string.unified_library_home
+    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> R.string.listen_title
+    MobileUnifiedLibraryDrawerDestination.SHELVES -> R.string.tab_shelves
+    MobileUnifiedLibraryDrawerDestination.TAGS -> R.string.section_tags
+    MobileUnifiedLibraryDrawerDestination.FOLDERS -> R.string.tab_folders
+    MobileUnifiedLibraryDrawerDestination.CATALOGS -> R.string.tab_catalogs
 }
 
+private fun MobileUnifiedLibraryDrawerDestination.drawerIcon(): ImageVector = when (this) {
+    MobileUnifiedLibraryDrawerDestination.HOME -> Icons.Default.Home
+    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> Icons.AutoMirrored.Filled.VolumeUp
+    MobileUnifiedLibraryDrawerDestination.SHELVES -> Icons.AutoMirrored.Filled.LibraryBooks
+    MobileUnifiedLibraryDrawerDestination.TAGS -> Icons.Default.Tag
+    MobileUnifiedLibraryDrawerDestination.FOLDERS -> Icons.Default.Folder
+    MobileUnifiedLibraryDrawerDestination.CATALOGS -> Icons.Default.Cloud
+}
 
+private fun MobileUnifiedLibraryDrawerAppearance.drawerLabelRes(): Int = when (this) {
+    MobileUnifiedLibraryDrawerAppearance.THEME -> R.string.app_theme_title
+    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> R.string.settings
+    MobileUnifiedLibraryDrawerAppearance.FONTS -> R.string.drawer_custom_fonts
+    MobileUnifiedLibraryDrawerAppearance.AI -> R.string.ai_settings_title
+}
+
+/** Drawable-backed icons keep the brand marks the app already ships; the rest use Material glyphs. */
+private fun MobileUnifiedLibraryDrawerAppearance.drawerIconRes(): Int? = when (this) {
+    MobileUnifiedLibraryDrawerAppearance.FONTS -> R.drawable.fonts
+    MobileUnifiedLibraryDrawerAppearance.AI -> R.drawable.ai
+    else -> null
+}
+
+private fun MobileUnifiedLibraryDrawerAppearance.drawerVector(): ImageVector = when (this) {
+    MobileUnifiedLibraryDrawerAppearance.THEME -> Icons.Default.Palette
+    else -> Icons.Default.Settings
+}
+
+/** The drawer's own name for a section, matching the destinations it lists. */
+private fun UnifiedLibrarySection.drawerLabel(): String? = when (this) {
+    UnifiedLibrarySection.HOME -> null
+    UnifiedLibrarySection.AUDIOBOOKS -> "Listen"
+    UnifiedLibrarySection.SHELVES -> "Shelves"
+    UnifiedLibrarySection.TAGS -> "Tags"
+    UnifiedLibrarySection.FOLDERS -> "Folders"
+    UnifiedLibrarySection.CATALOGS -> "Catalogs"
+}
 
 internal val UnifiedLibraryFilter.labelRes: Int
     get() = when (this) {

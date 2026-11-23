@@ -11,7 +11,7 @@ import androidx.compose.ui.unit.dp
  * screen coherent when one step changes, and let the settings hub, the library, and the dialogs
  * share one scale instead of each declaring its own.
  */
-internal object SharedSpacing {
+object SharedSpacing {
     /** Hairline gaps: badge padding, icon-to-label sits. */
     val Xxs: Dp = 2.dp
 
