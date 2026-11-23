@@ -160,8 +160,6 @@ import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedMobileEmptyLibrary
 import com.aryan.reader.shared.ui.SharedMobileTopBanner
 import com.aryan.reader.shared.ui.SharedMobileTopAppBar
-import com.aryan.reader.shared.ui.SharedMobileContextualActionBar
-import com.aryan.reader.shared.ui.SharedMobileContextualActionLabels
 import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
@@ -295,60 +293,6 @@ fun rememberFilePickerLauncher(
     )
 }
 
-@Composable
-fun ContextualTopAppBar(
-    selectedItemCount: Int,
-    onNavIconClick: () -> Unit,
-    onInfoClick: (() -> Unit)? = null,
-    onSaveClick: (() -> Unit)? = null,
-    onShareClick: (() -> Unit)? = null,
-    onExportAnnotationsClick: (() -> Unit)? = null,
-    onTagClick: (() -> Unit)? = null,
-    onAddToShelfClick: (() -> Unit)? = null,
-    onSelectAllClick: (() -> Unit)? = null,
-    onPinClick: (() -> Unit)? = null,
-    onDeleteClick: () -> Unit,
-    compactSelectionActions: Boolean = false,
-    overflowDeleteLabelRes: Int = R.string.action_delete,
-    onClearSelectionClick: (() -> Unit)? = null,
-) {
-    SharedMobileContextualActionBar(
-        selectedItemCount = selectedItemCount,
-        labels = SharedMobileContextualActionLabels(
-            selectedCount = stringResource(R.string.items_selected_count, selectedItemCount),
-            clearSelection = stringResource(R.string.clear_selection),
-            info = stringResource(R.string.info),
-            pin = stringResource(R.string.pin_unpin),
-            selectAll = stringResource(R.string.select_all),
-            delete = stringResource(overflowDeleteLabelRes),
-            moreOptions = stringResource(R.string.content_desc_more_options),
-            tag = stringResource(R.string.content_desc_tag),
-            addToShelf = stringResource(R.string.desktop_add_to_shelf),
-            save = stringResource(R.string.action_save_copy_to_device),
-            share = stringResource(R.string.action_share),
-            exportAnnotations = stringResource(R.string.action_export_annotations),
-            clear = stringResource(R.string.action_clear),
-        ),
-        onNavigateBack = onNavIconClick,
-        onDelete = onDeleteClick,
-        compact = compactSelectionActions,
-        onInfo = onInfoClick,
-        onSave = onSaveClick,
-        onShare = onShareClick,
-        onExportAnnotations = onExportAnnotationsClick,
-        onTag = onTagClick,
-        onAddToShelf = onAddToShelfClick,
-        onSelectAll = onSelectAllClick,
-        onPin = onPinClick,
-        onClear = onClearSelectionClick,
-        tagIcon = { contentDescription ->
-            Icon(
-                painterResource(R.drawable.tag),
-                contentDescription = contentDescription,
-            )
-        },
-    )
-}
 @Composable
 fun CustomTopAppBar(
     modifier: Modifier = Modifier,

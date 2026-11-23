@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -103,30 +104,9 @@ fun SharedMobileFontsScreen(
         modifier = modifier,
         topBar = {
             if (isSelectionMode) {
-                SharedMobileContextualActionBar(
-                    selectedItemCount = selectedFonts.size,
-                    labels = SharedMobileContextualActionLabels(
-                        selectedCount = strings.selectedCount(selectedFonts.size),
-                        clearSelection = strings.clearSelectionDescription,
-                        info = "",
-                        pin = "",
-                        selectAll = strings.selectAllDescription,
-                        delete = strings.deleteDescription,
-                        moreOptions = "",
-                        tag = "",
-                        addToShelf = "",
-                        save = "",
-                        share = "",
-                        exportAnnotations = "",
-                        clear = strings.clearSelectionDescription,
-                    ),
-                    onNavigateBack = { selectedFontIds = emptySet() },
-                    onDelete = { pendingDeleteIds = selectedFonts.map { it.id } },
-                    compact = false,
-                    onSelectAll = {
-                        selectedFontIds = if (selectedFontIds.containsAll(allFontIds)) emptySet() else allFontIds
-                    },
-                    tagIcon = {},
+                SharedSelectionTopBar(
+                    selectedCount = selectedFonts.size,
+                    onClose = { selectedFontIds = emptySet() },
                 )
             } else {
                 SharedMobileTopAppBar(
@@ -223,6 +203,23 @@ fun SharedMobileFontsScreen(
                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background.copy(alpha = 0.7f)) {
                     Box(contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 }
+            }
+            // Fonts are picked the same way books are: actions at the bottom, within thumb reach,
+            // with the count and the way out left up in the bar.
+            if (isSelectionMode && !isLoading) {
+                SharedSelectionToolbar(
+                    selectedCount = selectedFonts.size,
+                    onSelectAll = {
+                        selectedFontIds = if (selectedFontIds.containsAll(allFontIds)) emptySet() else allFontIds
+                    },
+                    onPin = null,
+                    onDelete = { pendingDeleteIds = selectedFonts.map { it.id } },
+                    onClear = { selectedFontIds = emptySet() },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 16.dp),
+                )
             }
         }
     }
