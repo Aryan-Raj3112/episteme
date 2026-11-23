@@ -112,6 +112,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
@@ -148,8 +149,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -5445,8 +5444,10 @@ private fun SharedMobilePdfReaderTabStrip(
     onNewTab: () -> Unit,
 ) {
     LazyRow(
+        // Opaque, matching the bar above it: at 40% alpha the page text showed through the strip,
+        // so the chrome read as a rendering fault rather than a surface.
         modifier = Modifier.fillMaxWidth().height(48.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+            .background(MaterialTheme.colorScheme.surfaceContainer),
         contentPadding = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues(),
         verticalAlignment = Alignment.Bottom,
     ) {
@@ -5571,33 +5572,31 @@ private fun SharedMobilePdfReaderTopBar(
             searchFocusRequester.requestFocus()
         }
     }
-    var showMoreMenu by remember { mutableStateOf(false) }
-    var showHiddenToolsExpanded by remember { mutableStateOf(false) }
-    var showReadingModeExpanded by remember { mutableStateOf(false) }
-    var showTtsSettingsExpanded by remember { mutableStateOf(false) }
-    var showFileActionsExpanded by remember { mutableStateOf(false) }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 4.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(
-                    if (applySystemBarInsets) {
-                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
-                    } else {
-                        Modifier
-                    }
-                )
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                .height(64.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+    // The state object the Android PDF bar also uses: one menu, one set of nested sections and one
+    // sheet host instead of two menus that merely look alike.
+    val overflowMenuState = rememberSharedReaderOverflowMenuState()
+    var showMoreMenu by overflowMenuState.menuExpanded
+    var showHiddenToolsExpanded by overflowMenuState.hiddenToolsExpanded
+    var showReadingModeExpanded by overflowMenuState.readingModeExpanded
+    var showTtsSettingsExpanded by overflowMenuState.ttsSettingsExpanded
+    var showFileActionsExpanded by overflowMenuState.fileActionsExpanded
+    // The same surface and top row the Android PDF bar draws.
+    SharedReaderToolbarSurface(edge = SharedReaderBarEdge.TOP) {
+        SharedPdfTopToolbarRow(
+            topInset = if (applySystemBarInsets) {
+                WindowInsets.safeDrawing
+                    .only(WindowInsetsSides.Top)
+                    .asPaddingValues()
+                    .calculateTopPadding()
+            } else {
+                0.dp
+            },
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("tooltip_back", "Back"))
+            SharedReaderToolButton(
+                label = readerString("tooltip_back", "Back"),
+                onClick = onBack,
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
             }
             if (isSearchActive) {
                 OutlinedTextField(
@@ -5691,19 +5690,19 @@ private fun SharedMobilePdfReaderTopBar(
                     }
                 }
             }
-            Box {
-                IconButton(onClick = {
-                    showHiddenToolsExpanded = false
-                    showReadingModeExpanded = false
-                    showFileActionsExpanded = false
-                    showMoreMenu = true
-                }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = readerString("tooltip_more_options", "PDF options"))
-                }
-                SharedDropdownMenu(
-                    expanded = showMoreMenu,
-                    onDismissRequest = { showMoreMenu = false }
-                ) {
+            SharedReaderToolButton(
+                label = readerString("tooltip_more_options", "PDF options"),
+                onClick = overflowMenuState::open,
+                active = showMoreMenu,
+            ) {
+                Icon(Icons.Default.MoreVert, contentDescription = null)
+            }
+            // A sheet rather than a popup menu: the tool list is a destination, and this is the
+            // host the EPUB bar and the Android PDF bar open.
+            SharedReaderOverflowMenu(
+                state = overflowMenuState,
+                title = readerString("tooltip_more_options", "PDF options"),
+            ) {
                 SharedMobilePdfOverflowItem(
                     readerString("title_customize_toolbar", "Customize Toolbar"),
                     leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
@@ -5958,7 +5957,6 @@ private fun SharedMobilePdfReaderTopBar(
                         }
                     )
                 }
-                }
             }
         }
     }
@@ -6024,23 +6022,14 @@ private fun SharedMobilePdfTopToolButton(
     isLoading: Boolean = false,
     icon: @Composable () -> Unit
 ) {
-    IconButton(
+    SharedReaderToolButton(
+        label = label,
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier
-            .size(48.dp)
-            .semantics { contentDescription = label },
-    ) {
-        if (isLoading) {
-            CircularProgressIndicator(Modifier.size(20.dp))
-        } else {
-            CompositionLocalProvider(
-                LocalContentColor provides if (isActive) MaterialTheme.colorScheme.primary else LocalContentColor.current
-            ) {
-                icon()
-            }
-        }
-    }
+        active = isActive,
+        loading = isLoading,
+        content = icon,
+    )
 }
 
 private val SharedMobilePdfAvailableTools = setOf(
@@ -6211,36 +6200,30 @@ private fun SharedMobilePdfOverflowItem(
     trailingIcon: (@Composable () -> Unit)? = null,
     onClick: () -> Unit = {}
 ) {
-    Row(
-        modifier = Modifier
-            .width(300.dp)
-            .height(56.dp)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-            leadingIcon?.invoke()
-        }
-        Text(
-            text = text,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = if (!enabled) {
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            } else if (isError) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-            modifier = Modifier.weight(1f)
-        )
-        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-            trailingIcon?.invoke()
-        }
-    }
-    HorizontalDivider()
+    // The sheet's row language (tonal badge, 56dp target, error colour) instead of a hand-rolled
+    // menu row, so a PDF row and an EPUB row are the same object.
+    SharedReaderToolSheetRowItem(
+        text = {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+        },
+        onClick = onClick,
+        leadingIcon = leadingIcon,
+        trailingIcon = trailingIcon,
+        enabled = enabled,
+        colors = if (isError) {
+            MenuDefaults.itemColors(
+                textColor = MaterialTheme.colorScheme.error,
+                leadingIconColor = MaterialTheme.colorScheme.error,
+                trailingIconColor = MaterialTheme.colorScheme.error,
+            )
+        } else {
+            MenuDefaults.itemColors()
+        },
+    )
 }
 
 private enum class SharedMobilePdfSystemUiMode(val label: String) {

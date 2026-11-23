@@ -62,7 +62,6 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -533,7 +532,12 @@ fun SharedMobileUnifiedLibraryScreen(
         onAddAudiobook = { showAudiobookAddSheet = true },
         onNewShelf = { showCreateShelf = true },
         showFloatingActionButton = !isContextualMode,
-        selectionToolbar = selectionToolbarActions?.let { which ->
+        // An empty selection must not float a toolbar: the action set is built whenever the
+        // screen supports selection at all, so it needs the same `selectedIds` gate the Android
+        // screen and the top bar use, or an unselected library shows a bar of actions for nothing.
+        selectionToolbar = selectionToolbarActions
+            ?.takeIf { sharedSelectionToolbarVisible(selectedIds.size) }
+            ?.let { which ->
             {
                 SharedSelectionToolbar(
                     selectedCount = selectedIds.size,

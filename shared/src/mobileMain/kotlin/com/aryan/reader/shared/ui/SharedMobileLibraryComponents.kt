@@ -64,7 +64,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -185,25 +185,23 @@ fun SharedMobileLibraryBookListCardFrame(
     metadata: @Composable RowScope.() -> Unit,
     progress: @Composable () -> Unit,
 ) {
-    ElevatedCard(
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-        elevation = CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 6.dp else 2.dp,
-        ),
+    // Tonal + hairline rather than elevation: the shared visual language (SharedM3Surfaces) keeps
+    // Home, the sections and these rows on one look, and elevation is reserved for things that
+    // actually float.
+    Card(
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = if (isSelected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            sharedCardBorder(0.45f)
+        },
         modifier = modifier
             .fillMaxWidth()
             .graphicsLayer { alpha = if (isAvailable) 1f else 0.8f }
-            .then(
-                if (isSelected) {
-                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                } else {
-                    Modifier
-                },
-            )
-            .clip(MaterialTheme.shapes.large)
+            // Clips the ripple to the card's corners; the Card's own clip sits inside the
+            // clickable in the modifier chain and cannot clip the indication.
+            .clip(sharedCardShape())
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         Row(
@@ -256,24 +254,17 @@ fun SharedMobileShelfListCardFrame(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit,
 ) {
-    ElevatedCard(
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-        elevation = CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 8.dp else 2.dp,
-        ),
+    Card(
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = if (isSelected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            sharedCardBorder(0.45f)
+        },
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (isSelected) {
-                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                } else {
-                    Modifier
-                },
-            )
-            .clip(MaterialTheme.shapes.large)
+            .clip(sharedCardShape())
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         Row(
@@ -685,17 +676,20 @@ internal fun SharedMobileBookCard(
     onTogglePinned: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    ElevatedCard(
+    Card(
         modifier = modifier
             .graphicsLayer { alpha = if (book.isAvailable) 1f else 0.8f }
-            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large) else Modifier)
-            .clip(MaterialTheme.shapes.large)
+            .clip(sharedCardShape())
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
         // Selection is carried by the border and the check badge on the cover; raising the card as
         // well made a grid of selected cells re-flow visually against unselected ones.
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 2.dp)
+        border = if (selected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            sharedCardBorder()
+        },
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Box {
@@ -803,16 +797,19 @@ internal fun SharedMobileLibraryListItem(
     onLongClick: () -> Unit,
     onTogglePinned: () -> Unit
 ) {
-    ElevatedCard(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer { alpha = if (book.isAvailable) 1f else 0.8f }
-            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large) else Modifier)
-            .clip(MaterialTheme.shapes.large)
+            .clip(sharedCardShape())
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (selected) 6.dp else 2.dp),
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = if (selected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            sharedCardBorder(0.45f)
+        },
     ) {
         Box {
             Row(
@@ -1296,9 +1293,11 @@ internal fun SharedMobileFolderCard(
     onRemove: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    ElevatedCard(
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        border = sharedCardBorder(),
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

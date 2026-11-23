@@ -23,10 +23,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +45,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -293,11 +297,54 @@ fun SharedEpubBottomToolbarRow(
     )
 }
 
+/**
+ * One tool in a reader bar.
+ *
+ * Both PDF bars used to hand-roll this: Android through the app module's tooltip wrapper, iOS
+ * through a bare `IconButton` with a `contentDescription` and a tint for its active state. The
+ * button contract belongs next to the bar it lives in, so "active tool", "busy tool" and the
+ * tooltip behave the same whichever host is drawing the bar.
+ */
 @Composable
-fun SharedPdfTopToolbarRow(content: @Composable RowScope.() -> Unit) {
+fun SharedReaderToolButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier.size(48.dp),
+    enabled: Boolean = true,
+    description: String? = null,
+    active: Boolean = false,
+    loading: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    SharedTooltipIconButton(
+        text = label,
+        onClick = onClick,
+        modifier = modifier.semantics { contentDescription = label },
+        enabled = enabled,
+        description = description,
+        active = active,
+    ) {
+        if (loading) {
+            CircularProgressIndicator(Modifier.size(20.dp))
+        } else {
+            content()
+        }
+    }
+}
+
+@Composable
+fun SharedPdfTopToolbarRow(
+    /**
+     * Status-bar inset. It lives inside the row so the bar's Surface colour reaches the screen
+     * edge behind the status bar, and so a host whose reader already paints that area can pass 0.
+     */
+    topInset: Dp = 0.dp,
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(top = topInset)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             .height(56.dp)
             .padding(horizontal = 4.dp),

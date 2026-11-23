@@ -192,6 +192,15 @@ fun SharedSelectionOverflowItems(
 }
 
 /**
+ * Whether a screen should float the selection toolbar.
+ *
+ * The action set is built from the screen's *capabilities*, which stay on for the whole session;
+ * only the selection count says whether there is anything to act on. A screen that shows the bar
+ * whenever capabilities exist leaves a floating toolbar over an unselected library.
+ */
+fun sharedSelectionToolbarVisible(selectedCount: Int): Boolean = selectedCount > 0
+
+/**
  * The selection's top bar: what is selected, and the way out of the mode. Everything that acts on
  * the selection itself lives in [SharedSelectionToolbar], within reach of a thumb.
  */
