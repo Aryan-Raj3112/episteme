@@ -561,6 +561,41 @@ class SettingsHubModelsTest {
     }
 }
 
+class SettingsHubStartupBehaviorTest {
+
+    private fun appLibraryItems(
+        platform: SharedSettingsPlatform = SharedSettingsPlatform.ANDROID,
+        block: SharedSettingsHubInput.() -> SharedSettingsHubInput = { this },
+    ) = sharedSettingsHubModel(
+        SharedSettingsHubInput(platform = platform).block()
+    ).page(SharedSettingsDestination.APP_LIBRARY).items
+
+    @Test
+    fun `on startup is a controllable row on the app and library page`() {
+        val row = appLibraryItems().firstOrNull { it.action == SharedSettingsAction.STARTUP_BEHAVIOR }
+
+        assertNotNull(row)
+        assertEquals(SharedSettingsItemKind.CONTROL, row.kind)
+        assertTrue(row.enabled)
+    }
+
+    @Test
+    fun `the row carries the host supplied value preview`() {
+        val row = appLibraryItems {
+            copy(itemValues = mapOf(SharedSettingsAction.STARTUP_BEHAVIOR.name to "Start at your library"))
+        }.first { it.action == SharedSettingsAction.STARTUP_BEHAVIOR }
+
+        assertEquals("Start at your library", row.value)
+    }
+
+    @Test
+    fun `hosts can drop the row`() {
+        val actions = appLibraryItems { copy(includeStartupBehavior = false) }.map { it.action }
+
+        assertFalse(SharedSettingsAction.STARTUP_BEHAVIOR in actions)
+    }
+}
+
 private fun SharedSettingsHubModel.visibleNestedActions(): List<SharedSettingsAction> {
     return rootCategories.flatMap { category ->
         page(category.destination).items.map { it.action }

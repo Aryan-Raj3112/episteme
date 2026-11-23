@@ -157,6 +157,8 @@ import com.aryan.reader.shared.googleFontDownloadUrlFromCss
 import com.aryan.reader.shared.SharedLibraryEditor
 import com.aryan.reader.shared.SharedImportOutcomeCounts
 import com.aryan.reader.shared.SharedImportPlanner
+import com.aryan.reader.shared.MobileStartupBehavior
+import com.aryan.reader.shared.mobileStartupBehaviorAllowsReaderRestore
 import com.aryan.reader.shared.MobileImportOutcome
 import com.aryan.reader.shared.record
 import com.aryan.reader.shared.MobileExternalFileCloseAction
@@ -788,6 +790,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 activeBookId = prefs.getString(KEY_ACTIVE_TAB, null),
             ),
             externalFileBehavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK",
+            startupBehavior = MobileStartupBehavior.fromPersisted(
+                prefs.getString(KEY_STARTUP_BEHAVIOR, null),
+            ),
             useStrictFileFilter = prefs.getBoolean(KEY_USE_STRICT_FILE_FILTER, false),
             usePdfFileNameAsDisplayName = prefs.getBoolean(KEY_USE_PDF_FILE_NAME_AS_DISPLAY_NAME, false),
             isScreenCaptureProtectionEnabled = prefs.getBoolean(KEY_SCREEN_CAPTURE_PROTECTION, false),
@@ -2340,6 +2345,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun restoreReaderSessionIfNeeded() {
         val currentState = _internalState.value
+        // The persisted session is left untouched when startup should stop at the library, so
+        // choosing "open last book" later still resumes what was being read.
+        if (!mobileStartupBehaviorAllowsReaderRestore(currentState.startupBehavior)) {
+            return
+        }
         val readerSession = readerSessionState(currentState)
         if (!readerSession.canRestorePersistedReader || currentState.selectedPdfUri != null || currentState.selectedEpubUri != null) {
             return
@@ -9173,6 +9183,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(externalFileBehavior = behavior) }
     }
 
+    fun setStartupBehavior(behavior: MobileStartupBehavior) {
+        prefs.edit { putString(KEY_STARTUP_BEHAVIOR, behavior.persistedValue) }
+        _internalState.update { it.copy(startupBehavior = behavior) }
+    }
+
     fun dismissCreateShelfDialog() {
         _internalState.update {
             it.copy(shelfState = it.shelfState.reduce(AppShelfAction.CreateDialogDismissed))
@@ -10459,6 +10474,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_LAST_OPEN_BOOK_ID = "last_open_book_id"
         private const val KEY_LAST_OPEN_FILE_TYPE = "last_open_file_type"
         private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"
+        private const val KEY_STARTUP_BEHAVIOR = "startup_behavior"
         private const val EXTERNAL_FILE_BEHAVIOR_ASK = "ASK"
         private const val EXTERNAL_FILE_BEHAVIOR_TEMPORARY = "TEMPORARY"
         private const val KEY_PENDING_EXTERNAL_FILE_REMOVALS = "pending_external_file_removals"

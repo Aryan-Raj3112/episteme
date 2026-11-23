@@ -32,9 +32,11 @@ class RecompositionPolicyTest {
         // Every value the model reads must be a remembered key: dropping one silently
         // freezes that section, e.g. the FPS toggle would stop updating its check state.
         assertTrue(source.contains("val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled, settingsItemValues)"))
-        // The value previews are their own remembered key: rebuilding them inline would rebuild the
-        // whole model on every recomposition.
-        assertTrue(source.contains("val settingsItemValues = rememberSharedSettingsItemValues("))
+        // The value previews are their own remembered keys: rebuilding them inline would rebuild
+        // the whole model on every recomposition. The shared helper remembers the host-owned
+        // previews, and the host adds its own entries on top without re-running that helper.
+        assertTrue(source.contains("val baseItemValues = rememberSharedSettingsItemValues("))
+        assertTrue(source.contains("val settingsItemValues = remember(baseItemValues, "))
     }
 
     @Test

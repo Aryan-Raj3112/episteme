@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Policy
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
@@ -1186,6 +1187,7 @@ private fun SharedSettingsAction.iconForSettings(): ImageVector {
         SharedSettingsAction.STRICT_FILE_FILTER -> Icons.Default.FilterList
         SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME -> Icons.Default.Description
         SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> Icons.Default.FileOpen
+        SharedSettingsAction.STARTUP_BEHAVIOR -> Icons.Default.Restore
         SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> Icons.Default.VisibilityOff
         SharedSettingsAction.CUSTOM_FONTS -> Icons.Default.Fonts
         SharedSettingsAction.SIGN_IN -> Icons.Default.AccountCircle

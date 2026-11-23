@@ -8,6 +8,7 @@ import com.aryan.reader.paginatedreader.Locator
 import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import com.aryan.reader.shared.search.SharedLibrarySearchDeepLink
+import com.aryan.reader.shared.MobileStartupBehavior
 import com.aryan.reader.shared.reconcileAvailableBooks
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.toggleSelection
@@ -110,6 +111,8 @@ data class ReaderScreenState(
     val openTabs: List<RecentFileItem> = emptyList(),
     val showExternalFileSavePromptFor: String? = null,
     val externalFileBehavior: String = "ASK",
+    /** What a cold start opens: the last book (default, historical behaviour) or the library. */
+    val startupBehavior: MobileStartupBehavior = MobileStartupBehavior.DEFAULT,
     val useStrictFileFilter: Boolean = false,
     val usePdfFileNameAsDisplayName: Boolean = false,
     val appAppearance: AppAppearanceState = AppAppearanceState(),

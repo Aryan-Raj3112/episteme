@@ -2843,4 +2843,9 @@
     <string name="content_desc_media_overlay_next">Next narrated passage</string>
     <string name="content_desc_media_overlay_speed">Narration speed</string>
     <string name="media_overlay_chapter_unavailable">This chapter has no narration</string>
+    <string name="startup_behavior_title">On startup</string>
+    <string name="startup_behavior_open_last">Reopen the last book</string>
+    <string name="startup_behavior_open_last_desc">The book you were reading opens automatically when the app starts</string>
+    <string name="startup_behavior_home">Start at your library</string>
+    <string name="startup_behavior_home_desc">The app always opens on your library so you can pick what to read</string>
 </resources>

@@ -10,6 +10,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
@@ -82,6 +83,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
@@ -102,6 +104,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.ComposeUIViewController
+import com.aryan.reader.shared.MobileStartupBehavior
+import com.aryan.reader.shared.mobileStartupBehaviorAllowsReaderRestore
 import com.aryan.reader.shared.AppAction
 import com.aryan.reader.shared.parentDestination
 import com.aryan.reader.shared.AddBooksSource
@@ -351,6 +355,7 @@ import com.aryan.reader.shared.ui.SharedMobileMainDestination
 import com.aryan.reader.shared.ui.SharedMobileMainScaffold
 import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.rememberSharedSettingsItemValues
+import com.aryan.reader.shared.ui.rememberStartupBehaviorValue
 import com.aryan.reader.shared.ui.sharedFadeThrough
 import com.aryan.reader.shared.ui.sharedReducedMotionSwap
 import com.aryan.reader.shared.ui.sharedScreenEnter
@@ -3681,7 +3686,13 @@ private fun ReaderIosApp(
     }
     val restoredPdfSplitWorkspace = restoredPdfSplitRecovery.workspace
     val restoredReaderBook = remember {
-        loadIosReaderSessionBook(navigatedState.rawLibraryBooks)
+        // The persisted session survives this check, so re-selecting "reopen the last book" later
+        // still resumes what was being read.
+        if (mobileStartupBehaviorAllowsReaderRestore(loadIosStartupBehavior())) {
+            loadIosReaderSessionBook(navigatedState.rawLibraryBooks)
+        } else {
+            null
+        }
     }
     val initialReaderBook = remember(restoredPdfSplitWorkspace, restoredReaderBook) {
         restoredPdfSplitWorkspace.exitTargetDocument
@@ -4148,6 +4159,8 @@ private fun ReaderIosApp(
     var tagEditorBookIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var customSleepTimerMinutes by remember { mutableStateOf(loadIosCustomSleepTimerMinutes()) }
     var showExternalFileBehaviorDialog by remember { mutableStateOf(false) }
+    var startupBehavior by remember { mutableStateOf(loadIosStartupBehavior()) }
+    var showStartupBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterConfirmation by remember { mutableStateOf(false) }
     var showClearReflowCacheConfirmation by remember { mutableStateOf(false) }
     var showClearBookCacheConfirmation by remember { mutableStateOf(false) }
@@ -8309,8 +8322,15 @@ private fun ReaderIosApp(
                                 customFontCount = state.customFonts.count { !it.isDeleted },
                                 appVersion = iosAppVersionName(),
                             )
-                            val settingsItemValues = remember(baseSettingsItemValues, languageSummary) {
-                                baseSettingsItemValues + (SharedSettingsAction.LANGUAGE.name to languageSummary)
+                            val startupBehaviorValue = rememberStartupBehaviorValue(startupBehavior)
+                            val settingsItemValues = remember(
+                                baseSettingsItemValues,
+                                languageSummary,
+                                startupBehaviorValue,
+                            ) {
+                                baseSettingsItemValues +
+                                    (SharedSettingsAction.LANGUAGE.name to languageSummary) +
+                                    (SharedSettingsAction.STARTUP_BEHAVIOR.name to startupBehaviorValue)
                             }
                             val settingsModel = remember(
                                 bridge.isDebugBuild,
@@ -8526,6 +8546,9 @@ private fun ReaderIosApp(
                                         SharedSettingsAction.DEVICE_MANAGEMENT -> utilityScreen = IosUtilityScreen.DEVICES
                                         SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> {
                                             showExternalFileBehaviorDialog = true
+                                        }
+                                        SharedSettingsAction.STARTUP_BEHAVIOR -> {
+                                            showStartupBehaviorDialog = true
                                         }
                                         SharedSettingsAction.TTS_SETTINGS -> {
                                             showTtsSettings = true
@@ -8938,6 +8961,17 @@ private fun ReaderIosApp(
             }
         )
     }
+    if (showStartupBehaviorDialog) {
+        IosStartupBehaviorDialog(
+            currentBehavior = startupBehavior,
+            onSelect = {
+                startupBehavior = it
+                saveIosStartupBehavior(it)
+                showStartupBehaviorDialog = false
+            },
+            onDismiss = { showStartupBehaviorDialog = false },
+        )
+    }
     if (showExternalFileBehaviorDialog) {
         IosExternalFileBehaviorDialog(
             currentBehavior = state.externalFileBehavior,
@@ -9192,6 +9226,75 @@ private fun iosAppBuildLabel(): String {
     val buildNumber = (NSBundle.mainBundle.objectForInfoDictionaryKey("CFBundleVersion") as? String)
         ?.takeIf(String::isNotBlank)
     return if (buildNumber == null) "Standard edition" else "Standard edition · Build $buildNumber"
+}
+
+/**
+ * Startup behaviour chooser. The remembered reader session is never cleared here, so switching back
+ * to "reopen the last book" resumes the previous book on the next launch.
+ */
+@Composable
+private fun IosStartupBehaviorDialog(
+    currentBehavior: MobileStartupBehavior,
+    onSelect: (MobileStartupBehavior) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val options = listOf(
+        Triple(
+            MobileStartupBehavior.OPEN_LAST_READING,
+            readerString("startup_behavior_open_last", "Reopen the last book"),
+            readerString(
+                "startup_behavior_open_last_desc",
+                "The book you were reading opens automatically when the app starts",
+            ),
+        ),
+        Triple(
+            MobileStartupBehavior.HOME,
+            readerString("startup_behavior_home", "Start at your library"),
+            readerString(
+                "startup_behavior_home_desc",
+                "The app always opens on your library so you can pick what to read",
+            ),
+        ),
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(readerString("startup_behavior_title", "On startup")) },
+        text = {
+            Column {
+                options.forEach { (behavior, label, description) ->
+                    // The whole row is the selectable target so VoiceOver announces "selected" for
+                    // the current choice; the radio itself is decorative.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = currentBehavior == behavior,
+                                role = Role.RadioButton,
+                                onClick = { onSelect(behavior) },
+                            )
+                            .padding(vertical = 12.dp),
+                    ) {
+                        RadioButton(selected = currentBehavior == behavior, onClick = null)
+                        Spacer(Modifier.width(16.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(label)
+                            Text(
+                                description,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(readerString("action_cancel", "Cancel"))
+            }
+        },
+    )
 }
 
 @Composable

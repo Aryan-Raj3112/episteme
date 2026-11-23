@@ -36,6 +36,7 @@ internal fun SharedSettingsAction.iosDisposition(): IosSettingsActionDisposition
     SharedSettingsAction.STRICT_FILE_FILTER,
     SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME,
     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR,
+    SharedSettingsAction.STARTUP_BEHAVIOR,
     SharedSettingsAction.CUSTOM_FONTS,
     SharedSettingsAction.SIGN_IN,
     SharedSettingsAction.SIGN_OUT,

@@ -93,6 +93,7 @@ import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.ui.SharedSettingsHub
 import com.aryan.reader.shared.ui.rememberSharedSettingsItemValues
+import com.aryan.reader.shared.ui.rememberStartupBehaviorValue
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
 import com.aryan.reader.shared.ui.sharedFadeThrough
@@ -131,6 +132,7 @@ fun SettingsScreen(
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var showAppThemePanel by remember { mutableStateOf(false) }
     var showBehaviorDialog by remember { mutableStateOf(false) }
+    var showStartupBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterDialog by remember { mutableStateOf(false) }
     var showClearBookCacheDialog by remember { mutableStateOf(false) }
     var showClearReflowCacheDialog by remember { mutableStateOf(false) }
@@ -212,13 +214,17 @@ fun SettingsScreen(
     // row's identity, so the host is the one that can say "Literata · 100% · Justified" instead of
     // making the user open the page to read the value. Formatting is shared with iOS, which keeps the
     // previews identical when the persisted defaults are the same.
-    val settingsItemValues = rememberSharedSettingsItemValues(
+    val startupBehaviorValue = rememberStartupBehaviorValue(uiState.startupBehavior)
+    val baseItemValues = rememberSharedSettingsItemValues(
         epubDefaults = epubReaderDefaults,
         pdfDefaults = pdfReaderDefaults,
         toolbarPreferences = readerToolbarPreferences,
         customFontCount = customFonts.count { !it.isDeleted },
         appVersion = BuildConfig.VERSION_NAME,
     )
+    val settingsItemValues = remember(baseItemValues, startupBehaviorValue) {
+        baseItemValues + (SharedSettingsAction.STARTUP_BEHAVIOR.name to startupBehaviorValue)
+    }
     // Model build allocates section/item lists; remember on its real inputs
     // so unrelated uiState emissions (progress, sync ticks) skip it.
     val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled, settingsItemValues) {
@@ -376,6 +382,7 @@ fun SettingsScreen(
                     SharedSettingsAction.APP_THEME -> showAppThemePanel = true
                     SharedSettingsAction.LANGUAGE -> showLanguageDialog = true
                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> showBehaviorDialog = true
+                    SharedSettingsAction.STARTUP_BEHAVIOR -> showStartupBehaviorDialog = true
                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> {
                         val next = !uiState.isScreenCaptureProtectionEnabled
                         viewModel.setScreenCaptureProtectionEnabled(next)
@@ -447,6 +454,14 @@ fun SettingsScreen(
             },
             onConflictResolution = viewModel::resolveCloudFolderConflict,
             onDismiss = { showCloudFolderSyncDialog = false },
+        )
+    }
+
+    if (showStartupBehaviorDialog) {
+        StartupBehaviorDialog(
+            currentBehavior = uiState.startupBehavior,
+            onDismiss = { showStartupBehaviorDialog = false },
+            onSelect = { viewModel.setStartupBehavior(it) },
         )
     }
 

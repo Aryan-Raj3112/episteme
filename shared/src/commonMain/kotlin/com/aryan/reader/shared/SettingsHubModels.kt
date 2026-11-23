@@ -68,6 +68,7 @@ enum class SharedSettingsAction {
     STRICT_FILE_FILTER,
     PDF_FILENAME_DISPLAY_NAME,
     EXTERNAL_FILE_BEHAVIOR,
+    STARTUP_BEHAVIOR,
     SCREEN_CAPTURE_PROTECTION,
     CUSTOM_FONTS,
     SIGN_IN,
@@ -379,6 +380,8 @@ data class SharedSettingsHubInput(
     val includeLanguage: Boolean = true,
     val includeScreenCaptureProtection: Boolean = false,
     val includeExternalFileBehavior: Boolean = true,
+    /** Whether app startup reopens the last book or stops at the library. */
+    val includeStartupBehavior: Boolean = true,
     val includeCustomFonts: Boolean = true,
     val includeStrictFileFilter: Boolean = true,
     val includePdfFileNameDisplayName: Boolean = false,
@@ -601,6 +604,20 @@ private fun SharedSettingsHubInput.appLibraryCategory(): SharedSettingsCategoryS
                     kind = SharedSettingsItemKind.TOGGLE,
                     checked = isTabsEnabled,
                     keywords = listOf("tabs", "sessions")
+                )
+            )
+        }
+        if (includeStartupBehavior) {
+            add(
+                item(
+                    action = SharedSettingsAction.STARTUP_BEHAVIOR,
+                    title = t("startup_behavior_title", "On startup"),
+                    summary = t(
+                        "startup_behavior_summary",
+                        "Whether the app reopens the book you were reading or starts at your library"
+                    ),
+                    kind = SharedSettingsItemKind.CONTROL,
+                    keywords = listOf("startup", "launch", "last book", "resume", "home", "open")
                 )
             )
         }

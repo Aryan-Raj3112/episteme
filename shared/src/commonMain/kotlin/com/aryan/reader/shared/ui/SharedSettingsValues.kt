@@ -2,6 +2,8 @@ package com.aryan.reader.shared.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import com.aryan.reader.shared.MobileStartupBehavior
+import com.aryan.reader.shared.sharedStartupBehaviorValue
 import com.aryan.reader.shared.BuiltInPdfReaderThemes
 import com.aryan.reader.shared.ReaderTool
 import com.aryan.reader.shared.ReaderToolbarPreferences
@@ -107,3 +109,14 @@ fun rememberSharedSettingsItemValues(
         )
     }
 }
+
+/**
+ * The value preview for the startup row: what the current choice actually does, in the same words
+ * on both platforms.
+ */
+@Composable
+fun rememberStartupBehaviorValue(behavior: MobileStartupBehavior): String = sharedStartupBehaviorValue(
+    behavior = behavior,
+    openLastBookLabel = readerString("startup_behavior_open_last", "Reopen the last book"),
+    homeLabel = readerString("startup_behavior_home", "Start at your library"),
+)

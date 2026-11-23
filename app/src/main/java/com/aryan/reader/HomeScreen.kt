@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -73,6 +74,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -88,6 +90,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
 import androidx.navigation.NavHostController
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.MobileStartupBehavior
 import com.aryan.reader.shared.ui.SharedDrawerAccountFooter
 import com.aryan.reader.shared.ui.SharedDrawerGroupDivider
 import com.aryan.reader.shared.ui.SharedDrawerHeader
@@ -642,6 +645,61 @@ fun ExternalFileBehaviorDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
         }
+    )
+}
+
+/**
+ * Startup behaviour chooser. The reader session is kept either way, so picking "start at your
+ * library" is not destructive and can be undone.
+ */
+@Composable
+fun StartupBehaviorDialog(
+    currentBehavior: MobileStartupBehavior,
+    onDismiss: () -> Unit,
+    onSelect: (MobileStartupBehavior) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.startup_behavior_title)) },
+        text = {
+            Column {
+                val options = listOf(
+                    MobileStartupBehavior.OPEN_LAST_READING to
+                        (R.string.startup_behavior_open_last to R.string.startup_behavior_open_last_desc),
+                    MobileStartupBehavior.HOME to
+                        (R.string.startup_behavior_home to R.string.startup_behavior_home_desc),
+                )
+                options.forEach { (behavior, labels) ->
+                    // The whole row is the selectable target so TalkBack announces "selected" for
+                    // the current choice; the radio itself is decorative.
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .selectable(
+                                selected = currentBehavior == behavior,
+                                role = Role.RadioButton,
+                                onClick = { onSelect(behavior); onDismiss() },
+                            )
+                            .padding(vertical = 12.dp),
+                    ) {
+                        RadioButton(selected = currentBehavior == behavior, onClick = null)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(labels.first))
+                            Text(
+                                text = stringResource(labels.second),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+        },
     )
 }
 
