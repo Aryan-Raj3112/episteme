@@ -9,10 +9,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -74,7 +73,11 @@ fun SharedAndroidUnifiedContinueCard(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(density.continueCardHeight)
+            // The hero's height follows its content, floored by the one-line card. A fixed height
+            // clipped a two-line title: the progress bar was pushed past the rounded bottom edge
+            // and cut in half. Titles therefore get their second line (and a longer localised
+            // section label keeps its breathing room) at the cost of a slightly taller card.
+            .heightIn(min = density.continueCardHeight)
             .clip(shape)
             .testTag("UnifiedLibraryContinueReading")
             .combinedClickable(onClick = onClick, onLongClick = {}),
@@ -102,17 +105,21 @@ fun SharedAndroidUnifiedContinueCard(
             )
             Box(Modifier.background(backgroundBrush)) {
                 Row(
-                    Modifier.fillMaxSize().padding(
+                    Modifier.fillMaxWidth().padding(
                         start = if (density.compact) 12.dp else 18.dp,
                         end = if (density.compact) 12.dp else 20.dp,
+                        top = density.continueCardVerticalPadding,
+                        bottom = density.continueCardVerticalPadding,
                     ),
                     horizontalArrangement = Arrangement.spacedBy(if (density.compact) 12.dp else 18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Deliberately not `fillMaxHeight`: that would stretch the cover to whatever
+                    // height the host offers. The cover keeps its own size and the row centres it,
+                    // so the card can grow for a second title line without growing the artwork.
                     Box(
                         Modifier
                             .width(density.continueCoverWidth)
-                            .fillMaxHeight()
                             .testTag("UnifiedLibraryContinueReadingCover")
                     ) { cover(Modifier.align(Alignment.CenterStart)) }
                     Column(
