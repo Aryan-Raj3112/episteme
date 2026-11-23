@@ -20,7 +20,7 @@ fun parseSharedDocumentXmlMetadata(xml: String): SharedDocumentMetadata {
     var author: String? = null
     SharedDocumentMetadataElementRegex.findAll(xml).forEach { match ->
         val localName = match.groupValues[1].lowercase()
-        val value = match.groupValues[2].sharedDocumentPlainText()
+        val value = match.groupValues[2].sharedXmlText()
         when {
             title == null && localName == "title" -> title = value
             author == null && localName in setOf("creator", "initial-creator") -> author = value
@@ -33,10 +33,10 @@ fun parseSharedDocumentXmlMetadata(xml: String): SharedDocumentMetadata {
 fun parseSharedFb2Metadata(xml: String): SharedDocumentMetadata {
     val bodyStart = Regex("<(?:[\\w.-]+:)?body\\b", RegexOption.IGNORE_CASE).find(xml)?.range?.first
     val header = bodyStart?.let { xml.substring(0, it) } ?: xml
-    val title = SharedFb2TitleRegex.find(header)?.groupValues?.getOrNull(1)?.sharedDocumentPlainText()
+    val title = SharedFb2TitleRegex.find(header)?.groupValues?.getOrNull(1)?.sharedXmlText()
     val authors = SharedFb2AuthorRegex.findAll(header).mapNotNull { authorMatch ->
         SharedFb2AuthorPartRegex.findAll(authorMatch.groupValues[1])
-            .mapNotNull { it.groupValues[1].sharedDocumentPlainText() }
+            .mapNotNull { it.groupValues[1].sharedXmlText() }
             .joinToString(" ")
             .replace(Regex("\\s+"), " ")
             .trim()
@@ -45,8 +45,15 @@ fun parseSharedFb2Metadata(xml: String): SharedDocumentMetadata {
     return SharedDocumentMetadata(title = title, author = authors.joinToString(", ").takeIf(String::isNotBlank))
 }
 
-private fun String.sharedDocumentPlainText(): String? =
-    replace(Regex("<[^>]+>"), " ")
+/**
+ * Plain text of one XML element body: CDATA markers and tags stripped, the
+ * standard entities decoded, whitespace collapsed. Shared by every metadata
+ * parser (office, FB2, ComicInfo) so they cannot drift apart.
+ */
+internal fun String.sharedXmlText(): String? =
+    replace("<![CDATA[", "")
+        .replace("]]>", "")
+        .replace(Regex("<[^>]+>"), " ")
         .replace("&amp;", "&", ignoreCase = true)
         .replace("&lt;", "<", ignoreCase = true)
         .replace("&gt;", ">", ignoreCase = true)

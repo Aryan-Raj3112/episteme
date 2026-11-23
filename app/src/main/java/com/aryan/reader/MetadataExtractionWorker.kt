@@ -57,7 +57,10 @@ class MetadataExtractionWorker(
             FileType.FB2,
             FileType.ODT,
             FileType.FODT,
-            FileType.DOCX
+            FileType.DOCX,
+            // CBZ only: CBR/CB7/CBT have no named-entry reader yet, and listing
+            // them here would keep every comic permanently pending extraction.
+            FileType.CBZ
         )
         private val CONTENT_THUMBNAIL_TYPES = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID) - FileType.EPUB
     }
@@ -239,6 +242,18 @@ class MetadataExtractionWorker(
                             }
                         }
                         FileType.PDF -> parsePdfTextMetadata(uri)
+                        FileType.CBZ -> {
+                            if (needsTextMetadata) {
+                                EmbeddedEbookMetadataExtractor.extract(
+                                    type = FileType.CBZ,
+                                    displayName = item.displayName,
+                                    openStream = { openInputStream(uri) },
+                                    extractCover = false
+                                ).toTextMetadata()
+                            } else {
+                                TextMetadata()
+                            }
+                        }
                         FileType.ODT -> parseZipTextMetadata(uri, requireNotNull(sharedDocumentMetadataArchivePath(item.type)))
                         FileType.FODT -> parseFlatXmlTextMetadata(uri)
                         FileType.DOCX,

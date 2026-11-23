@@ -5,6 +5,8 @@ package com.aryan.reader.shared.ios
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.compareNatural
 import com.aryan.reader.shared.FileType
+import com.aryan.reader.shared.isComicInfoArchivePath
+import com.aryan.reader.shared.parseSharedComicInfoXml
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.docparse.SharedDocxDocumentParser
 import com.aryan.reader.shared.docparse.SharedFb2DocumentParser
@@ -150,6 +152,7 @@ internal data class IosBookPresentation(
     val coverBytes: ByteArray? = null,
     val seriesName: String? = null,
     val seriesIndex: Double? = null,
+    val description: String? = null,
 )
 
 internal data class IosEpubMetadataWriteResult(
@@ -263,11 +266,25 @@ internal fun extractIosBookPresentation(book: BookItem): IosBookPresentation = r
         FileType.FB2 -> extractIosFb2Presentation(book)
         FileType.CBZ -> {
             val archive = openIosZipArchive(book.path) ?: return@runCatching IosBookPresentation()
+            // Android parity: the ComicInfo sidecar supplies text metadata while
+            // the cover stays the first naturally-sorted page image, so a
+            // missing/short sidecar still yields a covered book.
+            val comicInfo = archive.entryPaths
+                .firstOrNull(::isComicInfoArchivePath)
+                ?.let(archive::readText)
+                ?.let(::parseSharedComicInfoXml)
             val firstImage = archive.entryPaths
                 .filter { it.substringAfterLast('.', "").lowercase() in setOf("jpg", "jpeg", "png", "gif", "webp") }
                 .sortedWith(::compareNatural)
                 .firstOrNull()
-            IosBookPresentation(coverBytes = firstImage?.let(archive::readBytes))
+            IosBookPresentation(
+                title = comicInfo?.title,
+                author = comicInfo?.author,
+                description = comicInfo?.description,
+                seriesName = comicInfo?.seriesName,
+                seriesIndex = comicInfo?.seriesIndex,
+                coverBytes = firstImage?.let(archive::readBytes),
+            )
         }
         else -> IosBookPresentation()
     }

@@ -296,6 +296,42 @@ class DesktopFolderMetadataExtractorTest {
     }
 
     @Test
+    fun `comic archive reads comicinfo text metadata`() = withCoverCacheDir { tempDir ->
+        val cbz = File(tempDir, "batman-05.cbz")
+        ZipOutputStream(cbz.outputStream()).use { zip ->
+            zip.putText(
+                "ComicInfo.xml",
+                """
+                    <ComicInfo>
+                      <Title>Court of Owls</Title>
+                      <Series>Batman</Series>
+                      <Number>5</Number>
+                      <Summary>Owls everywhere.</Summary>
+                      <Writer>Scott Snyder</Writer>
+                    </ComicInfo>
+                """.trimIndent()
+            )
+            zip.putBytes("001.png", onePixelPngBytes())
+        }
+        val book = bookFor(cbz, FileType.CBZ)
+
+        val result = DesktopFolderMetadataExtractor.enrichImportedBooks(
+            books = listOf(book),
+            importedBookIds = setOf(book.id)
+        )
+
+        val enriched = result.books.single()
+        assertEquals("Court of Owls", enriched.title)
+        assertEquals("Scott Snyder", enriched.author)
+        assertEquals("Batman", enriched.seriesName)
+        assertEquals(5.0, enriched.seriesIndex)
+        assertEquals("Owls everywhere.", enriched.description)
+        assertEquals("Court of Owls", enriched.originalTitle)
+        assertEquals("Scott Snyder", enriched.originalAuthor)
+        assertTrue(enriched.folderTextMetadataParsed)
+    }
+
+    @Test
     fun `opened odt without package thumbnail gets content preview cover`() = withCoverCacheDir { tempDir ->
         val odt = File(tempDir, "opened.odt")
         writeOdt(odt, "Visible ODT content for the thumbnail.")

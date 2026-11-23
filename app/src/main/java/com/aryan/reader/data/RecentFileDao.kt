@@ -170,7 +170,7 @@ interface RecentFileDao {
         WHERE sourceFolderUri IS NOT NULL
         AND isDeleted = 0
         AND (
-            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX', 'CBZ') AND folderTextMetadataParsed = 0)
             OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
         ORDER BY timestamp DESC
@@ -183,7 +183,7 @@ interface RecentFileDao {
         WHERE sourceFolderUri = :sourceFolderUri
         AND isDeleted = 0
         AND (
-            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX', 'CBZ') AND folderTextMetadataParsed = 0)
             OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
         ORDER BY timestamp DESC
@@ -196,7 +196,7 @@ interface RecentFileDao {
         WHERE sourceFolderUri IS NOT NULL
         AND isDeleted = 0
         AND (
-            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX', 'CBZ') AND folderTextMetadataParsed = 0)
             OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
     """)
@@ -207,7 +207,7 @@ interface RecentFileDao {
         WHERE sourceFolderUri = :sourceFolderUri
         AND isDeleted = 0
         AND (
-            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX', 'CBZ') AND folderTextMetadataParsed = 0)
             OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
     """)

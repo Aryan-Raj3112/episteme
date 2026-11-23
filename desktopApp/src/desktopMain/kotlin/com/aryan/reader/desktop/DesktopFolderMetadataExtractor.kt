@@ -3,7 +3,10 @@ package com.aryan.reader.desktop
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedComicInfoMetadata
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.isComicInfoArchivePath
+import com.aryan.reader.shared.parseSharedComicInfoXml
 import com.aryan.reader.shared.reader.SharedBookLoadSemanticMode
 import com.aryan.reader.shared.reader.SharedJvmBookLoader
 import com.aryan.reader.shared.reader.parseMobileOpfMetaElements
@@ -12,6 +15,7 @@ import java.awt.Color
 import java.awt.Font
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -42,6 +46,7 @@ data class DesktopFolderMetadataExtractionStats(
 object DesktopFolderMetadataExtractor {
     private const val MAX_TEXT_SOURCE_CHARS = 256 * 1024
     private const val MAX_PREVIEW_TEXT_CHARS = 2_400
+    private const val MAX_COMIC_INFO_BYTES = 512 * 1024
 
     private val OPF_ITEM_TAG_REGEX = Regex("""<(?:[\w.-]+:)?item\s+[^>]*>""", RegexOption.IGNORE_CASE)
 
@@ -53,7 +58,10 @@ object DesktopFolderMetadataExtractor {
         FileType.FB2,
         FileType.DOCX,
         FileType.ODT,
-        FileType.FODT
+        FileType.FODT,
+        // CBZ only: CBR/CB7/CBT need a libarchive-backed named-entry read that
+        // this extractor does not have yet.
+        FileType.CBZ
     )
     private val generatedCoverTypes = SharedFileCapabilities.readableTypesFor(ReaderPlatform.DESKTOP)
     private val replaceableContentPreviewTypes = setOf(
@@ -185,6 +193,15 @@ object DesktopFolderMetadataExtractor {
                         textMetadataParsed = true
                     }
             }
+            FileType.CBZ -> {
+                val metadata = parseComicInfoMetadata(file)
+                extractedTitle = sanitizeTitle(metadata.title)
+                extractedAuthor = sanitizeAuthor(metadata.author)
+                extractedDescription = sanitizeDescription(metadata.description)
+                extractedSeriesName = sanitizeDescription(metadata.seriesName)
+                extractedSeriesIndex = metadata.seriesIndex?.takeIf { it > 0.0 }
+                textMetadataParsed = true
+            }
             else -> Unit
         }
 
@@ -237,6 +254,37 @@ object DesktopFolderMetadataExtractor {
             coverImagePath = coverPath,
             folderTextMetadataParsed = textMetadataParsed
         )
+    }
+
+    private fun parseComicInfoMetadata(file: File): SharedComicInfoMetadata = runCatching {
+        ZipFile(file).use { zip ->
+            val entry = zip.entries().asSequence()
+                .firstOrNull { !it.isDirectory && isComicInfoArchivePath(it.name) }
+            entry
+                ?.takeIf { it.size <= MAX_COMIC_INFO_BYTES }
+                ?.let { zip.readComicInfoText(it.name) }
+                ?.let(::parseSharedComicInfoXml)
+        }
+    }.getOrNull() ?: SharedComicInfoMetadata()
+
+    /**
+     * Bounded read: a ComicInfo entry declares its size, but a hostile or
+     * corrupt archive can lie about it, so stop as soon as the cap is crossed
+     * exactly like Android's `readBytesLimited`.
+     */
+    private fun ZipFile.readComicInfoText(path: String): String? {
+        val entry = getEntry(path) ?: return null
+        return getInputStream(entry).use { stream ->
+            val buffer = ByteArray(64 * 1024)
+            val collected = ByteArrayOutputStream()
+            while (true) {
+                val read = stream.read(buffer)
+                if (read < 0) break
+                collected.write(buffer, 0, read)
+                if (collected.size() > MAX_COMIC_INFO_BYTES) return null
+            }
+            collected.toString(Charsets.UTF_8.name())
+        }
     }
 
     private fun parseEpubMetadata(file: File): ExtractedBookMetadata {

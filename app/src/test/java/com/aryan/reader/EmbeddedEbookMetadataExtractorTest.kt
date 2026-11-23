@@ -2,7 +2,9 @@ package com.aryan.reader
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -251,6 +253,49 @@ class EmbeddedEbookMetadataExtractorTest {
 
         assertEquals("The Broken Earth", metadata.seriesName)
         assertEquals(2.0, metadata.seriesIndex)
+    }
+
+    @Test
+    fun `cbz reads comicinfo text metadata and leaves the cover to the thumbnail path`() {
+        val cbzBytes = zipBytes(
+            "ComicInfo.xml" to """
+                <ComicInfo>
+                    <Title>Court of Owls</Title>
+                    <Series>Batman</Series>
+                    <Number>5</Number>
+                    <Summary>Owls everywhere.</Summary>
+                    <Writer>Scott Snyder</Writer>
+                </ComicInfo>
+            """.trimIndent().toByteArray(Charsets.UTF_8),
+            "001.png" to onePixelPngBytes()
+        )
+
+        val metadata = EmbeddedEbookMetadataExtractor.extract(
+            type = FileType.CBZ,
+            displayName = "batman-05.cbz",
+            openStream = { ByteArrayInputStream(cbzBytes) }
+        )
+
+        assertEquals("Court of Owls", metadata.title)
+        assertEquals("Scott Snyder", metadata.author)
+        assertEquals("Batman", metadata.seriesName)
+        assertEquals(5.0, metadata.seriesIndex)
+        assertEquals("Owls everywhere.", metadata.description)
+        assertNull(metadata.cover)
+    }
+
+    @Test
+    fun `cbz without comicinfo yields no metadata and still reports no embedded cover support`() {
+        val cbzBytes = zipBytes("001.png" to onePixelPngBytes())
+
+        val metadata = EmbeddedEbookMetadataExtractor.extract(
+            type = FileType.CBZ,
+            displayName = "untagged.cbz",
+            openStream = { ByteArrayInputStream(cbzBytes) }
+        )
+
+        assertEquals(EmbeddedEbookMetadata(), metadata)
+        assertFalse(EmbeddedEbookMetadataExtractor.canExtractEmbeddedCover(FileType.CBZ))
     }
 
     private fun zipBytes(vararg entries: Pair<String, ByteArray>): ByteArray {

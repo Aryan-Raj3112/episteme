@@ -6260,6 +6260,7 @@ private fun ReaderIosApp(
                 presentation.title != null ||
                 presentation.author != null ||
                 presentation.seriesName != null ||
+                presentation.description != null ||
                 coverPath != null
             ) {
                 state = state.withUpdatedIosBook(
@@ -6271,6 +6272,12 @@ private fun ReaderIosApp(
                             ?: book.seriesName,
                         seriesIndex = presentation.seriesIndex?.takeIf { book.seriesIndex == null }
                             ?: book.seriesIndex,
+                        // Never clobber a description the user edited: only fill
+                        // a blank one, or one that still equals the extracted
+                        // original.
+                        description = presentation.description?.takeIf {
+                            book.description.isNullOrBlank() || book.description == book.originalDescription
+                        } ?: book.description,
                     ),
                 )
             }
