@@ -23,14 +23,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ToggleButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +44,7 @@ import androidx.compose.runtime.remember
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -249,6 +252,7 @@ fun <T> SharedAndroidUnifiedLibraryHome(
  * Sort is a menu trigger rather than a filter, so it reads as a text button with a disclosure
  * caret instead of a chip that looks like a fifth status filter.
  */
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun SharedHomeSectionHeader(
     title: String?,
@@ -285,10 +289,29 @@ private fun SharedHomeSectionHeader(
             }
         }
         if (!contentSearchActive) {
-            IconButton(onClick = { onListViewChange(!useListView) }) {
+            // A ToggleButton, not an IconButton: the control has two states and an icon button never
+            // said which one you were in. It is deliberately quiet - transparent and borderless until
+            // list view is on - because this row belongs to "Your books", not to the switch.
+            ToggleButton(
+                checked = useListView,
+                onCheckedChange = onListViewChange,
+                // Visual size 40dp inside the system's 48dp touch target: the checked container
+                // otherwise read as a second FAB sitting in the header.
+                modifier = Modifier
+                    .testTag("UnifiedLibraryHomeViewToggle")
+                    .size(40.dp),
+                colors = ToggleButtonDefaults.toggleButtonColors(
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                ),
+                border = null,
+                contentPadding = PaddingValues(SharedSpacing.Sm),
+            ) {
                 Icon(
-                    if (useListView) Icons.AutoMirrored.Filled.LibraryBooks else Icons.Default.FormatListNumbered,
-                    contentDescription = if (useListView) strings.gridView else strings.listView,
+                    // The icon is the mode you are in, which is what the checked state reports too.
+                    if (useListView) SharedLibraryIcons.ListBulleted else SharedLibraryIcons.GridView,
+                    contentDescription = if (useListView) strings.listView else strings.gridView,
+                    modifier = Modifier.size(ToggleButtonDefaults.IconSize),
                 )
             }
         }

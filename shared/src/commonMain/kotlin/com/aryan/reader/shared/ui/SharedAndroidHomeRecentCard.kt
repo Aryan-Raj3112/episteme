@@ -21,13 +21,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -68,7 +71,6 @@ fun SharedAndroidHomeRecentCard(
     fileTypeBadge: @Composable (compact: Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(SharedUiTokens.cardRadius)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     // Press reads as the card sinking into the grid. 0.02 is small enough that neighbouring cells
@@ -77,6 +79,15 @@ fun SharedAndroidHomeRecentCard(
         targetValue = if (pressed) 0.98f else 1f,
         label = "HomeRecentFileCardPress",
     )
+    // The corners tighten while the finger is down, so the press reads as the card becoming a
+    // smaller object rather than only as a scale. Both values are tweened (not sprung) so the
+    // system "remove animations" setting keeps collapsing them to the end state.
+    val pressCorner by animateDpAsState(
+        targetValue = if (pressed) SharedUiTokens.cardRadius - 6.dp else SharedUiTokens.cardRadius,
+        label = "HomeRecentFileCardCorner",
+    )
+    val shape = RoundedCornerShape(pressCorner)
+    val selected = isSelected
     Card(
         modifier = modifier
             .testTag("HomeRecentFileCard_$bookId")
@@ -85,7 +96,6 @@ fun SharedAndroidHomeRecentCard(
                 scaleX = pressScale
                 scaleY = pressScale
             }
-            .then(if (isSelected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, shape) else Modifier)
             .clip(shape)
             .combinedClickable(
                 interactionSource = interactionSource,
@@ -94,7 +104,16 @@ fun SharedAndroidHomeRecentCard(
                 onLongClick = onLongClick,
             ),
         shape = shape,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        colors = CardDefaults.cardColors(
+            // Selection moves the whole surface onto the secondary container (the M3 treatment)
+            // instead of washing the artwork under a primary tint: the cover is the thing being
+            // identified, so it must not change colour when it is picked.
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.secondaryContainer
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            },
+        ),
         // Tonal fill plus a hairline instead of a drop shadow: on a grid of six or more cards the
         // shadows stacked into a grey haze, and M3 separates surfaces by tone.
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
@@ -125,22 +144,43 @@ fun SharedAndroidHomeRecentCard(
                         Modifier.matchParentSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.35f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        if (isDownloading) CircularProgressIndicator(color = Color.White)
-                        else Icon(Icons.Default.Info, unavailableDescription, Modifier.size(48.dp), tint = Color.White)
+                        if (isDownloading) {
+                            // The morphing shape changes silhouette, so it needs a disc behind it
+                            // to stay legible over an arbitrary cover.
+                            Box(
+                                Modifier
+                                    .size(56.dp)
+                                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f), CircleShape),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                SharedLoadingIndicator(Modifier.size(36.dp), color = Color.White)
+                            }
+                        } else Icon(Icons.Default.Info, unavailableDescription, Modifier.size(48.dp), tint = Color.White)
                     }
                 }
-                if (isSelected) {
-                    Box(
-                        Modifier.matchParentSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Default.Check,
-                            selectedDescription,
-                            Modifier.size(48.dp).background(MaterialTheme.colorScheme.primary, CircleShape).padding(8.dp),
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                        )
-                    }
+                // A check that grows into the corner opposite the status badges, so selecting a
+                // book never paints over the cover it is identifying.
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = selected,
+                    enter = scaleIn(
+                        animationSpec = tween(SharedMotion.DurationShort4, easing = SharedMotion.EmphasizedDecelerate),
+                        initialScale = 0.6f,
+                    ),
+                    exit = scaleOut(
+                        animationSpec = tween(SharedMotion.DurationShort2, easing = SharedMotion.StandardAccelerate),
+                    ),
+                    modifier = Modifier.align(Alignment.TopEnd),
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        selectedDescription,
+                        Modifier
+                            .padding(if (compact) 5.dp else 8.dp)
+                            .size(26.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape)
+                            .padding(4.dp),
+                        tint = MaterialTheme.colorScheme.onPrimary,
+                    )
                 }
                 Row(
                     Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(badgePadding),
@@ -152,7 +192,10 @@ fun SharedAndroidHomeRecentCard(
                 }
             }
             Column(
-                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(horizontal = 14.dp, vertical = 12.dp),
+                Modifier
+                    .fillMaxWidth()
+                    .background(if (selected) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerLow)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
                 horizontalAlignment = Alignment.Start,
             ) {
                 Text(

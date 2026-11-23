@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -42,6 +43,8 @@ class SharedAndroidUnifiedLibraryHomeStateTest {
         onEmptyAction: (() -> Unit)? = null,
         sectionTitle: String? = null,
         onControls: () -> Unit = {},
+        useListView: Boolean = false,
+        onListViewChange: (Boolean) -> Unit = {},
     ) {
         composeTestRule.setContent {
             MaterialTheme {
@@ -51,13 +54,13 @@ class SharedAndroidUnifiedLibraryHomeStateTest {
                     filter = MobileUnifiedLibraryFilter.ALL,
                     sortLabel = "Recent",
                     advancedFilterCount = 0,
-                    useListView = false,
+                    useListView = useListView,
                     strings = strings,
                     itemKey = { it },
                     onFilterChange = {},
                     onControls = onControls,
                     onAdvancedFilters = {},
-                    onListViewChange = {},
+                    onListViewChange = onListViewChange,
                     continueCard = { _, _ -> },
                     bookCard = { Text(it) },
                     bookListItem = { Text(it) },
@@ -111,6 +114,25 @@ class SharedAndroidUnifiedLibraryHomeStateTest {
 
         composeTestRule.onNodeWithTag("UnifiedLibraryHomeEmpty").assertExists()
         composeTestRule.onNodeWithText("No books in this view").assertIsDisplayed()
+    }
+
+    /**
+     * The grid/list switch used to be an `IconButton`: it drew the icon of the mode you were *not*
+     * in and gave assistive tech no state at all. It is a `ToggleButton` now, so the header reports
+     * which mode is active and switching it reports the new value.
+     */
+    @Test
+    fun theViewControlIsAToggleRatherThanAnUnlabelledIcon() {
+        var requested: Boolean? = null
+        setHome(useListView = true, onListViewChange = { requested = it })
+
+        val toggle = composeTestRule.onNodeWithTag("UnifiedLibraryHomeViewToggle")
+        toggle.assertIsOn()
+        toggle.performClick()
+
+        composeTestRule.runOnIdle {
+            assertThat(requested).isFalse()
+        }
     }
 
     @Test
