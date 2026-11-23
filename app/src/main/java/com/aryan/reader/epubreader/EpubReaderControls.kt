@@ -334,6 +334,8 @@ fun EpubReaderTopBar(
     onDeleteReflow: (() -> Unit)? = null,
     onExportAnnotations: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
+    /** The reflow reader's tab strip, painted as a second band of this same chrome. */
+    tabStrip: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // The popup's own state: Android has always owned it inside the bar (there is no screen-level
@@ -466,6 +468,7 @@ fun EpubReaderTopBar(
                         onCloseSearch = onCloseSearch
                     )
                 },
+                tabStrip = tabStrip,
             )
         }
     }

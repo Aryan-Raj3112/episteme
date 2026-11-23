@@ -1356,7 +1356,7 @@
     <string name="settings_hub_support_title">Support the project</string>
     <string name="settings_hub_sync_account_summary">Cloud sync, folder backup, and account management</string>
     <string name="settings_hub_sync_account_title">Sync &amp; Account</string>
-    <string name="settings_hub_tabs_summary">Keep multiple PDFs open instead of replacing the reader</string>
+    <string name="settings_hub_tabs_summary">Keep multiple books open in tabs instead of replacing the reader</string>
     <string name="settings_hub_tabs_title">Reader tabs</string>
     <string name="settings_hub_test_panel_summary">Run the local panel-detection diagnostic</string>
     <string name="settings_hub_test_panel_title">Test panel detection</string>
@@ -1637,6 +1637,8 @@
     <string name="title_add_pdf_to_tab">Add PDF to Tab</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="msg_no_other_pdfs_found">No other PDFs found in your library.</string>
+    <string name="title_add_book_to_tab">Add Book to Tab</string>
+    <string name="msg_no_other_books_found">No other books found in your library.</string>
     <!-- PDF = file format name — do not translate. -->
     <string name="msg_pdf_empty_or_error">PDF is empty or could not be displayed.</string>
     <!-- PDF page-management result. %1$d = the page index (1-indexed) where the blank page was inserted. Example: "Page added at 5". -->

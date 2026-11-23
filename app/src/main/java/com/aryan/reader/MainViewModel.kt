@@ -165,6 +165,12 @@ import com.aryan.reader.shared.MobileExternalFileCloseAction
 import com.aryan.reader.shared.mobileExternalFileCloseAction
 import com.aryan.reader.shared.MobileReaderSessionRestoreAction
 import com.aryan.reader.shared.MAX_SYNCED_FOLDER_COUNT
+import com.aryan.reader.shared.AppTabGroup
+import com.aryan.reader.shared.MAX_OPEN_TABS_PER_KIND
+import com.aryan.reader.shared.ReaderTabKind
+import com.aryan.reader.shared.canOpenMobileTab
+import com.aryan.reader.shared.isDerivedReflowBookId
+import com.aryan.reader.shared.readerTabKind
 import com.aryan.reader.shared.SyncedFolderAddDecision
 import com.aryan.reader.shared.AppShelfAction
 import com.aryan.reader.shared.AppReaderSessionAction
@@ -781,13 +787,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             ),
             tabState = AppTabState(
                 isEnabled = prefs.getBoolean(KEY_TABS_ENABLED, true),
-                openBookIds = prefs.getString(KEY_OPEN_TAB_IDS, null)?.let {
-                    try {
-                        val arr = JSONArray(it)
-                        List(arr.length()) { i -> arr.getString(i) }
-                    } catch(_: Exception) { emptyList() }
-                } ?: emptyList(),
-                activeBookId = prefs.getString(KEY_ACTIVE_TAB, null),
+                fixedLayout = AppTabGroup(
+                    openBookIds = readPersistedTabIds(KEY_OPEN_TAB_IDS),
+                    activeBookId = prefs.getString(KEY_ACTIVE_TAB, null),
+                ),
+                text = AppTabGroup(
+                    openBookIds = readPersistedTabIds(KEY_OPEN_TEXT_TAB_IDS),
+                    activeBookId = prefs.getString(KEY_ACTIVE_TEXT_TAB, null),
+                ),
             ),
             externalFileBehavior = prefs.getString(KEY_EXTERNAL_FILE_BEHAVIOR, "ASK") ?: "ASK",
             startupBehavior = MobileStartupBehavior.fromPersisted(
@@ -965,15 +972,23 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setTabsEnabled(enabled: Boolean) {
         prefs.edit { putBoolean(KEY_TABS_ENABLED, enabled) }
-        _internalState.update {
-            setTabsEnabled(
-                current = it,
-                enabled = enabled
-            )
-        }
-        if (!enabled) {
-            persistTabState(_internalState.value.openTabIds, _internalState.value.activeTabBookId)
-        }
+        applyTabState(setTabsEnabled(current = _internalState.value, enabled = enabled).tabState)
+    }
+
+    /**
+     * The tab set a book belongs to, resolved from the library row. Callers that only know a book id
+     * (Home rows, the library strip, a tab strip close button) do not need to know which reader owns it.
+     */
+    private fun resolveTabKind(state: ReaderScreenState, bookId: String): ReaderTabKind? {
+        val fromLibrary = state.rawLibraryFiles.firstOrNull { it.bookId == bookId }?.type?.readerTabKind()
+        if (fromLibrary != null) return fromLibrary
+        return ReaderTabKind.entries.firstOrNull { bookId in state.tabState.group(it).openBookIds }
+    }
+
+    /** Persists both tab sets and publishes them; the only writer of tab state. */
+    private fun applyTabState(state: AppTabState) {
+        persistTabState(state)
+        _internalState.update { it.copy(tabState = state) }
     }
 
     fun switchTab(bookId: String) {
@@ -982,71 +997,99 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             Timber.tag("PdfTabSync").e("ViewModel: switchTab FAILED - BookId $bookId not found in library")
             return
         }
+        val kind = item.type.readerTabKind() ?: return
 
         val projectedState = uiState.value
         val availableBookIds = projectedState.rawLibraryFiles.mapTo(mutableSetOf()) { it.bookId }
         val currentState = reconcileTabState(_internalState.value, availableBookIds)
-        if (bookId !in currentState.openTabIds) {
-            if (currentState.openTabIds.size >= MAX_OPEN_PDF_TABS) {
-                viewModelScope.launch(Dispatchers.Main) {
-                    showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
-                }
-                return
+        if (!canOpenMobileTab(currentState.tabState.openBookIdsFor(kind), bookId)) {
+            viewModelScope.launch(Dispatchers.Main) {
+                showBanner("Maximum of $MAX_OPEN_TABS_PER_KIND tabs allowed. Please close a tab first.", isError = true)
             }
+            return
         }
         val tabState = openBookTab(
             current = currentState,
             availableBookIds = availableBookIds,
+            kind = kind,
             bookId = bookId
         )
 
-        persistTabState(tabState.openTabIds, tabState.activeTabBookId)
+        persistTabState(tabState.tabState)
 
         val uri = item.getUri()
-        Timber.tag("PdfTabSync").d("ViewModel: ActiveTab updated to $bookId. URI found: ${uri != null}")
+        Timber.tag("PdfTabSync").d("ViewModel: ActiveTab updated to $bookId ($kind). URI found: ${uri != null}")
 
-        uri?.let {
-            persistReaderSession(bookId, item.type)
-            Timber.tag(PDF_RENAME_TRACE_TAG).i(
-                "viewModel.switchTab bookId=$bookId type=${item.type} uri=$it " +
-                    "displayName=${item.displayName} title=${item.title} customName=${item.customName} " +
-                    "usePdfFileName=${_internalState.value.usePdfFileNameAsDisplayName}"
+        if (uri == null) {
+            applyTabState(tabState.tabState)
+            return
+        }
+
+        persistReaderSession(bookId, item.type)
+        Timber.tag(PDF_RENAME_TRACE_TAG).i(
+            "viewModel.switchTab bookId=$bookId type=${item.type} kind=$kind uri=$uri " +
+                "displayName=${item.displayName} title=${item.title} customName=${item.customName} " +
+                "usePdfFileName=${_internalState.value.usePdfFileNameAsDisplayName}"
+        )
+
+        when (kind) {
+            ReaderTabKind.FIXED_LAYOUT -> switchFixedLayoutTab(uri, bookId, item, tabState.tabState)
+            // The reflow renderer reloads its document, so its tab switch is a reopen at the
+            // persisted position through the normal open path: extraction is cached per book, so
+            // this is the cheap operation, and the locator/Cfi restore is the library-open one.
+            ReaderTabKind.TEXT -> {
+                _internalState.update { state ->
+                    state.copy(tabState = tabState.tabState, selectedEpubBook = null)
+                }
+                openBook(
+                    uri = uri,
+                    bookId = bookId,
+                    type = item.type,
+                    originalDisplayName = item.displayName,
+                    suppressNavigation = true,
+                )
+            }
+        }
+    }
+
+    /**
+     * A fixed-layout tab switch swaps the page renderer's document in place: the summary row already
+     * carries the saved page, so this deliberately skips the metadata/extraction path a library open
+     * takes and keeps the switch frame-cheap.
+     */
+    private fun switchFixedLayoutTab(
+        uri: Uri,
+        bookId: String,
+        item: RecentFileItem,
+        tabState: AppTabState,
+    ) {
+        _internalState.update { state ->
+            markReaderSessionReady(
+                startReaderSession(state, bookId, item.type),
+                bookId,
+            ).copy(
+                tabState = tabState,
+                selectedPdfUri = uri,
+                initialPageInBook = item.lastPage,
+                initialPageInBookIsExplicit = false,
+                isOpeningFromTtsNotification = false,
+                // Summary-projected items never carry bookmarks/highlights;
+                // the backfill below fills them from the full row.
+                initialBookmarksJson = null,
+                initialHighlightsJson = null,
             )
-            Timber.tag("PdfTabSync").d("ViewModel: Setting new URI directly: $it")
-            _internalState.update { state ->
-                markReaderSessionReady(
-                    startReaderSession(state, bookId, item.type),
-                    bookId,
-                ).copy(
-                    tabState = tabState.tabState,
-                    selectedPdfUri = it,
-                    initialPageInBook = item.lastPage,
-                    initialPageInBookIsExplicit = false,
-                    isOpeningFromTtsNotification = false,
-                    // Summary-projected items never carry bookmarks/highlights;
-                    // the backfill below fills them from the full row.
-                    initialBookmarksJson = null,
-                    initialHighlightsJson = null,
-                )
-            }
-            backfillReaderSidecarSnapshot(bookId, expectedUriString = it.toString())
+        }
+        backfillReaderSidecarSnapshot(bookId, expectedUriString = uri.toString())
 
-            viewModelScope.launch {
-                addFileToRecent(
-                    it,
-                    item.type,
-                    bookId,
-                    customDisplayName = item.displayName,
-                    isRecent = true,
-                    sourceFolderUri = item.sourceFolderUri
-                )
-            }
-        } ?: run {
-            _internalState.update {
-                it.copy(
-                    tabState = tabState.tabState,
-                )
-            }
+        viewModelScope.launch {
+            addFileToRecent(
+                uri,
+                item.type,
+                bookId,
+                customDisplayName = item.displayName,
+                isRecent = true,
+                sourceFolderUri = item.sourceFolderUri
+            )
         }
     }
 
@@ -1093,20 +1136,32 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun persistTabState(openTabIds: List<String>, activeTabBookId: String?) {
+    private fun persistTabState(state: AppTabState) {
         prefs.edit {
-            if (openTabIds.isEmpty()) {
-                remove(KEY_OPEN_TAB_IDS)
-            } else {
-                putString(KEY_OPEN_TAB_IDS, JSONArray(openTabIds).toString())
-            }
-            if (activeTabBookId == null) {
-                remove(KEY_ACTIVE_TAB)
-            } else {
-                putString(KEY_ACTIVE_TAB, activeTabBookId)
-            }
+            putString(KEY_OPEN_TAB_IDS, JSONArray(state.fixedLayout.openBookIds).toString())
+            if (state.fixedLayout.openBookIds.isEmpty()) remove(KEY_OPEN_TAB_IDS)
+            putString(KEY_OPEN_TEXT_TAB_IDS, JSONArray(state.text.openBookIds).toString())
+            if (state.text.openBookIds.isEmpty()) remove(KEY_OPEN_TEXT_TAB_IDS)
+
+            state.fixedLayout.activeBookId
+                ?.let { putString(KEY_ACTIVE_TAB, it) }
+                ?: remove(KEY_ACTIVE_TAB)
+            state.text.activeBookId
+                ?.let { putString(KEY_ACTIVE_TEXT_TAB, it) }
+                ?: remove(KEY_ACTIVE_TEXT_TAB)
         }
     }
+
+    /** Tab ids are one JSON array per reader engine; a malformed array degrades to no tabs. */
+    private fun readPersistedTabIds(key: String): List<String> =
+        prefs.getString(key, null)?.let { raw ->
+            try {
+                val arr = JSONArray(raw)
+                List(arr.length()) { index -> arr.getString(index) }
+            } catch (_: Exception) {
+                emptyList()
+            }
+        } ?: emptyList()
 
     private fun reconcilePdfSplitWorkspace(libraryFiles: List<RecentFileItem>) {
         val snapshot = _internalState.value.pdfSplitWorkspace
@@ -1635,39 +1690,29 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val projectedState = uiState.value
         val availableBookIds = projectedState.rawLibraryFiles.mapTo(mutableSetOf()) { it.bookId }
         val currentState = reconcileTabState(_internalState.value, availableBookIds)
-        val tabState = closeBookTab(
+        val kind = resolveTabKind(currentState, bookId) ?: return
+        // Closing a tab of one reader never disturbs the other: only the closed tab's own set and,
+        // when that set is what is on screen, the reader are touched.
+        val readerKind = currentState.selectedFileType?.readerTabKind()
+        val kindTabs = closeBookTab(
             current = currentState,
             availableBookIds = availableBookIds,
-            bookId = bookId
-        )
+            kind = kind,
+            bookId = bookId,
+        ).tabState.group(kind)
 
-        if (tabState.openTabIds.isEmpty()) {
-            persistTabState(tabState.openTabIds, tabState.activeTabBookId)
-            _internalState.update {
-                it.copy(
-                    tabState = tabState.tabState,
-                )
-            }
-            clearSelectedFile()
+        if (kindTabs.openBookIds.isEmpty()) {
+            applyTabState(currentState.tabState.withGroup(kind, kindTabs))
+            if (readerKind == kind) clearSelectedFile()
+            return
+        }
+
+        if (readerKind == kind && currentState.selectedBookId == bookId) {
+            val nextTabId = kindTabs.activeBookId ?: kindTabs.openBookIds.last()
+            applyTabState(currentState.tabState.withGroup(kind, kindTabs.copy(activeBookId = nextTabId)))
+            switchTab(nextTabId)
         } else {
-            val activeTab = currentState.activeTabBookId
-            if (activeTab == bookId) {
-                val nextTabId = tabState.activeTabBookId ?: tabState.openTabIds.last()
-                persistTabState(tabState.openTabIds, nextTabId)
-                _internalState.update {
-                    it.copy(
-                        tabState = tabState.tabState.copy(activeBookId = nextTabId),
-                    )
-                }
-                switchTab(nextTabId)
-            } else {
-                persistTabState(tabState.openTabIds, tabState.activeTabBookId)
-                _internalState.update {
-                    it.copy(
-                        tabState = tabState.tabState,
-                    )
-                }
-            }
+            applyTabState(currentState.tabState.withGroup(kind, kindTabs))
         }
     }
 
@@ -7964,26 +8009,30 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         val projectedState = uiState.value
         val availableBookIds = projectedState.rawLibraryFiles.mapTo(mutableSetOf()) { it.bookId }
         val currentTabState = reconcileTabState(_internalState.value, availableBookIds)
-        if (currentTabState.isTabsEnabled && type == FileType.PDF) {
-            if (bookId !in currentTabState.openTabIds) {
-                if (currentTabState.openTabIds.size >= MAX_OPEN_PDF_TABS) {
-                    viewModelScope.launch(Dispatchers.Main) {
-                        showBanner("Maximum of 20 tabs allowed. Please close a tab first.", isError = true)
-                    }
-                    return
+        // Every reader opens its own tab set. Reflow views (`<bookId>_reflow`) are derived from a
+        // PDF and reopened from it, so they never own a tab.
+        val tabKind = type.readerTabKind()
+        if (
+            currentTabState.isTabsEnabled &&
+            tabKind != null &&
+            !bookId.isDerivedReflowBookId()
+        ) {
+            if (!canOpenMobileTab(currentTabState.tabState.openBookIdsFor(tabKind), bookId)) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    showBanner(
+                        "Maximum of $MAX_OPEN_TABS_PER_KIND tabs allowed. Please close a tab first.",
+                        isError = true,
+                    )
                 }
+                return
             }
             val tabState = openBookTab(
                 current = currentTabState,
                 availableBookIds = availableBookIds,
+                kind = tabKind,
                 bookId = bookId
             )
-            persistTabState(tabState.openTabIds, tabState.activeTabBookId)
-            _internalState.update {
-                it.copy(
-                    tabState = tabState.tabState,
-                )
-            }
+            applyTabState(tabState.tabState)
         }
 
         if (uri.scheme != "opds-pse") {
@@ -10137,18 +10186,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun closeAllTabs() {
-        Timber.tag("PdfTabSync").i("ViewModel: closeAllTabs called")
-        val tabState = closeAllTabs(
-            current = _internalState.value
-        )
-        persistTabState(tabState.openTabIds, tabState.activeTabBookId)
-        _internalState.update {
-            it.copy(
-                tabState = tabState.tabState,
-            )
-        }
-        clearSelectedFile()
+    fun closeAllTabs(kind: ReaderTabKind = ReaderTabKind.FIXED_LAYOUT) {
+        Timber.tag("PdfTabSync").i("ViewModel: closeAllTabs called for $kind")
+        val current = _internalState.value
+        applyTabState(current.tabState.withGroup(kind, AppTabGroup()))
+        // Closing another reader's tabs must not close the open reader.
+        if (current.selectedFileType?.readerTabKind() == kind) clearSelectedFile()
     }
 
     fun setStrictFileFilter(enabled: Boolean) {
@@ -10467,10 +10510,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         internal const val KEY_LAST_FOLDER_SCAN_TIME = "last_folder_scan_time"
         internal const val KEY_PINNED_HOME = "pinned_home_books"
         internal const val KEY_PINNED_LIBRARY = "pinned_library_books"
-        private const val MAX_OPEN_PDF_TABS = 20
         private const val KEY_TABS_ENABLED = "tabs_enabled"
         private const val KEY_OPEN_TAB_IDS = "open_tab_ids"
         private const val KEY_ACTIVE_TAB = "active_tab_book_id"
+        private const val KEY_OPEN_TEXT_TAB_IDS = "open_text_tab_ids"
+        private const val KEY_ACTIVE_TEXT_TAB = "active_text_tab_book_id"
         private const val KEY_LAST_OPEN_BOOK_ID = "last_open_book_id"
         private const val KEY_LAST_OPEN_FILE_TYPE = "last_open_file_type"
         private const val KEY_EXTERNAL_FILE_BEHAVIOR = "external_file_behavior"

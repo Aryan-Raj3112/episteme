@@ -9,6 +9,7 @@ import com.aryan.reader.shared.AppAction as SharedAppAction
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import com.aryan.reader.shared.search.SharedLibrarySearchDeepLink
 import com.aryan.reader.shared.MobileStartupBehavior
+import com.aryan.reader.shared.ReaderTabKind
 import com.aryan.reader.shared.reconcileAvailableBooks
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.toggleSelection
@@ -109,6 +110,8 @@ data class ReaderScreenState(
     val allRecentFiles: List<RecentFileItem> = emptyList(),
     val rawLibraryFiles: List<RecentFileItem> = emptyList(),
     val openTabs: List<RecentFileItem> = emptyList(),
+    /** Text-reader (EPUB-engine) tabs, kept separate from [openTabs]: each reader only offers its own set. */
+    val textOpenTabs: List<RecentFileItem> = emptyList(),
     val showExternalFileSavePromptFor: String? = null,
     val externalFileBehavior: String = "ASK",
     /** What a cold start opens: the last book (default, historical behaviour) or the library. */
@@ -124,8 +127,10 @@ data class ReaderScreenState(
     val selectedBookId: String? get() = readerSession.bookId
     val selectedFileType: FileType? get() = readerSession.fileType
     val isTabsEnabled: Boolean get() = tabState.isEnabled
-    val openTabIds: List<String> get() = tabState.openBookIds
-    val activeTabBookId: String? get() = tabState.activeBookId
+    val openTabIds: List<String> get() = tabState.fixedLayout.openBookIds
+    val activeTabBookId: String? get() = tabState.fixedLayout.activeBookId
+    val textOpenTabIds: List<String> get() = tabState.text.openBookIds
+    val activeTextTabBookId: String? get() = tabState.text.activeBookId
     val viewingShelfId: String? get() = shelfState.viewingShelfId
     val isAddingBooksToShelf: Boolean get() = shelfState.isAddingBooks
     val showCreateShelfDialog: Boolean get() = shelfState.showCreateDialog
@@ -149,53 +154,53 @@ data class ReaderScreenState(
     val customAppThemes: List<CustomAppTheme> get() = appAppearance.customThemes
 }
 
-internal fun setTabsEnabled(current: ReaderScreenState, enabled: Boolean): ReaderScreenState {
-    val reduced = current.tabState.reduce(SharedAppAction.TabsEnabledChanged(enabled))
-    if (enabled) return current.copy(tabState = reduced)
-
-    val activeTab = current.activeTabBookId
-    return current.copy(
-        tabState = reduced.copy(
-            openBookIds = if (activeTab == null) emptyList() else listOf(activeTab),
-            activeBookId = activeTab,
-        ),
-    )
-}
+internal fun setTabsEnabled(current: ReaderScreenState, enabled: Boolean): ReaderScreenState =
+    current.copy(tabState = current.tabState.reduce(SharedAppAction.TabsEnabledChanged(enabled)))
 
 internal fun openBookTab(
     current: ReaderScreenState,
     availableBookIds: Set<String>,
+    kind: ReaderTabKind,
     bookId: String,
 ): ReaderScreenState {
     val reconciled = reconcileTabState(current, availableBookIds)
-    return current.copy(tabState = reconciled.tabState.reduce(SharedAppAction.BookTabOpened(bookId)))
+    return current.copy(tabState = reconciled.tabState.reduce(SharedAppAction.BookTabOpened(kind, bookId)))
 }
 
 internal fun closeBookTab(
     current: ReaderScreenState,
     availableBookIds: Set<String>,
+    kind: ReaderTabKind,
     bookId: String,
 ): ReaderScreenState {
     val reconciled = reconcileTabState(current, availableBookIds)
-    return current.copy(tabState = reconciled.tabState.reduce(SharedAppAction.BookTabClosed(bookId)))
+    return current.copy(tabState = reconciled.tabState.reduce(SharedAppAction.BookTabClosed(kind, bookId)))
 }
 
 internal fun closeAllTabs(current: ReaderScreenState): ReaderScreenState =
-    current.copy(tabState = current.tabState.reduce(SharedAppAction.AllTabsClosed))
+    current.copy(
+        tabState = ReaderTabKind.entries.fold(current.tabState) { tabs, kind ->
+            tabs.reduce(SharedAppAction.BookTabsClosed(kind))
+        },
+    )
+
+/**
+ * The tab set [kind] maintains, which is not necessarily the one the app is showing: the PDF set
+ * keeps its own active tab while the text reader is on screen, so both readers resume where they
+ * were left.
+ */
+internal fun AppTabState.openBookIdsFor(kind: ReaderTabKind): List<String> = group(kind).openBookIds
+
+internal fun AppTabState.activeBookIdFor(kind: ReaderTabKind): String? = group(kind).activeBookId
 
 internal fun reconcileTabState(
     current: ReaderScreenState,
     availableBookIds: Set<String>,
 ): ReaderScreenState {
     val reconciled = current.tabState.reconcileAvailableBooks(availableBookIds)
-    return if (
-        current.openTabIds == reconciled.openBookIds &&
-        current.activeTabBookId == reconciled.activeBookId
-    ) {
-        current
-    } else {
-        current.copy(tabState = reconciled)
-    }
+    // Both sets are reconciled in one pass; comparing the whole state keeps this allocation-free
+    // when nothing changed, which is the common case before every tab action.
+    return if (reconciled == current.tabState) current else current.copy(tabState = reconciled)
 }
 
 internal fun reduceLibraryAction(

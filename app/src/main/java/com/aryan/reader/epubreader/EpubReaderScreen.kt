@@ -148,6 +148,10 @@ import com.aryan.reader.BookWordReplacementsSheet
 import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
+import com.aryan.reader.cardTitle
+import com.aryan.reader.shared.ReaderTabKind
+import com.aryan.reader.shared.isDerivedReflowBookId
+import com.aryan.reader.shared.readerTabKind
 import com.aryan.reader.ReaderBrightnessEffect
 import com.aryan.reader.ReaderFileInfoDialogs
 import com.aryan.reader.ReaderBrightnessSheet
@@ -863,6 +867,9 @@ fun EpubReaderHost(
     }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    // A reflowed PDF is a reading mode of a fixed-layout document, not a book of its own: neither
+    // the drawer nor the tab strip may offer or own a text tab while one is open.
+    val reflowSession = uiState.selectedBookId?.isDerivedReflowBookId() == true
     val showBarsState = remember { mutableStateOf(false) }
     var showBars by showBarsState
     val chapters = remember(epubBook.chapters) { epubBook.chapters }
@@ -1098,6 +1105,8 @@ fun EpubReaderHost(
 
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
+    var showNewTabSheet by remember { mutableStateOf(false) }
+    val newTabSheetState = rememberModalBottomSheetState()
 
     LaunchedEffect(format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, format.currentSpreadGapDp, isFormatLocal) {
         if (isFormatLocal) {
@@ -3958,6 +3967,20 @@ fun EpubReaderHost(
                 onOpenPaletteManager = { showPaletteManager = true },
                 onHighlightColorChange = onHighlightColorChange,
                 onExportAnnotations = { showAnnotationExportDialog = true },
+                textTabs = if (uiState.isTabsEnabled && !reflowSession) uiState.textOpenTabs else emptyList(),
+                activeTextTabBookId = uiState.activeTextTabBookId,
+                useFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                onTextTabSelected = { tabBookId ->
+                    if (tabBookId != uiState.selectedBookId) {
+                        // Same rule as the strip: the live WebView position is the only record of
+                        // where this tab was left, so flush before reopening the target.
+                        flushInMemoryReadingPosition("tab_switch")
+                        viewModel.switchTab(tabBookId)
+                    }
+                    scope.launch { drawerState.close() }
+                },
+                onTextTabClosed = { tabBookId -> viewModel.closeTab(tabBookId) },
+                onNewTextTab = { showNewTabSheet = true },
                 onNavigateToImage = { image ->
                     scope.launch {
                         drawerState.close()
@@ -5623,6 +5646,41 @@ fun EpubReaderHost(
 
                 EpubReaderNavBarScrims(MaterialTheme.colorScheme.surface)
 
+                // Only the reflow reader's own tab set, and never for a reflow view (see reflowSession).
+                val textTabStrip: (@Composable () -> Unit)? = if (
+                    uiState.isTabsEnabled && uiState.textOpenTabs.isNotEmpty() && !reflowSession
+                ) {
+                    {
+                        com.aryan.reader.shared.ui.SharedReaderTabStrip(
+                            tabs = remember(uiState.textOpenTabs, uiState.usePdfFileNameAsDisplayName) {
+                                uiState.textOpenTabs.map { tab ->
+                                    com.aryan.reader.shared.ui.SharedReaderTab(
+                                        bookId = tab.bookId,
+                                        title = tab.cardTitle(uiState.usePdfFileNameAsDisplayName),
+                                    )
+                                }
+                            },
+                            activeBookId = uiState.activeTextTabBookId,
+                            onSelect = { tabBookId ->
+                                if (tabBookId != uiState.selectedBookId) {
+                                    // Flush first: the WebView's live position is the only record of where
+                                    // this tab was left, and reopening resolves it from the stored row.
+                                    flushInMemoryReadingPosition("tab_switch")
+                                    viewModel.switchTab(tabBookId)
+                                }
+                            },
+                            onClose = { tabBookId -> viewModel.closeTab(tabBookId) },
+                            onNewTab = { showNewTabSheet = true },
+                            // The bar already paints the chrome surface; a second fill would stack.
+                            onSurface = true,
+                            newTabContentDescription = stringResource(R.string.content_desc_new_tab),
+                            closeTabContentDescription = stringResource(R.string.close_tab),
+                        )
+                    }
+                } else {
+                    null
+                }
+
                 // Animated Top Bar
                 EpubReaderTopBar(
                     isVisible = showBars,
@@ -5911,6 +5969,7 @@ fun EpubReaderHost(
                     onDeleteReflow = onDeleteReflow,
                     onExportAnnotations = { showAnnotationExportDialog = true },
                     readerMotionPolicy = motionPolicy,
+                    tabStrip = textTabStrip,
                 )
 
                 val autoScrollPadding by animateDpAsState(
@@ -6682,6 +6741,46 @@ fun EpubReaderHost(
                 },
                 onDismiss = { prefs.showScreenOrientationSheet = false }
             )
+        }
+
+        if (showNewTabSheet) {
+            val openIds = remember(uiState.textOpenTabIds) { uiState.textOpenTabIds.toSet() }
+            val candidates = remember(uiState.rawLibraryFiles, openIds, uiState.usePdfFileNameAsDisplayName) {
+                uiState.rawLibraryFiles
+                    .filter { file ->
+                        file.type.readerTabKind() == ReaderTabKind.TEXT &&
+                            file.bookId !in openIds &&
+                            !file.bookId.isDerivedReflowBookId()
+                    }
+                    .sortedByDescending { it.timestamp }
+                    .map { file ->
+                        com.aryan.reader.shared.ui.SharedReaderNewTabCandidate(
+                            bookId = file.bookId,
+                            title = file.cardTitle(uiState.usePdfFileNameAsDisplayName),
+                            subtitle = file.author,
+                        )
+                    }
+            }
+            ModalBottomSheet(
+                onDismissRequest = { showNewTabSheet = false },
+                sheetState = newTabSheetState,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentWindowInsets = { WindowInsets.navigationBars },
+            ) {
+                com.aryan.reader.shared.ui.SharedReaderNewTabSheetContent(
+                    title = stringResource(R.string.title_add_book_to_tab),
+                    emptyMessage = stringResource(R.string.msg_no_other_books_found),
+                    candidates = candidates,
+                    onPick = { tabBookId ->
+                        scope.launch {
+                            newTabSheetState.hide()
+                            showNewTabSheet = false
+                            flushInMemoryReadingPosition("new_tab")
+                            viewModel.switchTab(tabBookId)
+                        }
+                    },
+                )
+            }
         }
 
         if (showFontSelectionSheet) {

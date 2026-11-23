@@ -38,6 +38,7 @@ internal fun ReaderScreenState.toSharedLibraryFeatureState(
         libraryBooks = allRecentFiles.map { it.toFeatureBook() },
         rawBooks = rawBooks.map { it.toFeatureBook() },
         openTabs = openTabs.map { it.toFeatureBook() },
+        textOpenTabs = textOpenTabs.map { it.toFeatureBook() },
     )
 }
 
@@ -97,6 +98,7 @@ internal fun LibraryFeatureState.applyToAndroidLibraryState(
         contextualActionItems = selectedBookIds.mapNotNullTo(mutableSetOf(), ::bookById),
         shelves = shelves.map { shelf -> shelf.toAndroidShelf { it.toAndroidBook() } },
         openTabs = openTabs.map { it.toAndroidBook() },
+        textOpenTabs = textOpenTabs.map { it.toAndroidBook() },
         tabState = tabs,
         pinState = AppPinState(pinnedHomeBookIds, pinnedLibraryBookIds),
         booksAvailableForAdding = booksAvailableForAdding.map { it.toAndroidBook() },

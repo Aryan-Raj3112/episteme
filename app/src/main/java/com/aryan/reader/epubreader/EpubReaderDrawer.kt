@@ -34,21 +34,30 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ScrollableTabRow
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -57,17 +66,25 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.annotation.StringRes
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastSumBy
 import com.aryan.reader.R
 import com.aryan.reader.RenderMode
+import com.aryan.reader.cardTitle
+import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.shared.ReaderMotionPolicy
 import com.aryan.reader.epub.EpubChapter
 import com.aryan.reader.epub.EpubTocEntry
 import kotlinx.coroutines.launch
 import com.aryan.reader.shared.ui.toBookmarkRow
+import com.aryan.reader.shared.epub.EpubDrawerCapabilities
+import com.aryan.reader.shared.epub.EpubDrawerSection
+import com.aryan.reader.shared.epub.epubDrawerSections
 import com.aryan.reader.shared.ui.SharedDrawerScrollbar
+import com.aryan.reader.shared.ui.SharedDrawerTabRow
+import com.aryan.reader.shared.ui.SharedDrawerTabsHeader
 import com.aryan.reader.shared.ui.SharedMobileEpubToc
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
@@ -98,60 +115,54 @@ fun EpubReaderDrawerSheet(
     onHighlightColorChange: (UserHighlight, Int) -> Unit,
     onExportAnnotations: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
+    textTabs: List<RecentFileItem> = emptyList(),
+    activeTextTabBookId: String? = null,
+    useFileNameAsDisplayName: Boolean = false,
+    onTextTabSelected: (String) -> Unit = {},
+    onTextTabClosed: (String) -> Unit = {},
+    onNewTextTab: () -> Unit = {},
 ) {
+    val drawerSections = remember(textTabs.isNotEmpty()) {
+        epubDrawerSections(
+            EpubDrawerCapabilities(
+                tabsEnabled = textTabs.isNotEmpty(),
+                hasOpenTabs = textTabs.isNotEmpty(),
+            )
+        )
+    }
     ModalDrawerSheet(
         modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars)
     ) {
-        val drawerPagerState = rememberPagerState(pageCount = { 4 })
+        val drawerPagerState = rememberPagerState(pageCount = { drawerSections.size })
         val drawerScope = rememberCoroutineScope()
 
         Column(modifier = Modifier.fillMaxSize()) {
 
+            LaunchedEffect(drawerSections.size) {
+                if (drawerPagerState.currentPage >= drawerSections.size) {
+                    drawerPagerState.scrollToPage(drawerSections.lastIndex.coerceAtLeast(0))
+                }
+            }
+
+            val selectedSectionIndex = drawerPagerState.currentPage.coerceIn(0, drawerSections.lastIndex)
+
             ScrollableTabRow(
-                selectedTabIndex = drawerPagerState.currentPage,
+                selectedTabIndex = selectedSectionIndex,
                 edgePadding = 0.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Tab(
-                    selected = drawerPagerState.currentPage == 0,
-                    onClick = {
-                        drawerScope.launch {
-                            if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(0)
-                            else drawerPagerState.scrollToPage(0)
-                        }
-                    },
-                    text = { Text(stringResource(R.string.tab_chapters)) }
-                )
-                Tab(
-                    selected = drawerPagerState.currentPage == 1,
-                    onClick = {
-                        drawerScope.launch {
-                            if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(1)
-                            else drawerPagerState.scrollToPage(1)
-                        }
-                    },
-                    text = { Text(stringResource(R.string.tab_bookmarks)) }
-                )
-                Tab(
-                    selected = drawerPagerState.currentPage == 2,
-                    onClick = {
-                        drawerScope.launch {
-                            if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(2)
-                            else drawerPagerState.scrollToPage(2)
-                        }
-                    },
-                    text = { Text(stringResource(R.string.tab_annotations)) }
-                )
-                Tab(
-                    selected = drawerPagerState.currentPage == 3,
-                    onClick = {
-                        drawerScope.launch {
-                            if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(3)
-                            else drawerPagerState.scrollToPage(3)
-                        }
-                    },
-                    text = { Text(stringResource(R.string.tab_images)) }
-                )
+                drawerSections.forEachIndexed { index, section ->
+                    Tab(
+                        selected = selectedSectionIndex == index,
+                        onClick = {
+                            drawerScope.launch {
+                                if (readerMotionPolicy.animationsEnabled) drawerPagerState.animateScrollToPage(index)
+                                else drawerPagerState.scrollToPage(index)
+                            }
+                        },
+                        text = { Text(stringResource(section.resourceId())) }
+                    )
+                }
             }
 
             HorizontalPager(
@@ -160,8 +171,16 @@ fun EpubReaderDrawerSheet(
                     .fillMaxWidth()
                     .weight(1f)
             ) { page ->
-                when (page) {
-                    0 -> ChaptersList(
+                when (drawerSections[page]) {
+                    EpubDrawerSection.TABS -> EpubTabsDrawerPage(
+                        tabs = textTabs,
+                        activeTabBookId = activeTextTabBookId,
+                        useFileNameAsDisplayName = useFileNameAsDisplayName,
+                        onTabSelected = onTextTabSelected,
+                        onTabClosed = onTextTabClosed,
+                        onNewTab = onNewTextTab,
+                    )
+                    EpubDrawerSection.CHAPTERS -> ChaptersList(
                         chapters = chapters,
                         tocEntries = tableOfContents,
                         currentChapterIndex = currentChapterIndex,
@@ -171,13 +190,13 @@ fun EpubReaderDrawerSheet(
                         onNavigateToChapter = onNavigateToChapter,
                         activeFragmentId = activeFragmentId
                     )
-                    1 -> BookmarksList(
+                    EpubDrawerSection.BOOKMARKS -> BookmarksList(
                         bookmarks = bookmarks,
                         onNavigateToBookmark = onNavigateToBookmark,
                         onRenameBookmark = onRenameBookmark,
                         onDeleteBookmark = onDeleteBookmark
                     )
-                    2 -> HighlightsList(
+                    EpubDrawerSection.ANNOTATIONS -> HighlightsList(
                         userHighlights = userHighlights,
                         chapters = chapters,
                         onNavigateToHighlight = onNavigateToHighlight,
@@ -188,12 +207,64 @@ fun EpubReaderDrawerSheet(
                         onHighlightColorChange = onHighlightColorChange,
                         onExportAnnotations = onExportAnnotations
                     )
-                    3 -> ImagesList(
+                    EpubDrawerSection.IMAGES -> ImagesList(
                         readerImages = readerImages,
                         onNavigateToImage = onNavigateToImage,
                         onDownloadImage = onDownloadImage
                     )
                 }
+            }
+        }
+    }
+}
+
+@StringRes
+private fun EpubDrawerSection.resourceId(): Int = when (this) {
+    EpubDrawerSection.TABS -> R.string.tab_tabs
+    EpubDrawerSection.CHAPTERS -> R.string.tab_chapters
+    EpubDrawerSection.BOOKMARKS -> R.string.tab_bookmarks
+    EpubDrawerSection.ANNOTATIONS -> R.string.tab_annotations
+    EpubDrawerSection.IMAGES -> R.string.tab_images
+}
+
+/**
+ * The open text tabs of this reader, if any. Tapping a row switches to that tab, so it goes through
+ * exactly the same path as the tab strip; closing here keeps the reader on a tab that still exists.
+ */
+@Composable
+private fun EpubTabsDrawerPage(
+    tabs: List<RecentFileItem>,
+    activeTabBookId: String?,
+    useFileNameAsDisplayName: Boolean,
+    onTabSelected: (String) -> Unit,
+    onTabClosed: (String) -> Unit,
+    onNewTab: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        SharedDrawerTabsHeader(
+            title = stringResource(R.string.active_tabs),
+            openTabCount = tabs.size,
+            newTabContentDescription = stringResource(R.string.content_desc_new_tab),
+            onNewTab = onNewTab,
+        )
+
+        HorizontalDivider()
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(vertical = 8.dp)
+        ) {
+            items(tabs, key = { "epub_drawer_tab_${it.bookId}" }) { tab ->
+                SharedDrawerTabRow(
+                    title = tab.cardTitle(useFileNameAsDisplayName),
+                    supportingText = tab.author,
+                    isSelected = tab.bookId == activeTabBookId,
+                    progress = tab.progressPercentage?.let { (it / 100f).coerceIn(0f, 1f) },
+                    onSelect = { onTabSelected(tab.bookId) },
+                    onClose = { onTabClosed(tab.bookId) },
+                    closeContentDescription = stringResource(R.string.close_tab),
+                    testTag = "EpubDrawerTab_${tab.bookId}",
+                    closeTestTag = "EpubDrawerTabClose_${tab.bookId}",
+                )
             }
         }
     }

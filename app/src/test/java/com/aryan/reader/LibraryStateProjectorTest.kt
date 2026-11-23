@@ -207,7 +207,7 @@ class LibraryStateProjectorTest {
 
         val state = ReaderScreenState(
             libraryState = LibraryState(sortOrder = SortOrder.TITLE_ASC),
-            tabState = AppTabState(openBookIds = listOf("beta", "missing"), activeBookId = "missing"),
+            tabState = AppTabState.ofFixedLayout(openBookIds = listOf("beta", "missing"), activeBookId = "missing"),
             contextualActionItems = setOf(recentFile("beta"), recentFile("missing")),
             shelfState = AppShelfState(viewingShelfId = "manual"),
             contextualActionShelfIds = setOf("manual", "missing")

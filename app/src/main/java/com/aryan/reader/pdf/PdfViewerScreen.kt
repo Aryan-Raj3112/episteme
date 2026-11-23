@@ -238,7 +238,9 @@ import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.ReaderSearchState
+import com.aryan.reader.shared.ReaderTabKind
 import com.aryan.reader.shared.ReaderTheme
+import com.aryan.reader.shared.readerTabKind
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.formatSpendGuardCountdown
 import com.aryan.reader.shared.hasSpendableBalance
@@ -5808,7 +5810,10 @@ private fun PdfViewerDocumentSetup(
     val isTabsEnabled = !isSplitPane && uiState.isTabsEnabled
     val openTabs = if (isSplitPane) emptyList() else uiState.openTabs
     val activeTabBookId = if (isSplitPane) null else uiState.activeTabBookId
-    val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
+    // Every fixed-layout format gets tabs now (comics and paged office documents open in this same
+    // renderer), so eligibility follows the tab kind rather than the literal PDF type.
+    val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() &&
+        effectiveFileType.readerTabKind() == ReaderTabKind.FIXED_LAYOUT
     val isPdfTabStripVisible = canShowPdfTabs && showTopTabStrip
     val originalFileName by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, selectedBookIdForPane, effectivePdfUri) {
         derivedStateOf {
