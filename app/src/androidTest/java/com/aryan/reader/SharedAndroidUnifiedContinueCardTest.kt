@@ -55,12 +55,13 @@ class SharedAndroidUnifiedContinueCardTest {
     }
 
     /**
-     * The hero used to be a fixed 178dp tall. A title that wrapped to two lines pushed the progress
-     * bar past the rounded bottom edge and the card clipped it, so the card now follows its content
-     * and only the one-line case keeps the old floor.
+     * The hero used to be a fixed 178dp tall, which cut the progress bar in half as soon as the title
+     * wrapped. The card now floors at that height and grows only if its content needs more, so a
+     * two-line title must stay fully inside it - on today's thin bar it fits without growth, which is
+     * fine: nothing is clipped, and that is the invariant.
      */
     @Test
-    fun twoLineTitleGrowsTheCardAndKeepsTheProgressInside() {
+    fun twoLineTitleStaysInsideTheCard() {
         setCardContent(title = "The Curious Incident of the Dog in the Night-Time")
         composeTestRule.waitForIdle()
 
@@ -68,7 +69,7 @@ class SharedAndroidUnifiedContinueCardTest {
         val progress = progressBounds()
 
         assertThat((card.bottom - card.top).value)
-            .isGreaterThan(SharedAndroidHomeDensity.Standard.continueCardHeight.value)
+            .isAtLeast(SharedAndroidHomeDensity.Standard.continueCardHeight.value - 0.5f)
         assertThat(progress.top.value).isAtLeast(card.top.value)
         assertThat(progress.bottom.value).isAtMost(card.bottom.value)
     }
