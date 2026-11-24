@@ -176,6 +176,7 @@ fun PaginatedReaderScreen(
     onInternalLinkNavigated: (Int, Locator?) -> Unit = { _, _ -> },
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
+    onHighlightRecolored: (highlightId: String, colorArgb: Int, style: HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     /**
      * The reader-wide chapter indexes highlights are placed against, built and repaired by the reader
@@ -940,6 +941,7 @@ fun PaginatedReaderScreen(
             onNoteRequested = onNoteRequested,
             userHighlights = userHighlights,
             onHighlightCreated = onHighlightCreated,
+            onHighlightRecolored = onHighlightRecolored,
             onHighlightDeleted = onHighlightDeleted,
             chapterHighlightIndexes = chapterHighlightIndexes,
             isDarkTheme = isDarkTheme,

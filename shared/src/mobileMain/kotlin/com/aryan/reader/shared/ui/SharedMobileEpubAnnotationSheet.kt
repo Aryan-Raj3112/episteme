@@ -184,7 +184,15 @@ fun SharedMobileEpubHighlightStyleRow(
 @Composable
 fun SharedMobileEpubHighlightColorRow(
     palette: ReaderHighlightPalette,
-    selectedColorArgb: Int,
+    /**
+     * The colour to mark as current, or null when nothing is current.
+     *
+     * Null is a real state, not a missing argument: the row is also the *chooser* shown when text is
+     * selected, and there the host has no colour yet. Marking the first slot in that case claimed a
+     * colour the user never picked — and it read as "this text is already yellow" over text that was
+     * not highlighted at all.
+     */
+    selectedColorArgb: Int?,
     onColorSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     onOpenPaletteManager: (() -> Unit)? = null,

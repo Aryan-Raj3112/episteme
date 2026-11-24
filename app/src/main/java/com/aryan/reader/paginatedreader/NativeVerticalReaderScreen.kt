@@ -249,6 +249,11 @@ fun NativeVerticalReaderScreen(
     onInternalLinkNavigated: (Int, Locator?) -> Unit = { _, _ -> },
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
+    /**
+     * A colour tap on a selection that already sits inside a highlight edits that highlight instead
+     * of writing a second one over the same words.
+     */
+    onHighlightRecolored: (highlightId: String, colorArgb: Int, style: HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
@@ -920,6 +925,12 @@ fun NativeVerticalReaderScreen(
         val searchHighlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
         val ttsHighlightColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
         var activeSelection by remember { mutableStateOf<PaginatedSelection?>(null) }
+        // Resolved highlights of the block the active selection starts in, published by that block.
+        // The selection menu lives outside the flow items, so it cannot resolve placement itself;
+        // without this it cannot tell an already-highlighted word from a plain one. See the same
+        // mechanism in PaginatedReaderContent.
+        val selectionBlockHighlights =
+            remember { mutableStateOf<PaginatedPageHighlights?>(null) }
         var isDraggingHandle by remember { mutableStateOf(false) }
         var selectionEdgeScrollDelta by remember { mutableFloatStateOf(0f) }
         var selectionEdgeDragWindowPos by remember { mutableStateOf(Offset.Unspecified) }
@@ -1084,6 +1095,13 @@ fun NativeVerticalReaderScreen(
                                 highlights = userHighlights,
                                 chapterTextIndex = chapterTextIndex
                             )
+                            val selectionStartsHere = activeSelection?.startPageIndex == chapterIndex &&
+                                activeSelection?.startBlockIndex == block.blockIndex
+                            LaunchedEffect(pageUserHighlights, selectionStartsHere) {
+                                if (selectionStartsHere) {
+                                    selectionBlockHighlights.value = pageUserHighlights
+                                }
+                            }
 
                             Box(
                                 modifier = Modifier
@@ -1164,6 +1182,17 @@ fun NativeVerticalReaderScreen(
                 if (!isDraggingHandle && selectedBlocks.isNotEmpty()) {
                     val handleSizePx = with(density) { 36.dp.toPx() }
                     val menuAnchorRect = selectionWindowBounds(sel, selectedBlocks, handleSizePx)
+                    val highlightUnderSelection = remember(sel, selectionBlockHighlights.value) {
+                        if (sel.startBlockIndex == sel.endBlockIndex) {
+                            selectionBlockHighlights.value?.highlightCovering(
+                                blockIndex = sel.startBlockIndex,
+                                start = sel.startOffset,
+                                end = sel.endOffset
+                            )
+                        } else {
+                            null
+                        }
+                    }
                     Popup(
                         popupPositionProvider = remember(menuAnchorRect, density) {
                             SmartPopupPositionProvider(menuAnchorRect, density)
@@ -1201,6 +1230,17 @@ fun NativeVerticalReaderScreen(
                                 activeSelection = null
                             },
                             onHighlight = { color, style ->
+                                val existingHighlight = highlightUnderSelection
+                                if (existingHighlight != null) {
+                                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                        "recolor_request source=native_vertical_highlight_menu colorArgb=$color " +
+                                            "highlightId=${existingHighlight.id} style=${style.id} " +
+                                            "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                    )
+                                    onHighlightRecolored(existingHighlight.id, color, style)
+                                    activeSelection = null
+                                    return@PaginatedTextSelectionMenu
+                                }
                                 val finalCfi =
                                     "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
                                 val locator = sel.toSharedHighlightLocator(
@@ -1262,7 +1302,9 @@ fun NativeVerticalReaderScreen(
                             isProUser = isProUser,
                             isOss = isOss,
                             activeHighlightPalette = activeHighlightPalette,
-                            onOpenPaletteManager = { showPaletteManager = true }
+                            onOpenPaletteManager = { showPaletteManager = true },
+                            selectedColorArgb = highlightUnderSelection?.effectiveArgb,
+                            selectedStyle = highlightUnderSelection?.style
                         )
                     }
                 }

@@ -97,6 +97,33 @@ class PaginatedHighlightPageScopeTest {
     }
 
     @Test
+    fun `the highlight covering a selection is the one the menu shows and edits`() {
+        val blocks = chapterBlocks()
+        val start = blocks[0].startCharOffsetInSource + 6
+        val resolved = resolve(blocks, listOf(rangedHighlight(start, start + 4, "beta")))
+
+        // The exact range, and a selection inside it, both belong to the highlight: the menu shows its
+        // colour instead of a colour nobody picked, and a colour tap edits it rather than adding a
+        // second highlight over the same words.
+        assertEquals("r", resolved.highlightCovering(0, 6, 10)?.id)
+        assertEquals("r", resolved.highlightCovering(0, 7, 9)?.id)
+        // Outside the range, past its end, or on a block the highlight does not touch: no highlight,
+        // so the menu stays a chooser for a new one.
+        assertNull(resolved.highlightCovering(0, 10, 12))
+        assertNull(resolved.highlightCovering(1, 0, 2))
+        assertNull(resolved.highlightCovering(0, 6, 6))
+    }
+
+    @Test
+    fun `a selection that runs past a highlight is not covered by it`() {
+        val blocks = chapterBlocks()
+        val start = blocks[0].startCharOffsetInSource + 6
+        val resolved = resolve(blocks, listOf(rangedHighlight(start, start + 4, "beta")))
+
+        assertNull(resolved.highlightCovering(0, 8, 14))
+    }
+
+    @Test
     fun `ranged highlight spanning two blocks paints a range in each`() {
         val blocks = chapterBlocks()
         val start = blocks[0].startCharOffsetInSource + 11

@@ -5258,6 +5258,8 @@ fun EpubReaderHost(
                     onTranslateLookupFn = { p0 -> onTranslateLookup(p0) },
                     onDictionaryLookupFn = { p0 -> onDictionaryLookup(p0) },
                     onUpdateHighlightPaletteFn = { p0, p1 -> onUpdateHighlightPalette(p0, p1) },
+                    onHighlightColorChangeFn = onHighlightColorChange,
+                    onHighlightStyleChangeFn = onHighlightStyleChange,
                     runRecapFn = { p0, p1 -> runRecap(p0, p1) },
                     onBookmarksUserEdited = { bookmarksDirty = true }
                 )

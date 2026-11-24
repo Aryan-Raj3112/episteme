@@ -204,6 +204,16 @@ internal fun PaginatedReaderContent(
     chapterHighlightIndexes: ChapterHighlightIndexes,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
+    /**
+     * Recolour/restyle a highlight that already exists, by id.
+     *
+     * A selection made inside an existing highlight is the same highlight, and the WebView surface
+     * has always treated a colour tap there as an edit (`updateHighlightStyle`), not as a second
+     * annotation stacked on the first. Adding one here instead made the tap look like it did nothing:
+     * the new highlight covered the same words with the same colour, so nothing visibly changed while
+     * the annotation list grew.
+     */
+    onHighlightRecolored: (highlightId: String, colorArgb: Int, style: HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
@@ -220,6 +230,14 @@ internal fun PaginatedReaderContent(
     val imageLoader = context.imageLoader
     val textMeasurer = rememberTextMeasurer()
     var activeSelection by remember { mutableStateOf<PaginatedSelection?>(null) }
+    // Resolved highlights of the page the active selection starts on, published by that page.
+    //
+    // The selection menu lives above the pages, so it never sees the block-local ranges that a page
+    // resolves; without them it cannot tell whether the selected words are already highlighted, and
+    // it used to answer that question by marking the palette's first colour. The page owns both the
+    // answer and the coordinate space, so it publishes the pair (book page, resolution) here and the
+    // menu only accepts the entry for the selection's own page.
+    val selectionPageHighlights = remember { mutableStateOf<Pair<Int, PaginatedPageHighlights>?>(null) }
 
     if (showExternalLinkDialog != null) {
         val urlToShow = showExternalLinkDialog!!
@@ -366,6 +384,13 @@ internal fun PaginatedReaderContent(
                 highlights = userHighlights,
                 chapterTextIndex = pageChapterIndexValue
             )
+        }
+        // Publish this page's resolution for the selection menu (see selectionPageHighlights).
+        val selectionStartsHere = activeSelection?.startPageIndex == bookPageIndex
+        LaunchedEffect(bookPageIndex, pageUserHighlights, selectionStartsHere) {
+            if (selectionStartsHere) {
+                selectionPageHighlights.value = bookPageIndex to pageUserHighlights
+            }
         }
         val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
             pageContent?.applyReaderThemeForDisplay(
@@ -2141,6 +2166,30 @@ internal fun PaginatedReaderContent(
                             }
                         }
 
+                        // The highlight this selection already sits in, if any. The menu has to show
+                        // that highlight's colour and style rather than a colour nobody picked, and a
+                        // colour tap then edits it: on the WebView surface the same gesture has always
+                        // updated the existing highlight instead of adding a second one over it.
+                        val publishedSelectionHighlights = selectionPageHighlights.value
+                            ?.takeIf { it.first == sel.startPageIndex }
+                            ?.second
+                        val highlightUnderSelection = remember(
+                            sel.startBlockIndex,
+                            sel.startOffset,
+                            sel.endOffset,
+                            sel.endPageIndex,
+                            publishedSelectionHighlights
+                        ) {
+                            if (sel.startBlockIndex == sel.endBlockIndex) {
+                                publishedSelectionHighlights?.highlightCovering(
+                                    blockIndex = sel.startBlockIndex,
+                                    start = sel.startOffset,
+                                    end = sel.endOffset
+                                )
+                            } else {
+                                null
+                            }
+                        }
                         Popup(
                             popupPositionProvider = remember(
                                 menuAnchorRect,
@@ -2181,6 +2230,17 @@ internal fun PaginatedReaderContent(
                                     activeSelection = null
                                 },
                                 onHighlight = { color, style ->
+                                    val existing = highlightUnderSelection
+                                    if (existing != null) {
+                                        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                            "recolor_request source=highlight_menu colorArgb=$color " +
+                                                "highlightId=${existing.id} style=${style.id} " +
+                                                "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                        )
+                                        onHighlightRecolored(existing.id, color, style)
+                                        activeSelection = null
+                                        return@PaginatedTextSelectionMenu
+                                    }
                                     val finalCfi =
                                         "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
                                     val locator = sel.toSharedHighlightLocator(
@@ -2246,6 +2306,8 @@ internal fun PaginatedReaderContent(
                                 isProUser = isProUser,
                                 isOss = isOss,
                                 activeHighlightPalette = activeHighlightPalette,
+                                selectedColorArgb = highlightUnderSelection?.effectiveArgb,
+                                selectedStyle = highlightUnderSelection?.style,
                                 onOpenPaletteManager = { showPaletteManager = true })
                         }
                     }

@@ -290,8 +290,10 @@ fun HighlightColorRow(
 ) {
     SharedMobileEpubHighlightColorRow(
         palette = ReaderHighlightPalette(colors = activeHighlightPalette),
-        selectedColorArgb = selectedColorArgb ?: activeHighlightPalette.firstOrNull()
-            ?: return,
+        // Null stays null: this row doubles as the chooser for a fresh selection, and marking a colour
+        // there announced a highlight state the text did not have. Hosts that are editing an existing
+        // highlight pass its colour, which is what the ring is for.
+        selectedColorArgb = selectedColorArgb,
         onColorSelect = onColorSelect,
         modifier = modifier,
         onOpenPaletteManager = onOpenPaletteManager,
@@ -377,11 +379,18 @@ fun PaginatedTextSelectionMenu(
     onOpenPaletteManager: (() -> Unit)? = null,
     existingNote: String? = null,
     selectedColorArgb: Int? = null,
-    selectedStyle: HighlightStyle = HighlightStyle.BACKGROUND
+    /**
+     * The style to show as current, or null when the selection is not on a highlight.
+     *
+     * Null is not a synonym for [HighlightStyle.BACKGROUND]: a highlight styled with the background
+     * style has to render as background, while a fresh selection has no style of its own and falls
+     * back to the reader's preferred one.
+     */
+    selectedStyle: HighlightStyle? = null
 ) {
     val context = LocalContext.current
     var selectedHighlightStyle by remember(selectedStyle) {
-        mutableStateOf(if (selectedStyle == HighlightStyle.BACKGROUND) loadPreferredHighlightStyle(context) else selectedStyle)
+        mutableStateOf(selectedStyle ?: loadPreferredHighlightStyle(context))
     }
     Surface(
         shape = RoundedCornerShape(12.dp),

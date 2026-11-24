@@ -63,6 +63,23 @@ internal data class PaginatedPageHighlights(
     }
 
     /**
+     * The highlight that already covers the block-local range [start]..[end), if one does.
+     *
+     * The selection menu asks this to show the state of the text under the selection: a word that is
+     * already highlighted has a colour and a style, and the row has to show *those* rather than a
+     * colour nobody picked. A selection that merely starts inside a longer highlight still counts —
+     * that is the same question the WebView surface answers with `isExistingHighlight`, and there a
+     * colour tap edits that highlight instead of stacking another one on top of it.
+     */
+    fun highlightCovering(blockIndex: Int, start: Int, end: Int): UserHighlight? {
+        if (end <= start) return null
+        val coveringId = rangesForBlock(blockIndex).entries.firstOrNull { (_, ranges) ->
+            ranges.any { start >= it.first && end - 1 <= it.last }
+        }?.key ?: return null
+        return highlights.firstOrNull { it.id == coveringId }
+    }
+
+    /**
      * The exclusive end offset of each highlight that *ends* in [blockIndex], keyed by highlight id.
      *
      * Empty when no highlight finishes in that block, and empty for a highlight that only starts or

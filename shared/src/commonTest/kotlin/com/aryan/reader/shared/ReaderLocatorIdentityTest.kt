@@ -106,6 +106,82 @@ class ReaderLocatorIdentityTest {
     }
 
     @Test
+    fun `two equal-length selections in different blocks of one page are different highlights`() {
+        // Both are three characters on page 199 of chapter 36, which is all a page number and a length
+        // can say. The first had already been repaired into a text range; the second was a fresh
+        // selection of a different word. They were treated as one highlight, so the new selection
+        // silently moved the old highlight onto itself — the old one lost its colour and the new one
+        // never appeared, which is exactly the "registered but not shown" report.
+        val existing = ReaderLocator(
+            chapterIndex = 36,
+            pageIndex = 199,
+            startOffset = 27,
+            endOffset = 30,
+            blockIndex = 1,
+            textQuote = "The",
+            cfi = "/4/4:0"
+        )
+        val selection = ReaderLocator(
+            chapterIndex = 36,
+            pageIndex = 199,
+            blockIndex = 2,
+            textQuote = "But",
+            cfi = "/4/6:0|/4/6:3"
+        )
+
+        assertFalse(existing.sameLocation(selection))
+        assertFalse(selection.sameLocation(existing))
+    }
+
+    @Test
+    fun `equal lengths at different offsets of one block are different highlights`() {
+        val existing = ReaderLocator(
+            chapterIndex = 36,
+            pageIndex = 199,
+            startOffset = 31,
+            endOffset = 37,
+            blockIndex = 1,
+            textQuote = "moment",
+            cfi = "/4/4:4"
+        )
+        val selection = ReaderLocator(
+            chapterIndex = 36,
+            pageIndex = 199,
+            blockIndex = 1,
+            textQuote = "needed",
+            cfi = "/4/4:39|/4/4:45"
+        )
+
+        assertFalse(existing.sameLocation(selection))
+    }
+
+    @Test
+    fun `re-highlighting the same words still matches after an anchor repair rewrote the cfi`() {
+        // Repair stores the start-only CFI of the block that owns the range. Re-selecting those words
+        // builds a range CFI ending in the same start, and that pair must keep updating in place
+        // rather than stacking a second highlight on the same text.
+        val repaired = ReaderLocator(
+            chapterIndex = 36,
+            pageIndex = 199,
+            startOffset = 31,
+            endOffset = 37,
+            blockIndex = 1,
+            textQuote = "moment",
+            cfi = "/4/4:4"
+        )
+        val reselection = ReaderLocator(
+            chapterIndex = 36,
+            pageIndex = 199,
+            blockIndex = 1,
+            textQuote = "moment",
+            cfi = "/4/4:4|/4/4:10"
+        )
+
+        assertTrue(repaired.sameLocation(reselection))
+        assertTrue(reselection.sameLocation(repaired))
+    }
+
+    @Test
     fun `one page number alone is not enough`() {
         // Page numbers shift with font size and margins, so a page match was never a position. Two
         // highlights can share a page number and cover different text.
