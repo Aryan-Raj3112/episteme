@@ -2241,12 +2241,13 @@ internal fun PaginatedReaderContent(
                                         activeSelection = null
                                         return@PaginatedTextSelectionMenu
                                     }
-                                    val finalCfi =
-                                        "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                    val locator = sel.toSharedHighlightLocator(
-                                        chapterIndex = onGetChapterIndex(sel.startPageIndex),
-                                        cfi = finalCfi
+                                    val chapterIndex = onGetChapterIndex(sel.startPageIndex)
+                                    val placement = sel.toHighlightPlacement(
+                                        chapterIndex = chapterIndex,
+                                        chapterTextIndex = chapterHighlightIndexes.forChapter(chapterIndex)
                                     )
+                                    val finalCfi = placement.cfi
+                                    val locator = placement.locator
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                         "create_request source=highlight_menu colorArgb=$color " +
                                             "savedCfi=$finalCfi " +
@@ -2270,12 +2271,13 @@ internal fun PaginatedReaderContent(
                                 },
                                 onNote = { style ->
                                     onNoteRequested(null)
-                                    val finalCfi =
-                                        "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                    val locator = sel.toSharedHighlightLocator(
-                                        chapterIndex = onGetChapterIndex(sel.startPageIndex),
-                                        cfi = finalCfi
+                                    val chapterIndex = onGetChapterIndex(sel.startPageIndex)
+                                    val placement = sel.toHighlightPlacement(
+                                        chapterIndex = chapterIndex,
+                                        chapterTextIndex = chapterHighlightIndexes.forChapter(chapterIndex)
                                     )
+                                    val finalCfi = placement.cfi
+                                    val locator = placement.locator
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                         "create_request source=note_menu color=${HighlightColor.YELLOW.id} " +
                                             "savedCfi=$finalCfi " +

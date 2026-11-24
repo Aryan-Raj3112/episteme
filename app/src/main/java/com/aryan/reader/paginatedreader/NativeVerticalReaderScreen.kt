@@ -1241,12 +1241,12 @@ fun NativeVerticalReaderScreen(
                                     activeSelection = null
                                     return@PaginatedTextSelectionMenu
                                 }
-                                val finalCfi =
-                                    "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                val locator = sel.toSharedHighlightLocator(
+                                val placement = sel.toHighlightPlacement(
                                     chapterIndex = sel.startPageIndex,
-                                    cfi = finalCfi
+                                    chapterTextIndex = chapterHighlightIndexes.forChapter(sel.startPageIndex)
                                 )
+                                val finalCfi = placement.cfi
+                                val locator = placement.locator
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                     "create_request source=native_vertical_highlight_menu colorArgb=$color " +
                                         "savedCfi=$finalCfi " +
@@ -1268,12 +1268,12 @@ fun NativeVerticalReaderScreen(
                             },
                             onNote = { style ->
                                 onNoteRequested(null)
-                                val finalCfi =
-                                    "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                val locator = sel.toSharedHighlightLocator(
+                                val placement = sel.toHighlightPlacement(
                                     chapterIndex = sel.startPageIndex,
-                                    cfi = finalCfi
+                                    chapterTextIndex = chapterHighlightIndexes.forChapter(sel.startPageIndex)
                                 )
+                                val finalCfi = placement.cfi
+                                val locator = placement.locator
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                     "create_request source=native_vertical_note_menu color=${HighlightColor.YELLOW.id} " +
                                         "savedCfi=$finalCfi " +
