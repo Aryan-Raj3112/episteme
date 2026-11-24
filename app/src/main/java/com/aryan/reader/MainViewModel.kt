@@ -7163,49 +7163,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         coverPath = bookArtifactStore.saveCoverToCache(coverBitmap, uri)
                     }
                 }
-            } else if (uri.scheme != "opds-pse" && type in COMIC_ARCHIVE_FILE_TYPES) {
-                if (coverPath == null) {
-                    var cacheFile: File? = null
-                    try {
-                        cacheFile = File(appContext.cacheDir, "temp_archive_cover_${System.currentTimeMillis()}.${type.name.lowercase()}")
-                        withContext(Dispatchers.IO) {
-                            appContext.contentResolver.openInputStream(uri)?.use { input ->
-                                cacheFile.outputStream().use { output -> input.copyTo(output) }
-                            }
-                        }
-                        val archiveDoc = com.aryan.reader.pdf.ArchiveDocumentWrapper(cacheFile)
-                        if (archiveDoc.getPageCount() > 0) {
-                            val page = archiveDoc.openPage(0)
-                            if (page != null) {
-                                val w = page.getPageWidthPoint()
-                                val h = page.getPageHeightPoint()
-                                if (w > 0 && h > 0) {
-                                    val targetHeight = 800
-                                    val targetWidth = (targetHeight * (w.toFloat() / h.toFloat())).toInt()
-                                    if (targetWidth > 0) {
-                                        val bitmap = createBitmap(targetWidth, targetHeight)
-                                        page.renderPageBitmap(bitmap, 0, 0, targetWidth, targetHeight, false)
-                                        coverPath = bookArtifactStore.saveCoverToCache(bitmap, uri)
-                                    }
-                                }
-                                page.close()
-                            }
-                        }
-                        archiveDoc.close()
-                    } catch (e: Exception) {
-                        Timber.e(e, "Error generating comic archive cover")
-                    } finally {
-                        try {
-                            if (cacheFile?.exists() == true) {
-                                val deleted = cacheFile.delete()
-                                if (deleted) Timber.d("Successfully deleted temp archive file: ${cacheFile.name}")
-                            }
-                        } catch (e: Exception) {
-                            Timber.e(e, "Failed to delete temp archive file")
-                        }
-                    }
-                }
             }
+            // Comic archives intentionally fall through to the generic thumbnail below: it renders
+            // page one from the CBZ stream itself instead of copying the whole archive into cache.
         }
         if (coverPath == null) {
             val thumbnailItem = RecentFileItem(
@@ -7353,6 +7313,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 ImportedFileCache.deleteStaleTemporaryBookDirs(appContext, TimeUnit.HOURS.toMillis(1))
                 AndroidShareArtifactManager.sweep(appContext).takeIf { it > 0 }?.let { deletedCount ->
                     Timber.d("Sweeper cleaned $deletedCount expired share artifacts")
+                }
+                // Cover saves delete exactly the file they replace, so this walk only collects
+                // leftovers from failed writes or imports that never committed.
+                bookArtifactStore.pruneCoverCache().takeIf { it > 0 }?.let { pruned ->
+                    Timber.d("Sweeper pruned $pruned orphaned cover files")
                 }
 
                 cacheDir.listFiles()?.forEach { file ->

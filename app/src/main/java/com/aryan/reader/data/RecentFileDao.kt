@@ -76,6 +76,10 @@ interface RecentFileDao {
     @Query("SELECT * FROM recent_files WHERE lastModifiedTimestamp > :sinceTimestamp")
     suspend fun getModifiedSince(sinceTimestamp: Long): List<RecentFileEntity>
 
+    /** Paths the UI may still display; the cover cache pruner must never delete these. */
+    @Query("SELECT coverImagePath FROM recent_files WHERE coverImagePath IS NOT NULL AND coverImagePath != ''")
+    suspend fun getReferencedCoverPaths(): List<String>
+
     @Query("SELECT COUNT(*) FROM recent_files")
     suspend fun count(): Int
 

@@ -35,14 +35,21 @@ class LibraryStateProjector(
     fun project(input: LibraryProjectionInput): ReaderScreenState {
         val start = ReaderPerfLog.nowNanos()
         val internalState = input.state
-        val projectionContext = AndroidLibraryProjectionAdapter.prepare(input, folderPathResolver)
+        // The key is built before [AndroidLibraryProjectionAdapter.prepare]: prepare resolves tags,
+        // maps every book through the shared item cache and synthesizes folder fallbacks, and all of
+        // that is wasted work when the key matches (every page turn, dialog or selection change
+        // re-emits state while the library itself is unchanged). Folder keys come from the state's
+        // own folder list; folders synthesized from books are already implied by the book list being
+        // part of the key.
         val cacheKey = ProjectionCacheKey(
             recentFilesFromDb = input.recentFilesFromDb,
             dbShelves = input.dbShelves,
             shelfRefs = input.shelfRefs,
             dbTags = input.dbTags,
             tagRefs = input.tagRefs,
-            folderKeys = projectionContext.folderKeys,
+            folderKeys = internalState.syncedFolders.map {
+                AndroidFolderProjectionKey(it.uriString, it.name)
+            },
             sortOrder = internalState.sortOrder,
             searchQuery = internalState.searchQuery,
             libraryFilters = internalState.libraryFilters,
@@ -71,6 +78,7 @@ class LibraryStateProjector(
             return result
         }
 
+        val projectionContext = AndroidLibraryProjectionAdapter.prepare(input, folderPathResolver)
         val projected = AndroidLibraryProjectionAdapter.project(projectionContext)
         val cache = CachedProjection(
             key = cacheKey,

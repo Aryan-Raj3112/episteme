@@ -68,8 +68,19 @@ interface AndroidFolderMirrorStore {
 
 interface AndroidBookArtifactStore {
     suspend fun clearAllLocalData()
-    suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri): String?
-    suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri, extension: String): String?
+    /**
+     * Persists a generated thumbnail and returns its path. [previousPath] is the path the row
+     * currently references and is removed once the replacement is written; pass null when unknown.
+     */
+    suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri, previousPath: String? = null): String?
+    suspend fun saveEmbeddedCoverToCache(
+        bytes: ByteArray,
+        uri: Uri,
+        extension: String,
+        previousPath: String? = null,
+    ): String?
+    /** Deletes cover files no library row references; returns how many were removed. */
+    suspend fun pruneCoverCache(): Int
     suspend fun clearLocalCachesForBook(bookId: String)
 }
 
