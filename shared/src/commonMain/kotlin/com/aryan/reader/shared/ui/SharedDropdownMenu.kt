@@ -82,6 +82,9 @@ import androidx.compose.ui.window.PopupProperties
  * @param scrimColor dims the surface behind the menu; transparent keeps material's plain
  *   outside-tap layer, which is what the command menus want.
  * @param horizontalMargin keeps a window-edge-aligned menu off the screen edge.
+ * @param useIntrinsicWidth sizes the card to its widest row. A panel that already lays itself
+ *   out (fixed width, lazy rows) must opt out: intrinsic measurement is not supported for
+ *   [androidx.compose.foundation.lazy.LazyColumn], which subcomposes its items.
  * @param content the menu items.
  */
 @Composable
@@ -92,6 +95,7 @@ fun SharedDropdownMenu(
     offset: DpOffset = DpOffset(0.dp, 0.dp),
     scrimColor: Color = Color.Transparent,
     horizontalMargin: Dp = 0.dp,
+    useIntrinsicWidth: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val density = LocalDensity.current
@@ -207,7 +211,7 @@ fun SharedDropdownMenu(
                     .align(Alignment.TopStart)
                     .offset { placement.offset }
                     .heightIn(max = with(density) { maxMenuHeight.toDp() })
-                    .width(IntrinsicSize.Max)
+                    .then(if (useIntrinsicWidth) Modifier.width(IntrinsicSize.Max) else Modifier)
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale

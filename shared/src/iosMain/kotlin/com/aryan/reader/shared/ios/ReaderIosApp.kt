@@ -240,6 +240,7 @@ import com.aryan.reader.shared.MobileBookOpenPreflightAction
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.withMobileBookOpened
 import com.aryan.reader.shared.withMobileBookClosed
+import com.aryan.reader.shared.withMobileTabMoved
 import com.aryan.reader.shared.withMobileTabsEnabled
 import com.aryan.reader.shared.withReconciledMobileTabs
 import com.aryan.reader.shared.withMobileLibrarySearchActive
@@ -5710,6 +5711,14 @@ private fun ReaderIosApp(
         }
     }
 
+    /**
+     * Reorders one reader's tabs from Home. Home lists both readers in one switcher, so the drag
+     * reports the set it happened in; nothing else about the session changes.
+     */
+    fun moveHomeTab(kind: ReaderTabKind, bookId: String, targetBookId: String) {
+        state = state.withMobileTabMoved(kind, bookId, targetBookId)
+    }
+
     fun closeAllHomeTabs() {
         // Android parity (`MainViewModel.closeAllTabs(kind = null)`): the library's close-all
         // spans both readers, so closing every tab also exits the reader instead of leaving a
@@ -7432,6 +7441,13 @@ private fun ReaderIosApp(
                                         }
                                         override fun closeAllTabs() {
                                             closeAllHomeTabs()
+                                        }
+                                        override fun moveTab(
+                                            kind: ReaderTabKind,
+                                            bookId: String,
+                                            targetBookId: String,
+                                        ) {
+                                            moveHomeTab(kind, bookId, targetBookId)
                                         }
                                         override fun togglePinned(book: BookItem) {
                                             state = state.toggleHomePinned(book.id)

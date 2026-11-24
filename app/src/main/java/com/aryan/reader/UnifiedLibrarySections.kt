@@ -198,6 +198,7 @@ internal fun UnifiedLibraryTopBar(
     openTabs: List<com.aryan.reader.shared.ui.SharedOpenTab> = emptyList(),
     onOpenTabSelected: (bookId: String) -> Unit = {},
     onOpenTabClosed: (bookId: String) -> Unit = {},
+    onOpenTabMoved: ((kind: com.aryan.reader.shared.ReaderTabKind, bookId: String, targetBookId: String) -> Unit)? = null,
     onCloseAllTabs: (() -> Unit)? = null,
 ) {
     val title = selectedShelf?.name ?: titleOverride ?: when (section) {
@@ -239,6 +240,7 @@ internal fun UnifiedLibraryTopBar(
                     label = stringResource(R.string.home_tabs_title),
                     openTabsDescription = stringResource(R.string.content_desc_open_tabs),
                     closeTabDescription = stringResource(R.string.close_tab),
+                    dragToReorderDescription = stringResource(R.string.content_desc_drag_to_reorder),
                     openCountLabel = stringResource(R.string.home_tabs_open_count, openTabs.size),
                     epubLabel = stringResource(R.string.home_tabs_epub),
                     pdfLabel = stringResource(R.string.home_tabs_pdf),
@@ -249,6 +251,7 @@ internal fun UnifiedLibraryTopBar(
                     onCloseAllTabs = onCloseAllTabs,
                     onTabSelected = { tab -> onOpenTabSelected(tab.bookId) },
                     onTabClosed = { tab -> onOpenTabClosed(tab.bookId) },
+                    onTabMoved = onOpenTabMoved,
                     cover = { tab, coverModifier ->
                         val item = booksById[tab.bookId]
                         if (item != null) {

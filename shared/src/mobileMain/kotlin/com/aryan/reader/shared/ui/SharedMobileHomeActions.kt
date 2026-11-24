@@ -1,6 +1,7 @@
 package com.aryan.reader.shared.ui
 
 import com.aryan.reader.shared.BookItem
+import com.aryan.reader.shared.ReaderTabKind
 
 /**
  * Platform adapter required by the shared Home UI.
@@ -20,6 +21,10 @@ interface SharedMobileHomeActions {
     fun selectAll()
     fun closeTab(book: BookItem)
     fun closeAllTabs()
+
+    /** Reorders one reader's tabs from the Home switcher; the order is the tab strip's order. */
+    fun moveTab(kind: ReaderTabKind, bookId: String, targetBookId: String)
+
     fun togglePinned(book: BookItem)
     fun toggleSelectedPins() {}
     fun removeSelectedBooksFromRecents() {}

@@ -87,6 +87,16 @@ sealed interface AppAction {
     data class BookTabOpened(val kind: ReaderTabKind, val bookId: String) : AppAction
     data class BookTabClosed(val kind: ReaderTabKind, val bookId: String) : AppAction
     data class BookTabsClosed(val kind: ReaderTabKind) : AppAction
+
+    /**
+     * Reorders one reader's set: [bookId] takes [targetBookId]'s slot, landing after it when
+     * dragged down and before it when dragged up. This order is the tab order both readers render.
+     */
+    data class BookTabMoved(
+        val kind: ReaderTabKind,
+        val bookId: String,
+        val targetBookId: String,
+    ) : AppAction
     data class HomePinToggled(val bookId: String) : AppAction
     data class LibraryPinToggled(val bookId: String) : AppAction
     data class ReaderDefaultSettingsChanged(val settings: ReaderSettings) : AppAction

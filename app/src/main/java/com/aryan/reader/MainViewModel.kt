@@ -991,6 +991,17 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(tabState = state) }
     }
 
+    /**
+     * Reorders one reader's tab set from the library switcher. The order is shared tab state, so
+     * the reader's own tab strip lists the same movement.
+     */
+    fun moveTab(kind: ReaderTabKind, bookId: String, targetBookId: String) {
+        val current = _internalState.value.tabState
+        val moved = current.reduce(SharedAppAction.BookTabMoved(kind, bookId, targetBookId))
+        if (moved == current) return
+        applyTabState(moved)
+    }
+
     fun switchTab(bookId: String) {
         Timber.tag("PdfTabSync").i("ViewModel: switchTab called for bookId: $bookId")
         val item = uiState.value.rawLibraryFiles.find { it.bookId == bookId } ?: run {

@@ -263,6 +263,21 @@ data class AppTabGroup(
 }
 
 /**
+ * Moves [bookId] into [targetBookId]'s slot.
+ *
+ * Dropping downwards lands after the target and upwards lands before it — the rule the toolbar
+ * customiser already uses, so a drag reads the same whether it reorders tools or tabs.
+ * Unknown ids and a no-op move return the list unchanged.
+ */
+fun List<String>.movedOpenTab(bookId: String, targetBookId: String): List<String> {
+    val fromIndex = indexOf(bookId)
+    val toIndex = indexOf(targetBookId)
+    if (fromIndex < 0 || toIndex < 0 || fromIndex == toIndex) return this
+    val moved = toMutableList()
+    return moved.apply { add(toIndex, removeAt(fromIndex)) }
+}
+
+/**
  * Open tabs, one independent set per [ReaderTabKind].
  *
  * The two sets are deliberately separate: a tab tap never swaps the reader engine, chrome, or

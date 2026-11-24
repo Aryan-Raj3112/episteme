@@ -1444,6 +1444,11 @@ fun SharedMobileHomeScreen(
                                     onTabClosed = { tab ->
                                         tabBooksById[tab.bookId]?.let(actions::closeTab)
                                     },
+                                    dragToReorderDescription = readerString(
+                                        "content_desc_drag_to_reorder",
+                                        "Drag to reorder",
+                                    ),
+                                    onTabMoved = actions::moveTab,
                                     cover = { tab, coverModifier ->
                                         val book = tabBooksById[tab.bookId]
                                         if (book?.coverImagePath != null) {

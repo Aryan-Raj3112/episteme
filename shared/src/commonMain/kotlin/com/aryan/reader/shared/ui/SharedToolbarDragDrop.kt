@@ -395,6 +395,14 @@ class SharedToolbarDragDropState(
         }
     }
 
+    /**
+     * Keeps the lifted row under the finger when the list scrolls itself (auto-scroll at an edge):
+     * a forward scroll moves every item up by [delta], so the row's offset has to grow by it.
+     */
+    fun onViewportScrolled(delta: Float) {
+        if (draggedItemId != null) dragOffset += Offset(0f, delta)
+    }
+
     fun onDragEnd() {
         draggedItemId = null
         dragOffset = Offset.Zero
