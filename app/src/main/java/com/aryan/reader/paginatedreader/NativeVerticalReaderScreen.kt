@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -1638,7 +1639,16 @@ internal fun NativeVerticalContentBlock(
         }
         is ChantScoreBlock -> NativeChantScore(block, textStyle, styledModifier)
         is FlexContainerBlock -> {
-            val renderChild: @Composable (ContentBlock) -> Unit = { child ->
+            // A flex item that opts out of `stretch` sizes to its content, the way a
+            // block-level flex item does in CSS; everything else fills the line.
+            val flexChildModifier: (ContentBlock) -> Modifier = { child ->
+                when {
+                    child.style.display == "reader-chant-unit" -> Modifier.widthIn(min = 1.dp)
+                    child.style.hasSelfAlignment() -> Modifier.wrapContentWidth()
+                    else -> Modifier.fillMaxWidth()
+                }
+            }
+            val renderChild: @Composable (ContentBlock, Modifier) -> Unit = { child, childModifier ->
                 NativeVerticalContentBlock(
                     block = child,
                     pageIndex = pageIndex,
@@ -1664,11 +1674,7 @@ internal fun NativeVerticalContentBlock(
                     blockLayoutMap = blockLayoutMap,
                     density = density,
                     imageLoader = imageLoader,
-                    modifier = if (child.style.display == "reader-chant-unit") {
-                        Modifier.widthIn(min = 1.dp)
-                    } else {
-                        Modifier.fillMaxWidth()
-                    }
+                    modifier = childModifier
                 )
             }
             if (block.style.display == "reader-chant-flow") {
@@ -1678,20 +1684,53 @@ internal fun NativeVerticalContentBlock(
                     verticalArrangement = Arrangement.Bottom
                 ) {
                     block.children.forEach { child ->
-                        Box(modifier = Modifier.wrapContentHeight()) { renderChild(child) }
+                        Box(modifier = Modifier.wrapContentHeight()) {
+                            renderChild(child, flexChildModifier(child))
+                        }
                     }
                 }
-            } else if (block.style.flexDirection == "row") {
-                Row(modifier = styledModifier.fillMaxWidth()) {
+            } else if (block.style.isFlexRow) {
+                Row(
+                    modifier = styledModifier.fillMaxWidth(),
+                    horizontalArrangement = nativeFlexRowHorizontalArrangement(
+                        block.style.justifyContent,
+                        block.style.flexMainAxisGap
+                    ),
+                    verticalAlignment = nativeFlexRowVerticalAlignment(block.style.alignItems)
+                ) {
                     block.children.forEach { child ->
-                        Box(modifier = Modifier.weight(1f, fill = false)) {
-                            renderChild(child)
+                        val alignment = nativeFlexRowChildVerticalAlignment(
+                            child.style.alignSelf,
+                            block.style.alignItems
+                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .align(alignment)
+                        ) {
+                            renderChild(child, flexChildModifier(child))
                         }
                     }
                 }
             } else {
-                Column(modifier = styledModifier.fillMaxWidth()) {
-                    block.children.forEach { child -> renderChild(child) }
+                Column(
+                    modifier = styledModifier.fillMaxWidth(),
+                    verticalArrangement = nativeFlexColumnVerticalArrangement(
+                        block.style.justifyContent,
+                        block.style.flexMainAxisGap
+                    ),
+                    horizontalAlignment = nativeFlexColumnHorizontalAlignment(block.style.alignItems)
+                ) {
+                    block.children.forEach { child ->
+                        val alignment = nativeFlexColumnChildAlignment(
+                            child.style.alignSelf,
+                            block.style.alignItems
+                        )
+                        renderChild(
+                            child,
+                            flexChildModifier(child).align(alignment)
+                        )
+                    }
                 }
             }
         }

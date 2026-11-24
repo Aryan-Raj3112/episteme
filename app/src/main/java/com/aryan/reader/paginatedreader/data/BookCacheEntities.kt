@@ -26,7 +26,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 const val LATEST_PROCESSING_VERSION = 31
-const val LATEST_PAGE_CACHE_VERSION = 8
+const val LATEST_PAGE_CACHE_VERSION = 10
 
 @Entity(tableName = "processed_books")
 data class ProcessedBook(

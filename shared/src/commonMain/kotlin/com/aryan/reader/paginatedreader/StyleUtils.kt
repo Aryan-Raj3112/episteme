@@ -46,6 +46,9 @@ fun parseCssDimensionToTextUnit(
 ): TextUnit {
     val sanitizedValue = value.trim().lowercase()
     return when {
+        // A bare `0` is a length in every unit, and books rely on it to reset an
+        // inherited value (`letter-spacing: 0` cancelling a `0.375em` above it).
+        sanitizedValue.toFloatOrNull() == 0f -> 0.sp
         sanitizedValue.endsWith("rem") -> sanitizedValue.removeSuffix("rem").toFloatOrNull()?.em ?: TextUnit.Unspecified
         sanitizedValue.endsWith("em") -> sanitizedValue.removeSuffix("em").toFloatOrNull()?.em ?: TextUnit.Unspecified
         sanitizedValue.endsWith("px") -> {

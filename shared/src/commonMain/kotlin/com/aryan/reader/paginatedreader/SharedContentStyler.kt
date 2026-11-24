@@ -205,6 +205,7 @@ class SharedContentStyler(
                 withStyle(initialSpanStyle) {
                     append(block.text)
                     val linkSpans = mutableListOf<SemanticSpan>()
+                    val hiddenRanges = mutableListOf<IntRange>()
                     block.spans.sortedBy { it.start }.forEach { span ->
                         val spanStart = span.start.coerceIn(0, block.text.length)
                         val spanEnd = span.end.coerceIn(spanStart, block.text.length)
@@ -239,6 +240,11 @@ class SharedContentStyler(
                         if (spanStart < spanEnd) {
                             addStyle(initialSpanStyle.merge(finalSpanStyle), spanStart, spanEnd)
                         }
+                        // CSS visibility applies to inline boxes too: hiding had only
+                        // an alpha-layer block path, so hidden label glyphs rendered.
+                        if (themedSpanStyle.blockStyle.isVisuallyHidden() && spanStart < spanEnd) {
+                            hiddenRanges.add(spanStart until spanEnd)
+                        }
 
                         val ws = themedSpanStyle.wordSpacing
                         readerWordSpacingOffsets(block.text, spanStart, spanEnd, themedSpanStyle).forEach { offset ->
@@ -270,6 +276,11 @@ class SharedContentStyler(
                         if (start < end) {
                             addStyle(forcedLinkStyle, start, end)
                         }
+                    }
+                    // Applied after link styling so a hidden span that is also a
+                    // link stays invisible; the space it takes is unchanged.
+                    hiddenRanges.forEach { range ->
+                        addStyle(SpanStyle(color = Color.Transparent), range.first, range.last + 1)
                     }
                 }
             }

@@ -321,10 +321,24 @@ kotlin {
             val iosSimulatorArm64Main by getting {
                 dependsOn(iosMain)
             }
+            // Tests for code that only exists in mobileMain (shared phone/tablet UI,
+            // media overlay playback). commonTest has to stay target-agnostic: the
+            // desktop target never sees mobileMain, so keeping these there broke
+            // `:shared:compileTestKotlinDesktop` and every desktop parser test with it.
+            val mobileTest by creating {
+                dependsOn(commonTest.get())
+                dependencies {
+                    implementation(kotlin("test"))
+                }
+            }
+            val androidHostTest by getting {
+                dependsOn(mobileTest)
+            }
             // Manual iosMain intermediates above skip the default hierarchy's iosTest
             // wiring; without this, src/iosTest is never compiled or run.
             val iosTest by creating {
                 dependsOn(commonTest.get())
+                dependsOn(mobileTest)
             }
             val iosArm64Test by getting {
                 dependsOn(iosTest)

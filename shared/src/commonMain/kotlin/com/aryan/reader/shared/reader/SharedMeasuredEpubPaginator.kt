@@ -34,7 +34,10 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.aryan.reader.paginatedreader.BlockStyle
 import com.aryan.reader.paginatedreader.CssStyle
+import com.aryan.reader.paginatedreader.flexMainAxisGap
+import com.aryan.reader.paginatedreader.isFlexRow
 import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
 import com.aryan.reader.paginatedreader.intrinsicImageWidthPx
 import com.aryan.reader.paginatedreader.PaginationStackFragmentationPlan
@@ -566,7 +569,7 @@ class SharedMeasuredEpubPaginator(
                 baseStyle = baseStyle,
                 settings = settings,
                 includeTrailingBottomMargin = true
-            )
+            ) + flexGapPx(block.style.blockStyle, block.children.size)
             is SemanticWrappingBlock -> measureWrapping(block, geometry, baseStyle, settings)
             is SemanticImage -> measureImage(block, geometry, settings)
             is SemanticMath -> measureMath(block, geometry, baseStyle, settings)
@@ -1287,6 +1290,17 @@ class SharedMeasuredEpubPaginator(
     }
 
     private fun Dp.toPxInt(): Int = with(density) { toPx().roundToInt() }
+
+    /**
+     * Space `gap` adds between stacked flex items. It is not a margin, so the
+     * stack measurement cannot see it; omitting it under-measures every gapped
+     * flex column and the last item gets clipped.
+     */
+    private fun flexGapPx(style: BlockStyle, childCount: Int): Int {
+        if (style.isFlexRow || childCount < 2) return 0
+        val gap = style.flexMainAxisGap
+        return if (gap.isSpecified) gap.toPxInt() * (childCount - 1) else 0
+    }
 
     private fun com.aryan.reader.paginatedreader.BoxBorders.verticalPx(): Int {
         return top.toPxIfSpecified() + bottom.toPxIfSpecified()

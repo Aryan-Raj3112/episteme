@@ -1280,15 +1280,11 @@ internal fun PaginatedReaderContent(
                                         }
 
                                         is FlexContainerBlock -> {
-
-                                            if (block.style.flexDirection == "row") {
-                                                val horizontalArrangement =
-                                                    nativeFlexRowHorizontalArrangement(block.style.justifyContent)
-                                                val verticalAlignment =
-                                                    nativeFlexRowVerticalAlignment(block.style.alignItems)
-                                                val chantChildren: @Composable () -> Unit = {
-                                                    block.children.forEach { childBlock ->
-                                                        RenderFlexChildBlock(
+                                            // One argument list for both flex directions: an item that opts out of
+                                            // stretch is wrapped in its own alignment box instead of repeating
+                                            // these parameters at each call site.
+                                            val renderFlexChild: @Composable (ContentBlock) -> Unit = { childBlock ->
+                                                RenderFlexChildBlock(
                                                             childBlock = childBlock,
                                                             textStyle = textStyle,
                                                             imageSizeMultiplier = imageSizeMultiplier,
@@ -1322,75 +1318,70 @@ internal fun PaginatedReaderContent(
                                                             density = density,
                                                             imageLoader = imageLoader,
                                                             pageIndex = bookPageIndex
-                                                        )
-                                                    }
-                                                }
+                                                )
+                                            }
+
+                                            if (block.style.isFlexRow) {
+                                                val horizontalArrangement = nativeFlexRowHorizontalArrangement(
+                                                    block.style.justifyContent,
+                                                    block.style.flexMainAxisGap
+                                                )
+                                                val verticalAlignment = nativeFlexRowVerticalAlignment(block.style.alignItems)
                                                 if (block.style.display == "reader-chant-flow") {
                                                     FlowRow(
                                                         modifier = paddingModifier.fillMaxWidth(),
                                                         horizontalArrangement = Arrangement.SpaceBetween,
                                                         verticalArrangement = Arrangement.Bottom,
-                                                        content = { chantChildren() }
+                                                        content = { block.children.forEach { childBlock -> renderFlexChild(childBlock) } }
                                                     )
                                                 } else {
                                                     Row(
                                                         modifier = paddingModifier.fillMaxWidth(),
                                                         horizontalArrangement = horizontalArrangement,
-                                                        verticalAlignment = verticalAlignment,
-                                                        content = { chantChildren() }
-                                                    )
+                                                        verticalAlignment = verticalAlignment
+                                                    ) {
+                                                        block.children.forEach { childBlock ->
+                                                            if (childBlock.style.hasSelfAlignment()) {
+                                                                val alignment = nativeFlexRowChildVerticalAlignment(
+                                                                    childBlock.style.alignSelf,
+                                                                    block.style.alignItems
+                                                                )
+                                                                Box(modifier = Modifier.align(alignment)) {
+                                                                    renderFlexChild(childBlock)
+                                                                }
+                                                            } else {
+                                                                renderFlexChild(childBlock)
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             } else {
-                                                val verticalArrangement =
-                                                    nativeFlexColumnVerticalArrangement(block.style.justifyContent)
-                                                val horizontalAlignment =
-                                                    nativeFlexColumnHorizontalAlignment(block.style.alignItems)
+                                                val verticalArrangement = nativeFlexColumnVerticalArrangement(
+                                                    block.style.justifyContent,
+                                                    block.style.flexMainAxisGap
+                                                )
+                                                val horizontalAlignment = nativeFlexColumnHorizontalAlignment(block.style.alignItems)
                                                 Column(
                                                     modifier = paddingModifier.fillMaxWidth(),
                                                     verticalArrangement = verticalArrangement,
                                                     horizontalAlignment = horizontalAlignment
                                                 ) {
                                                     block.children.forEach { childBlock ->
-                                                        RenderFlexChildBlock(
-                                                            childBlock = childBlock,
-                                                            textStyle = textStyle,
-                                                            imageSizeMultiplier = imageSizeMultiplier,
-                                                            hideImages = hideImages,
-                                                            searchQuery = searchQuery,
-                                                            searchHighlightColor = searchHighlightColor,
-                                                            ttsHighlightInfo = ttsHighlightInfo,
-                                                            ttsHighlightColor = ttsHighlightColor,
-                                                            textMeasurer = textMeasurer,
-                                                            onLinkClickCallback = onLinkClickCallback,
-                                                            onGeneralTapCallback = onGeneralTapCallback,
-                                                            userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
-                                                            noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
-                                                            activeSelection = activeSelection,
-                                                            onSelectionChange = { sel ->
-                                                                activeSelection =
-                                                                    sel
-                                                            },
-                                                            onHighlightClick = { highlight, _ ->
-                                                                onNoteRequested(
-                                                                    highlight.cfi
-                                                                )
-                                                                activeSelection =
-                                                                    null
-                                                            },
-                                                            isDarkTheme = isDarkTheme,
-                                                            themeBackgroundColor = effectiveBg,
-                                                            themeTextColor = effectiveText,
-                                                            blockLayoutMap = blockLayoutMap,
-                                                            density = density,
-                                                            imageLoader = imageLoader,
-                                                            pageIndex = bookPageIndex
-                                                        )
+                                                        if (childBlock.style.hasSelfAlignment()) {
+                                                            val alignment = nativeFlexColumnChildAlignment(
+                                                                childBlock.style.alignSelf,
+                                                                block.style.alignItems
+                                                            )
+                                                            Box(modifier = Modifier.align(alignment)) {
+                                                                renderFlexChild(childBlock)
+                                                            }
+                                                        } else {
+                                                            renderFlexChild(childBlock)
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
-
                                         is MathBlock -> {
                                             val svgContent = block.svgContent?.takeIf { it.isNotBlank() }
                                             Timber.d(

@@ -17,6 +17,7 @@ import com.aryan.reader.paginatedreader.CssStyle
 import com.aryan.reader.paginatedreader.FontFaceInfo
 import com.aryan.reader.paginatedreader.FontFamilyMapper
 import com.aryan.reader.paginatedreader.OptimizedCssRules
+import com.aryan.reader.paginatedreader.resolveCssWideKeywords
 import com.aryan.reader.paginatedreader.SemanticBlock
 import com.aryan.reader.paginatedreader.isEbookmakerImageMarkerId
 import com.aryan.reader.paginatedreader.readerMissingFigureText
@@ -629,32 +630,34 @@ private class SharedSemanticCssMatcher(
     /**
      * Merges an element's own style over its inherited style, mirroring the
      * JVM parser's inherited propagation (span/paragraph merge, block list
-     * and visibility inheritance, em font-size resolution). Embedded
+     * and visibility inheritance, em font-size resolution, CSS-wide keyword
+     * resolution against the parent). Embedded
      * `@font-face` families stay as names here (load-time has no font files);
      * only generic families resolve, exactly like the JVM loader's empty
      * font map.
      */
     fun finalizeElementStyle(own: CssStyle, inherited: CssStyle): CssStyle {
-        val blockStyle = own.blockStyle.copy(
-            listStyleType = own.blockStyle.listStyleType ?: inherited.blockStyle.listStyleType,
-            listStyleImage = own.blockStyle.listStyleImage ?: inherited.blockStyle.listStyleImage,
-            visibility = own.blockStyle.visibility ?: inherited.blockStyle.visibility
+        val resolvedOwn = own.resolveCssWideKeywords(inherited)
+        val blockStyle = resolvedOwn.blockStyle.copy(
+            listStyleType = resolvedOwn.blockStyle.listStyleType ?: inherited.blockStyle.listStyleType,
+            listStyleImage = resolvedOwn.blockStyle.listStyleImage ?: inherited.blockStyle.listStyleImage,
+            visibility = resolvedOwn.blockStyle.visibility ?: inherited.blockStyle.visibility
         )
-        return own.copy(
-            spanStyle = inherited.spanStyle.merge(own.spanStyle),
-            paragraphStyle = inherited.paragraphStyle.merge(own.paragraphStyle),
+        return resolvedOwn.copy(
+            spanStyle = inherited.spanStyle.merge(resolvedOwn.spanStyle),
+            paragraphStyle = inherited.paragraphStyle.merge(resolvedOwn.paragraphStyle),
             blockStyle = blockStyle,
-            fontFamilies = own.fontFamilies.ifEmpty { inherited.fontFamilies },
-            fontSize = own.fontSize,
-            textTransform = own.textTransform ?: inherited.textTransform,
-            hyphens = own.hyphens ?: inherited.hyphens,
-            fontVariantNumeric = own.fontVariantNumeric ?: inherited.fontVariantNumeric,
-            textEmphasis = own.textEmphasis ?: inherited.textEmphasis,
-            whiteSpace = own.whiteSpace ?: inherited.whiteSpace,
-            writingMode = own.writingMode ?: inherited.writingMode,
-            wordBreak = own.wordBreak ?: inherited.wordBreak,
-            wordSpacing = own.wordSpacing,
-            customProperties = inherited.customProperties + own.customProperties
+            fontFamilies = resolvedOwn.fontFamilies.ifEmpty { inherited.fontFamilies },
+            fontSize = resolvedOwn.fontSize,
+            textTransform = resolvedOwn.textTransform ?: inherited.textTransform,
+            hyphens = resolvedOwn.hyphens ?: inherited.hyphens,
+            fontVariantNumeric = resolvedOwn.fontVariantNumeric ?: inherited.fontVariantNumeric,
+            textEmphasis = resolvedOwn.textEmphasis ?: inherited.textEmphasis,
+            whiteSpace = resolvedOwn.whiteSpace ?: inherited.whiteSpace,
+            writingMode = resolvedOwn.writingMode ?: inherited.writingMode,
+            wordBreak = resolvedOwn.wordBreak ?: inherited.wordBreak,
+            wordSpacing = resolvedOwn.wordSpacing,
+            customProperties = inherited.customProperties + resolvedOwn.customProperties
         ).resolveSharedSemanticFontSizeAgainst(inherited).withSharedSemanticFontFamily()
     }
 

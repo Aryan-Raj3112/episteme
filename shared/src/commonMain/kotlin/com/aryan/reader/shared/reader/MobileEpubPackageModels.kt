@@ -663,7 +663,7 @@ data class MobileEpubManifestItem(
 // 4 -> 5: `EpubBook` gained `mediaOverlays`. The extracted-book cache is the whole `EpubBook`, and
 // a copy written by 4 has no overlay index field, so a narrated book would open mute until its
 // cache happened to be rewritten. Bumping the version is what makes the index appear immediately.
-const val MOBILE_EPUB_EXTRACTION_CACHE_VERSION = 5
+const val MOBILE_EPUB_EXTRACTION_CACHE_VERSION = 6
 
 @Serializable
 data class MobileEpubExtractionCacheManifest(

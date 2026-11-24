@@ -902,6 +902,10 @@ object CssParser {
         var flexDirection: String? = null
         var justifyContent: String? = null
         var alignItems: String? = null
+        var alignSelf: String? = null
+        var gap: Dp = Dp.Unspecified
+        var rowGap: Dp = Dp.Unspecified
+        var columnGap: Dp = Dp.Unspecified
         var filter: String? = null
         var borderCollapse: String? = null
         var borderSpacing: Dp = 0.dp
@@ -930,6 +934,12 @@ object CssParser {
         var marginRightStr: String? = null
         var marginBottomStr: String? = null
         var marginLeftStr: String? = null
+
+        // Resets and CSS-wide keywords cannot be folded into the values above:
+        // a literal 0 is also the "unspecified" marker, and a keyword only has
+        // meaning once the parent element's style is known.
+        var explicitZero = 0L
+        var cascadeDeclarations: MutableMap<String, String?>? = null
 
         var wordSpacing: TextUnit = TextUnit.Unspecified
         var textDecorationStyle: String? = null
@@ -985,6 +995,33 @@ object CssParser {
                 }
                 val value = resolveCssVariables(rawValue, customProperties)
                 val valueLower = value.trim().lowercase()
+
+                // Record keyword/ordinary declarations for the properties the
+                // resolver understands, then skip parsing: `inherit` is not a
+                // length and must not be read as 0.
+                val wideKeyword = CssWideKeywords.keywordOrNull(valueLower)
+                val propertyKey = if (key == "-webkit-text-fill-color") "color" else key
+                if (propertyKey in CssWideKeywords.properties) {
+                    (cascadeDeclarations ?: linkedMapOf<String, String?>().also {
+                        cascadeDeclarations = it
+                    })[propertyKey] = wideKeyword
+                }
+                if (wideKeyword != null) {
+                    return@forEach
+                }
+                // A later declaration replaces the reset state of an earlier one
+                // for the same property group (`padding: 0; padding: 5px` is not
+                // a reset), so the bits are cleared before the new ones are set.
+                val resetGroup = resetGroupMask(key)
+                if (resetGroup != 0L) {
+                    explicitZero = (explicitZero and resetGroup.inv()) or explicitResetBits(
+                        key = key,
+                        value = value,
+                        baseFontSizeSp = baseFontSizeSp,
+                        density = density,
+                        containerWidthPx = containerWidthPx
+                    )
+                }
 
                 fun updateUnifiedBorder(
                     widthStr: String?,
@@ -1045,7 +1082,9 @@ object CssParser {
                         if (valueLower == "italic" || valueLower == "oblique") spanStyle = spanStyle.copy(fontStyle = FontStyle.Italic)
                         else if (valueLower == "normal") spanStyle = spanStyle.copy(fontStyle = FontStyle.Normal)
                     }
-                    "color" -> {
+                    // `-webkit-text-fill-color` is the same channel in this engine
+                    // (it is what many styled books use instead of `color`).
+                    "color", "-webkit-text-fill-color" -> {
                         parseColor(value, spanStyle.color)?.let {
                             spanStyle = spanStyle.copy(color = maybeAdaptColor(it, isBackground = false))
                         }
@@ -1330,6 +1369,26 @@ object CssParser {
                     "flex-direction" -> flexDirection = valueLower
                     "justify-content" -> justifyContent = valueLower
                     "align-items" -> alignItems = valueLower
+                    "align-self" -> alignSelf = valueLower
+                    "gap" -> {
+                        // One length sets both axes; two set row-gap then column-gap. A
+                        // percentage resolves against the container width, the only axis
+                        // the parser knows while reading a declaration.
+                        val lengths = splitCssTokens(value)
+                            .map { parseCssSizeToDp(it, baseFontSizeSp, density, containerWidthPx) }
+                            .filter { it.isSpecified }
+                        when (lengths.size) {
+                            1 -> gap = lengths[0]
+                            in 2..Int.MAX_VALUE -> {
+                                rowGap = lengths[0]
+                                columnGap = lengths[1]
+                            }
+                        }
+                    }
+                    "row-gap", "grid-row-gap" ->
+                        rowGap = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
+                    "column-gap", "grid-column-gap" ->
+                        columnGap = parseCssSizeToDp(value, baseFontSizeSp, density, containerWidthPx)
                     "filter" -> filter = valueLower
                     "box-sizing" -> boxSizing = valueLower
                     "content" -> content = value
@@ -1498,6 +1557,10 @@ object CssParser {
             flexDirection = flexDirection,
             justifyContent = justifyContent,
             alignItems = alignItems,
+            alignSelf = alignSelf,
+            gap = gap,
+            rowGap = rowGap,
+            columnGap = columnGap,
             horizontalAlign = finalHorizontalAlign,
             filter = filter,
             borderCollapse = borderCollapse,
@@ -1514,12 +1577,14 @@ object CssParser {
             visibility = visibility,
             objectFit = objectFit,
             objectPosition = objectPosition,
-            backgroundImage = backgroundImage
+            backgroundImage = backgroundImage,
+            explicitZero = explicitZero
         )
         return CssStyle(
             spanStyle, clampedReaderParagraphStyle(paragraphStyle, padding, baseFontSizeSp, density), blockStyle, fontFamilies, display, fontSize, textTransform, boxSizing, content, hyphens, fontVariantNumeric, textEmphasis,
             wordSpacing, textDecorationStyle, textDecorationColor, textUnderlineOffset, whiteSpace, verticalAlign, customProperties,
-            writingMode, textCombine, wordBreak
+            writingMode, textCombine, wordBreak,
+            cascadeDeclarations = cascadeDeclarations ?: emptyMap()
         )
     }
 
@@ -1555,6 +1620,175 @@ object CssParser {
         isSp -> value * density
         else -> null
     }
+
+    /**
+     * Which box-model properties a declaration reset to zero/none. Only the
+     * properties whose "unspecified" marker equals their initial value need
+     * this: without it `padding: 0 !important` from a book's plain-text layer
+     * silently loses to an earlier `padding: 1rem`.
+     */
+    private fun explicitResetBits(
+        key: String,
+        value: String,
+        baseFontSizeSp: Float,
+        density: Float,
+        containerWidthPx: Int
+    ): Long {
+        fun isZeroLength(token: String): Boolean {
+            val trimmed = token.trim().lowercase()
+            if (trimmed.isEmpty()) return false
+            if (trimmed in NON_LENGTH_KEYWORDS) return false
+            return parseCssSizeToDp(trimmed, baseFontSizeSp, density, containerWidthPx) == 0.dp
+        }
+
+        fun sides(): List<String> = expandBoxSidesForReset(splitCssTokens(value))
+
+        fun bitsForSides(bits: LongArray, predicate: (String) -> Boolean): Long {
+            var mask = 0L
+            sides().forEachIndexed { index, token ->
+                if (predicate(token)) mask = mask or bits[index]
+            }
+            return mask
+        }
+
+        return when (key) {
+            "margin" -> bitsForSides(MARGIN_RESET_BITS, ::isZeroLength)
+            "padding" -> bitsForSides(PADDING_RESET_BITS, ::isZeroLength)
+            "margin-top" -> if (isZeroLength(value)) BlockStyleReset.MARGIN_TOP else 0L
+            "margin-right" -> if (isZeroLength(value)) BlockStyleReset.MARGIN_RIGHT else 0L
+            "margin-bottom" -> if (isZeroLength(value)) BlockStyleReset.MARGIN_BOTTOM else 0L
+            "margin-left" -> if (isZeroLength(value)) BlockStyleReset.MARGIN_LEFT else 0L
+            "padding-top" -> if (isZeroLength(value)) BlockStyleReset.PADDING_TOP else 0L
+            "padding-right" -> if (isZeroLength(value)) BlockStyleReset.PADDING_RIGHT else 0L
+            "padding-bottom" -> if (isZeroLength(value)) BlockStyleReset.PADDING_BOTTOM else 0L
+            "padding-left" -> if (isZeroLength(value)) BlockStyleReset.PADDING_LEFT else 0L
+            "border" -> if (borderShorthandIsReset(value, baseFontSizeSp, density, containerWidthPx)) {
+                CssWideKeywords.allBorderResetBits
+            } else {
+                0L
+            }
+            "border-top" -> if (borderShorthandIsReset(value, baseFontSizeSp, density, containerWidthPx)) BlockStyleReset.BORDER_TOP else 0L
+            "border-right" -> if (borderShorthandIsReset(value, baseFontSizeSp, density, containerWidthPx)) BlockStyleReset.BORDER_RIGHT else 0L
+            "border-bottom" -> if (borderShorthandIsReset(value, baseFontSizeSp, density, containerWidthPx)) BlockStyleReset.BORDER_BOTTOM else 0L
+            "border-left" -> if (borderShorthandIsReset(value, baseFontSizeSp, density, containerWidthPx)) BlockStyleReset.BORDER_LEFT else 0L
+            "border-width" -> bitsForSides(BORDER_RESET_BITS, ::isZeroLength)
+            "border-style" -> bitsForSides(BORDER_RESET_BITS) { it.lowercase() in NONE_BORDER_STYLES }
+            "border-top-width" -> if (isZeroLength(value)) BlockStyleReset.BORDER_TOP else 0L
+            "border-right-width" -> if (isZeroLength(value)) BlockStyleReset.BORDER_RIGHT else 0L
+            "border-bottom-width" -> if (isZeroLength(value)) BlockStyleReset.BORDER_BOTTOM else 0L
+            "border-left-width" -> if (isZeroLength(value)) BlockStyleReset.BORDER_LEFT else 0L
+            "border-radius" -> bitsForSides(RADIUS_RESET_BITS, ::isZeroLength)
+            "border-top-left-radius" -> if (isZeroLength(value)) BlockStyleReset.RADIUS_TOP_LEFT else 0L
+            "border-top-right-radius" -> if (isZeroLength(value)) BlockStyleReset.RADIUS_TOP_RIGHT else 0L
+            "border-bottom-right-radius" -> if (isZeroLength(value)) BlockStyleReset.RADIUS_BOTTOM_RIGHT else 0L
+            "border-bottom-left-radius" -> if (isZeroLength(value)) BlockStyleReset.RADIUS_BOTTOM_LEFT else 0L
+            // `auto` is the initial value of every size property here; `none` only
+            // exists for the maximums, but accepting it is harmless and cheaper
+            // than a separate keyword set per property.
+            "width", "height", "max-width", "max-height", "min-width", "min-height" -> {
+                val keyword = value.trim().lowercase()
+                if (isZeroLength(value) || keyword in AUTO_SIZE_KEYWORDS) {
+                    SIZE_RESET_BITS.getValue(key)
+                } else {
+                    0L
+                }
+            }
+            else -> 0L
+        }
+    }
+
+    /** The reset bits a declaration of [key] is allowed to set or clear. */
+    private fun resetGroupMask(key: String): Long = when (key) {
+        "margin" -> CssWideKeywords.allMarginResetBits
+        "padding" -> CssWideKeywords.allPaddingResetBits
+        "margin-top" -> BlockStyleReset.MARGIN_TOP
+        "margin-right" -> BlockStyleReset.MARGIN_RIGHT
+        "margin-bottom" -> BlockStyleReset.MARGIN_BOTTOM
+        "margin-left" -> BlockStyleReset.MARGIN_LEFT
+        "padding-top" -> BlockStyleReset.PADDING_TOP
+        "padding-right" -> BlockStyleReset.PADDING_RIGHT
+        "padding-bottom" -> BlockStyleReset.PADDING_BOTTOM
+        "padding-left" -> BlockStyleReset.PADDING_LEFT
+        "border", "border-width", "border-style" -> CssWideKeywords.allBorderResetBits
+        "border-top", "border-top-width", "border-top-style" -> BlockStyleReset.BORDER_TOP
+        "border-right", "border-right-width", "border-right-style" -> BlockStyleReset.BORDER_RIGHT
+        "border-bottom", "border-bottom-width", "border-bottom-style" -> BlockStyleReset.BORDER_BOTTOM
+        "border-left", "border-left-width", "border-left-style" -> BlockStyleReset.BORDER_LEFT
+        "border-radius" -> CssWideKeywords.allRadiusResetBits
+        "border-top-left-radius" -> BlockStyleReset.RADIUS_TOP_LEFT
+        "border-top-right-radius" -> BlockStyleReset.RADIUS_TOP_RIGHT
+        "border-bottom-right-radius" -> BlockStyleReset.RADIUS_BOTTOM_RIGHT
+        "border-bottom-left-radius" -> BlockStyleReset.RADIUS_BOTTOM_LEFT
+        "width" -> BlockStyleReset.WIDTH
+        "max-width" -> BlockStyleReset.MAX_WIDTH
+        "min-width" -> BlockStyleReset.MIN_WIDTH
+        "height" -> BlockStyleReset.HEIGHT
+        "max-height" -> BlockStyleReset.MAX_HEIGHT
+        "min-height" -> BlockStyleReset.MIN_HEIGHT
+        else -> 0L
+    }
+
+    private fun borderShorthandIsReset(
+        value: String,
+        baseFontSizeSp: Float,
+        density: Float,
+        containerWidthPx: Int
+    ): Boolean {
+        val (width, style, _) = parseBorderShorthand(value, baseFontSizeSp, density, containerWidthPx)
+        if (style == "none" || style == "hidden") return true
+        return width != null && width == 0.dp
+    }
+
+    private fun expandBoxSidesForReset(tokens: List<String>): List<String> = when (tokens.size) {
+        1 -> List(4) { tokens[0] }
+        2 -> listOf(tokens[0], tokens[1], tokens[0], tokens[1])
+        3 -> listOf(tokens[0], tokens[1], tokens[2], tokens[1])
+        0 -> listOf("", "", "", "")
+        else -> tokens.take(4)
+    }
+
+    private val MARGIN_RESET_BITS = longArrayOf(
+        BlockStyleReset.MARGIN_TOP,
+        BlockStyleReset.MARGIN_RIGHT,
+        BlockStyleReset.MARGIN_BOTTOM,
+        BlockStyleReset.MARGIN_LEFT
+    )
+    private val PADDING_RESET_BITS = longArrayOf(
+        BlockStyleReset.PADDING_TOP,
+        BlockStyleReset.PADDING_RIGHT,
+        BlockStyleReset.PADDING_BOTTOM,
+        BlockStyleReset.PADDING_LEFT
+    )
+    private val BORDER_RESET_BITS = longArrayOf(
+        BlockStyleReset.BORDER_TOP,
+        BlockStyleReset.BORDER_RIGHT,
+        BlockStyleReset.BORDER_BOTTOM,
+        BlockStyleReset.BORDER_LEFT
+    )
+    private val RADIUS_RESET_BITS = longArrayOf(
+        BlockStyleReset.RADIUS_TOP_LEFT,
+        BlockStyleReset.RADIUS_TOP_RIGHT,
+        BlockStyleReset.RADIUS_BOTTOM_RIGHT,
+        BlockStyleReset.RADIUS_BOTTOM_LEFT
+    )
+
+    private val NONE_BORDER_STYLES = setOf("none", "hidden")
+
+    private val AUTO_SIZE_KEYWORDS = setOf("auto", "none")
+
+    private val SIZE_RESET_BITS: Map<String, Long> = mapOf(
+        "width" to BlockStyleReset.WIDTH,
+        "height" to BlockStyleReset.HEIGHT,
+        "max-width" to BlockStyleReset.MAX_WIDTH,
+        "max-height" to BlockStyleReset.MAX_HEIGHT,
+        "min-width" to BlockStyleReset.MIN_WIDTH,
+        "min-height" to BlockStyleReset.MIN_HEIGHT
+    )
+
+    private val NON_LENGTH_KEYWORDS = setOf(
+        "auto", "none", "normal", "inherit", "initial", "unset", "revert",
+        "revert-layer", "min-content", "max-content", "fit-content"
+    )
 
     private fun parseShorthand4(value: String, baseFontSize: Float, density: Float, containerWidth: Int): List<Dp> {
         val parts = splitCssTokens(value)
@@ -1680,8 +1914,10 @@ object CssParser {
         return when {
             trimmed.endsWith("px") -> trimmed.removeSuffix("px").toFloatOrNull()?.dp ?: Dp.Unspecified
             trimmed.endsWith("dp") -> trimmed.removeSuffix("dp").toFloatOrNull()?.dp ?: Dp.Unspecified
-            trimmed.endsWith("em") -> trimmed.removeSuffix("em").toFloatOrNull()?.let { (it * baseFontSizeSp).dp } ?: Dp.Unspecified
+            // `rem` must be tested before `em`: "1.2rem" also ends with "em", and the
+            // first matching branch used to swallow it and leave "1.2r" unparsable.
             trimmed.endsWith("rem") -> trimmed.removeSuffix("rem").toFloatOrNull()?.let { (it * baseFontSizeSp).dp } ?: Dp.Unspecified
+            trimmed.endsWith("em") -> trimmed.removeSuffix("em").toFloatOrNull()?.let { (it * baseFontSizeSp).dp } ?: Dp.Unspecified
             trimmed.endsWith("pt") -> trimmed.removeSuffix("pt").toFloatOrNull()?.let { (it * 1.33f).dp } ?: Dp.Unspecified
             trimmed.endsWith("%") -> {
                 val percent = trimmed.removeSuffix("%").toFloatOrNull()
@@ -1725,8 +1961,8 @@ object CssParser {
             return when {
                 token.endsWith("px") -> token.removeSuffix("px").toFloatOrNull()?.let { it * density }
                 token.endsWith("dp") -> token.removeSuffix("dp").toFloatOrNull()?.let { it * density }
-                token.endsWith("em") -> token.removeSuffix("em").toFloatOrNull()?.let { it * baseFontSizeSp * density }
                 token.endsWith("rem") -> token.removeSuffix("rem").toFloatOrNull()?.let { it * baseFontSizeSp * density }
+                token.endsWith("em") -> token.removeSuffix("em").toFloatOrNull()?.let { it * baseFontSizeSp * density }
                 token.endsWith("pt") -> token.removeSuffix("pt").toFloatOrNull()?.let { it * 1.333f * density }
                 token.endsWith("%") -> token.removeSuffix("%").toFloatOrNull()?.let { (it / 100f) * containerWidthPx }
                 else -> token.toFloatOrNull()

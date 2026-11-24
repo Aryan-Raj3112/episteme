@@ -70,7 +70,11 @@ import com.aryan.reader.paginatedreader.SemanticSpacer
 import com.aryan.reader.paginatedreader.SemanticTable
 import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.SemanticWrappingBlock
+import com.aryan.reader.paginatedreader.hasSelfAlignment
 import com.aryan.reader.paginatedreader.imagePageHeightBudgetPx
+import com.aryan.reader.paginatedreader.nativeFlexColumnChildAlignment
+import com.aryan.reader.paginatedreader.nativeFlexRowChildVerticalAlignment
+import com.aryan.reader.paginatedreader.isFlexRow
 import com.aryan.reader.paginatedreader.NATIVE_LIST_MARKER_AREA_WIDTH_DP
 import com.aryan.reader.paginatedreader.NATIVE_LIST_MARKER_END_PADDING_DP
 import com.aryan.reader.paginatedreader.nativeImageContentAlignment
@@ -391,6 +395,13 @@ internal fun SharedSemanticBlockStack(
     fallbackFontFamily: FontFamily,
     settings: ReaderSettings,
     includeTrailingBottomMargin: Boolean,
+    /**
+     * Cross-axis placement for each block. Only a flex container passes one; the
+     * modifier is built in the container's scope so `Modifier.align` resolves.
+     */
+    itemModifier: (SemanticBlock) -> Modifier = { Modifier },
+    /** False for a flex item sized to content rather than stretched to the line. */
+    itemFillsWidth: (SemanticBlock) -> Boolean = { true },
     onReaderTap: () -> Unit,
     onReaderHorizontalTap: ((horizontalFraction: Float, touchY: Float) -> Unit)? = null,
     immediateDragSelectEnabled: Boolean = true,
@@ -427,6 +438,8 @@ internal fun SharedSemanticBlockStack(
             } else {
                 0.dp
             },
+            flexItemModifier = itemModifier(block),
+            fillWidth = itemFillsWidth(block),
             onReaderTap = onReaderTap,
             onReaderHorizontalTap = onReaderHorizontalTap,
             immediateDragSelectEnabled = immediateDragSelectEnabled,
@@ -473,15 +486,25 @@ internal fun SharedSemanticBlockView(
     onTextLaidOut: ((SharedNativeTextFit) -> Unit)? = null,
     onBlockLaidOut: ((SharedNativeBlockFit) -> Unit)? = null,
     /** See [toReaderAnnotatedString]. Null keeps the legacy per-block chain. */
-    chapterTextIndex: EpubChapterTextIndex? = null
+    chapterTextIndex: EpubChapterTextIndex? = null,
+    /**
+     * Alignment wrapper prepared by the caller. Only a flex parent can supply one,
+     * because `Modifier.align` is scoped to the row/column that lays the item out.
+     */
+    flexItemModifier: Modifier = Modifier,
+    /**
+     * False when this block is a flex item that opts out of `stretch` through
+     * `align-self`; such an item sizes to its content instead of the line.
+     */
+    fillWidth: Boolean = true
 ) {
     val blockStyle = block.style.blockStyle.sharedNativeThemeBlockStyle(
         isDarkTheme = settings.darkMode,
         background = background,
         foreground = foreground
     )
-    val modifier = Modifier
-        .fillMaxWidth()
+    val modifier = flexItemModifier
+        .then(if (fillWidth) Modifier.fillMaxWidth() else Modifier)
         .padding(
             start = blockStyle.margin.left.safeDp(),
             top = marginTop,
@@ -657,14 +680,22 @@ internal fun SharedSemanticBlockView(
             }
 
             is SemanticFlexContainer -> {
-                if (blockStyle.flexDirection == "row") {
+                if (blockStyle.isFlexRow) {
                     Row(
                         modifier = contentModifier.fillMaxWidth(),
                         horizontalArrangement = blockStyle.sharedNativeFlexHorizontalArrangement(),
                         verticalAlignment = blockStyle.sharedNativeFlexVerticalAlignment()
                     ) {
                         block.children.forEach { child ->
-                            Box(modifier = Modifier.weight(1f, fill = false)) {
+                            val alignment = nativeFlexRowChildVerticalAlignment(
+                                child.style.blockStyle.alignSelf,
+                                blockStyle.alignItems
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f, fill = false)
+                                    .align(alignment)
+                            ) {
                                 SharedSemanticBlockStack(
                                     blocks = listOf(child),
                                     page = page,
@@ -713,6 +744,15 @@ internal fun SharedSemanticBlockView(
                             fallbackFontFamily = fallbackFontFamily,
                             settings = settings,
                             includeTrailingBottomMargin = true,
+                            itemModifier = { child ->
+                                Modifier.align(
+                                    nativeFlexColumnChildAlignment(
+                                        child.style.blockStyle.alignSelf,
+                                        blockStyle.alignItems
+                                    )
+                                )
+                            },
+                            itemFillsWidth = { child -> !child.style.blockStyle.hasSelfAlignment() },
                             onReaderTap = onReaderTap,
                             onReaderHorizontalTap = onReaderHorizontalTap,
                             immediateDragSelectEnabled = immediateDragSelectEnabled,

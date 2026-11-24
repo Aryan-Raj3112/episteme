@@ -64,4 +64,47 @@ class CssDimensionParsingTest {
         // Container 900 physical px at density 3 => 300dp; calc(100% - 30px) => 300 - 30 = 270dp.
         assertEquals(Dp(270f), CssParser.parseCssDimension("calc(100% - 30px)", 16f, 3f, 900))
     }
+
+    /**
+     * `rem` also ends with `em`, so it must be matched first. Before that ordering was
+     * fixed, "1.2rem" stripped to "1.2r", failed to parse and silently became 0.dp, which
+     * erased every rem margin/padding/radius in books that size in rem.
+     */
+    @Test
+    fun `rem lengths resolve against the root font size`() {
+        assertEquals(Dp(8f), CssParser.parseCssDimension("0.5rem", 16f, 1f, 1080))
+        assertEquals(Dp(19.2f), CssParser.parseCssDimension("1.2rem", 16f, 1f, 1080))
+        assertEquals(Dp(8f), CssParser.parseCssSizeToDp("0.5rem", 16f, 1f, 1080))
+        // The public helper in StyleUtils must agree with the parser's own conversion.
+        assertEquals(Dp(19.2f), parseCssSizeToDp("1.2rem", 16f, 1f, 1080))
+    }
+
+    @Test
+    fun `em and rem stay distinct units`() {
+        // Both resolve against the root size here because the element size is the base
+        // size in this expression, but neither may fall through to 0.dp.
+        assertEquals(Dp(32f), CssParser.parseCssDimension("2rem", 16f, 1f, 1080))
+        assertEquals(Dp(32f), CssParser.parseCssDimension("2em", 16f, 1f, 1080))
+        assertEquals(TextUnit(2f, TextUnitType.Em), parseCssDimensionToTextUnit("2rem", 1080, 1f))
+    }
+
+    @Test
+    fun `calc expressions resolve rem against the root font size`() {
+        assertEquals(Dp(20f), CssParser.parseCssDimension("calc(1rem + 4px)", 16f, 1f, 1080))
+    }
+
+    /**
+     * A bare zero is a valid length in every unit. It used to fall through to
+     * [TextUnit.Unspecified], so `letter-spacing: 0 !important` could not cancel an
+     * earlier `letter-spacing: 0.375em` and book separators rendered spread out.
+     */
+    @Test
+    fun `unitless zero is a zero length`() {
+        assertEquals(0f, parseCssDimensionToTextUnit("0", 1080, 1f).value)
+        assertEquals(TextUnitType.Sp, parseCssDimensionToTextUnit("0", 1080, 1f).type)
+        assertEquals(0f, CssParser.parseCssDimension("0", 16f, 1f, 1080).value)
+        // Nothing else without a unit may be read as a length.
+        assertEquals(TextUnit.Unspecified, parseCssDimensionToTextUnit("auto", 1080, 1f))
+        assertEquals(TextUnit.Unspecified, parseCssDimensionToTextUnit("1.5", 1080, 1f))
+    }
 }

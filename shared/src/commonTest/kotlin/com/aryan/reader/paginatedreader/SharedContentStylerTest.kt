@@ -90,6 +90,56 @@ class SharedContentStylerTest {
     }
 
     @Test
+    fun `inline visibility hidden paints nothing but keeps its space`() {
+        // Publisher CSS hides decorative glyphs (here a reply arrow) with
+        // `visibility:hidden` on an inline span. Only block containers honored it,
+        // so the raw glyph leaked into the page next to the label it decorates.
+        val styler = SharedContentStyler(
+            baseTextStyle = TextStyle(fontSize = 18.sp, color = Color.Black, fontFamily = FontFamily.Default),
+            fontFamilyMap = emptyMap(),
+            density = Density(1f),
+            isDarkTheme = false,
+            themeBackgroundColor = Color.White,
+            themeTextColor = Color.Black,
+            userTextAlign = null,
+            paragraphGapMultiplier = 1f,
+            applyThemeToSvg = { it },
+            embedImagesInSvg = { it }
+        )
+        val paragraph = SemanticParagraph(
+            text = "\u2514 Reply",
+            spans = listOf(
+                SemanticSpan(
+                    start = 0,
+                    end = 1,
+                    style = CssStyle(blockStyle = BlockStyle(visibility = "hidden")),
+                    tag = "span"
+                ),
+                SemanticSpan(
+                    start = 2,
+                    end = 7,
+                    style = CssStyle(spanStyle = SpanStyle(color = Color.Blue)),
+                    tag = "span"
+                )
+            ),
+            style = CssStyle(),
+            elementId = "reply",
+            cfi = null,
+            blockIndex = 0
+        )
+
+        val block = assertIs<ParagraphBlock>(styler.style(listOf(paragraph)).single())
+
+        assertEquals("\u2514 Reply", block.content.text)
+        assertTrue(
+            block.content.spanStyles.any { it.start == 0 && it.end == 1 && it.item.color == Color.Transparent }
+        )
+        assertTrue(
+            block.content.spanStyles.none { it.start == 2 && it.end == 7 && it.item.color == Color.Transparent }
+        )
+    }
+
+    @Test
     fun assemblesSemanticTextAndMathWithInjectedPlatformAdapters() {
         val adapterCalls = mutableListOf<String>()
         val styler = SharedContentStyler(

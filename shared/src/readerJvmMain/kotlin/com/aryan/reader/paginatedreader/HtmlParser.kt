@@ -28,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
@@ -410,7 +411,11 @@ private class SemanticHtmlParser(
         inheritedStyle: CssStyle,
         inheritedLinkHref: String? = null
     ): List<SemanticBlock> {
+        // Keywords are resolved before the inheritance merge below, so
+        // `color: inherit` cancels an author color instead of inheriting it as
+        // a literal value.
         val elementOwnStyle = getElementStyle(element, inheritedStyle.customProperties)
+            .resolveCssWideKeywords(inheritedStyle)
         val finalBlockStyle = elementOwnStyle.blockStyle.copy(
             listStyleType = elementOwnStyle.blockStyle.listStyleType ?: inheritedStyle.blockStyle.listStyleType,
             listStyleImage = elementOwnStyle.blockStyle.listStyleImage ?: inheritedStyle.blockStyle.listStyleImage,
@@ -544,8 +549,50 @@ private class SemanticHtmlParser(
         val pseudoStyle = rulesForElement(element, pseudoElement).fold(CssStyle()) { acc, rule ->
             acc.merge(rule.style)
         }
-        return inheritedStyle.merge(pseudoStyle).withResolvedFontFamily()
+        return inheritedStyle.pseudoInheritedBase().merge(pseudoStyle)
+            .resolveCssWideKeywords(inheritedStyle)
+            .withResolvedFontFamily()
     }
+
+    /**
+     * The style a box hands to the content it lays out. A box paints its own
+     * background, borders, padding, margin and explicit sizes, so children must
+     * not paint them a second time. Book CSS relies on this: a bubble inside a
+     * window is transparent unless it declares its own background.
+     */
+    private fun CssStyle.withoutOwnBoxModel(): CssStyle = copy(
+        blockStyle = blockStyle.copy(
+            backgroundColor = Color.Unspecified,
+            borderTop = null,
+            borderRight = null,
+            borderBottom = null,
+            borderLeft = null,
+            borderTopLeftRadius = 0.dp,
+            borderTopRightRadius = 0.dp,
+            borderBottomRightRadius = 0.dp,
+            borderBottomLeftRadius = 0.dp,
+            padding = BoxBorders(),
+            margin = BoxBorders(),
+            width = Dp.Unspecified,
+            maxWidth = Dp.Unspecified,
+            height = Dp.Unspecified,
+            minWidth = Dp.Unspecified,
+            minHeight = Dp.Unspecified,
+            maxHeight = Dp.Unspecified
+        )
+    )
+
+    /**
+     * Base for a pseudo-element: it inherits the element's inherited properties
+     * but owns its box. `display` and box properties are not inherited, and the
+     * pseudo's own `display` initial value is `inline`, so the element's box must
+     * be cleared instead of leaking into generated content.
+     */
+    private fun CssStyle.pseudoInheritedBase(): CssStyle =
+        withoutOwnBoxModel().copy(
+            display = null,
+            blockStyle = blockStyle.copy(display = null, position = null, float = null, clear = null)
+        )
 
     private fun CssStyle.withResolvedFontFamily(): CssStyle {
         if (spanStyle.fontFamily != null) return this
@@ -622,9 +669,9 @@ private class SemanticHtmlParser(
         }
 
         if (elementStyle.blockStyle.display == "flex") {
-            val children = element.children().flatMap { child ->
-                parseNodeToSemanticBlocks(child, elementStyle, inheritedLinkHref)
-            }
+            // Reuse the container walker so anonymous text items and generated
+            // content survive; flex children must not repaint the container box.
+            val children = parseContainer(element, elementStyle.withoutOwnBoxModel(), inheritedLinkHref)
             return listOf(SemanticFlexContainer(children, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
         }
 
@@ -642,15 +689,7 @@ private class SemanticHtmlParser(
                         elementStyle.blockStyle.borderBottomLeftRadius > 0.dp
 
                 if (hasBoxStyles) {
-                    val childStyle = elementStyle.copy(
-                        blockStyle = elementStyle.blockStyle.copy(
-                            backgroundColor = Color.Unspecified,
-                            borderTop = null, borderRight = null, borderBottom = null, borderLeft = null,
-                            padding = BoxBorders(),
-                            margin = BoxBorders()
-                        )
-                    )
-                    val children = parseContainer(element, childStyle, inheritedLinkHref)
+                    val children = parseContainer(element, elementStyle.withoutOwnBoxModel(), inheritedLinkHref)
                     listOf(SemanticFlexContainer(children, elementStyle, elementId, cfi, blockIndex = nextBlockIndex++))
                 } else {
                     val children = parseContainer(element, elementStyle, inheritedLinkHref)
@@ -695,15 +734,7 @@ private class SemanticHtmlParser(
                             headerStyle.blockStyle.borderBottomLeftRadius > 0.dp
 
                     if (hasBoxStyles) {
-                        val childStyle = headerStyle.copy(
-                            blockStyle = headerStyle.blockStyle.copy(
-                                backgroundColor = Color.Unspecified,
-                                borderTop = null, borderRight = null, borderBottom = null, borderLeft = null,
-                                padding = BoxBorders(),
-                                margin = BoxBorders()
-                            )
-                        )
-                        val children = parseContainer(element, childStyle, inheritedLinkHref)
+                        val children = parseContainer(element, headerStyle.withoutOwnBoxModel(), inheritedLinkHref)
                         listOf(SemanticFlexContainer(children, headerStyle, elementId, cfi, blockIndex = nextBlockIndex++))
                     } else {
                         parseContainer(element, headerStyle, inheritedLinkHref)
@@ -880,6 +911,69 @@ private class SemanticHtmlParser(
         }
     }
 
+    /** Container display values that make `::before`/`::after` generate their own block. */
+    private val blockLevelPseudoDisplays = setOf("block", "flex", "grid", "table", "list-item", "flow-root")
+
+    private fun CssStyle.isBlockLevelPseudoDisplay(): Boolean =
+        display?.trim()?.lowercase() in blockLevelPseudoDisplays
+
+    /**
+     * Materializes a container's `::before`/`::after` declaration together with the
+     * style it renders in. Returns null when the pseudo has no content or is hidden.
+     */
+    private fun generatedPseudoText(
+        element: Element,
+        inheritedStyle: CssStyle,
+        pseudoElement: String
+    ): Pair<String, CssStyle>? {
+        val pseudoStyle = getPseudoElementStyle(element, pseudoElement, inheritedStyle)
+        if (pseudoStyle.display == "none") return null
+        val raw = materializeCssGeneratedContent(pseudoStyle.content) { attribute ->
+            element.attr(attribute).ifBlank { null }
+        } ?: return null
+        val collapsed = when (pseudoStyle.whiteSpace) {
+            "pre", "pre-wrap", "break-spaces" -> raw
+            else -> raw.replace(whiteSpaceCollapseRegex, " ")
+        }.trim()
+        if (collapsed.isEmpty()) return null
+        val transformed = when (pseudoStyle.textTransform) {
+            "uppercase" -> collapsed.uppercase()
+            "lowercase" -> collapsed.lowercase()
+            "capitalize" -> collapsed.capitalizeWords()
+            else -> collapsed
+        }
+        return transformed.takeIf { it.isNotBlank() }?.let { it to pseudoStyle }
+    }
+
+    private fun generatedPseudoParagraph(
+        pseudoElement: String,
+        text: String,
+        pseudoStyle: CssStyle,
+        inheritedStyle: CssStyle
+    ): SemanticParagraph {
+        val resolvedStyle = pseudoStyle.resolveFontSizeAgainst(inheritedStyle).withResolvedFontFamily()
+        return SemanticParagraph(
+            text = text,
+            spans = listOf(
+                SemanticSpan(
+                    start = 0,
+                    end = text.length,
+                    style = resolvedStyle,
+                    linkHref = null,
+                    tag = "::$pseudoElement",
+                    elementId = null
+                )
+            ),
+            // Generated content is not part of the source text, so it carries no
+            // element id or CFI: anchors keep pointing at the element's own text.
+            style = resolvedStyle,
+            elementId = null,
+            cfi = null,
+            startCharOffsetInSource = 0,
+            blockIndex = nextBlockIndex++
+        )
+    }
+
     private fun parseContainer(
         element: Element,
         style: CssStyle,
@@ -889,12 +983,32 @@ private class SemanticHtmlParser(
         val textNodesBuffer = mutableListOf<Node>()
         val linkHref = element.linkHrefOrNull() ?: inheritedLinkHref
 
-        fun flushTextBuffer() {
-            if (textNodesBuffer.isEmpty()) return
+        // Container ::before/::after were dropped entirely: only inline elements
+        // and paragraph bodies emitted generated content. Block-level generated
+        // text becomes its own block above the children; inline generated text
+        // joins the first/last text run of the container.
+        val beforePseudo = generatedPseudoText(element, style, "before")
+        val afterPseudo = generatedPseudoText(element, style, "after")
+        val blockBeforePseudo = beforePseudo?.takeIf { it.second.isBlockLevelPseudoDisplay() }
+        val blockAfterPseudo = afterPseudo?.takeIf { it.second.isBlockLevelPseudoDisplay() }
+        blockBeforePseudo?.let {
+            children.add(generatedPseudoParagraph("before", it.first, it.second, style))
+        }
+        var attachInlineBefore = beforePseudo != null && blockBeforePseudo == null
+        val attachInlineAfter = afterPseudo != null && blockAfterPseudo == null
+
+        fun flushTextBuffer(
+            attachGeneratedBefore: Boolean = false,
+            attachGeneratedAfter: Boolean = false
+        ) {
+            if (textNodesBuffer.isEmpty() && !attachGeneratedBefore && !attachGeneratedAfter) return
             val textChunks = buildSemanticTextAndSpanChunksFromNodes(
                 nodes = textNodesBuffer,
                 rootStyle = style,
-                inheritedLinkHref = linkHref
+                rootElement = element.takeIf { attachGeneratedBefore || attachGeneratedAfter },
+                inheritedLinkHref = linkHref,
+                includeGeneratedBefore = attachGeneratedBefore,
+                includeGeneratedAfter = attachGeneratedAfter
             )
             val containerElementId = element.id().ifBlank { null }
             val containerCfi = element.getCfiPath()
@@ -922,7 +1036,8 @@ private class SemanticHtmlParser(
                 val isEffectivelyBlock = node.isEffectivelySemanticBlock()
 
                 if (isEffectivelyBlock) {
-                    flushTextBuffer()
+                    flushTextBuffer(attachGeneratedBefore = attachInlineBefore)
+                    attachInlineBefore = false
                     children.addAll(parseNodeToSemanticBlocks(node, style, linkHref))
                 } else {
                     textNodesBuffer.add(node)
@@ -932,7 +1047,10 @@ private class SemanticHtmlParser(
             }
         }
 
-        flushTextBuffer()
+        flushTextBuffer(attachGeneratedBefore = attachInlineBefore, attachGeneratedAfter = attachInlineAfter)
+        blockAfterPseudo?.let {
+            children.add(generatedPseudoParagraph("after", it.first, it.second, style))
+        }
         return children
     }
 
@@ -1019,7 +1137,9 @@ private class SemanticHtmlParser(
         rootStyle: CssStyle,
         rootElement: Element? = null,
         inheritedLinkHref: String? = null,
-        excludedNodes: Set<Node> = emptySet()
+        excludedNodes: Set<Node> = emptySet(),
+        includeGeneratedBefore: Boolean = true,
+        includeGeneratedAfter: Boolean = true
     ): List<SemanticTextChunk> {
         val textBuilder = StringBuilder()
         val spans = mutableListOf<SemanticSpan>()
@@ -1397,9 +1517,13 @@ private class SemanticHtmlParser(
 
         processRubyFn = ::processRubyElement
 
-        rootElement?.let { appendGeneratedContent(it, rootStyle, "before") }
+        if (includeGeneratedBefore) {
+            rootElement?.let { appendGeneratedContent(it, rootStyle, "before") }
+        }
         nodes.forEach { processNode(it, rootStyle) }
-        rootElement?.let { appendGeneratedContent(it, rootStyle, "after") }
+        if (includeGeneratedAfter) {
+            rootElement?.let { appendGeneratedContent(it, rootStyle, "after") }
+        }
         flushChunk(trimTrailing = true)
         return chunks
     }
