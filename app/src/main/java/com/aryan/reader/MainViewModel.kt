@@ -1037,7 +1037,13 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             // The reflow renderer reloads its document, so its tab switch is a reopen at the
             // persisted position through the normal open path: extraction is cached per book, so
             // this is the cheap operation, and the locator/Cfi restore is the library-open one.
-            ReaderTabKind.TEXT -> {
+            ReaderTabKind.TEXT -> viewModelScope.launch {
+                // The reader captures its live position when the tab is tapped and the save is
+                // queued per-URI; openBook would read the stored row on a worker thread and could
+                // beat that write. Awaiting the queue first is what makes the capture durable:
+                // the reopen restores the position the reader was left at, not the older one the
+                // row still held when the tap happened.
+                awaitAllPendingReaderStateWrites()
                 _internalState.update { state ->
                     state.copy(tabState = tabState.tabState, selectedEpubBook = null)
                 }
@@ -8602,6 +8608,19 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         bookId?.trim()?.takeIf { it.isNotBlank() }?.let { stableBookId ->
             pendingBookmarkSaveJobs[stableBookId]?.join()
         }
+    }
+
+    /**
+     * Waits for every queued reader-state write to reach the store.
+     *
+     * A tab switch reopens the target book by reading its stored row, so any position write still
+     * in flight for the outgoing book would lose that race — the reopen would restore a position
+     * older than the one the reader just captured. Joining the whole queue before reopening is
+     * cheap: the writes are short single-row updates, and the queue is usually empty or one job.
+     */
+    private suspend fun awaitAllPendingReaderStateWrites() {
+        val jobs = pendingReaderStateSaveJobs.values.toList() + pendingBookmarkSaveJobs.values.toList()
+        jobs.forEach { it.join() }
     }
 
     fun saveBookmarks(bookId: String, bookmarksJson: String, documentUri: Uri? = null) {

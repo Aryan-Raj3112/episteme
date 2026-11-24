@@ -1273,6 +1273,19 @@ fun SharedMobileEpubReaderScreen(
         snapshot?.let(onReaderStateChange)
     }
 
+    /**
+     * Hands a text tab to the host, persisting this reader's position first.
+     *
+     * The autosave above is debounced, so a scroll in the last 220ms would otherwise reopen the
+     * target tab at the position of the *previous* snapshot. The host reopens from the persisted
+     * row, so the snapshot has to be synchronous here — this renderer resolves its locator on the
+     * main thread, which is exactly what makes that possible.
+     */
+    fun openTextTabNow(tab: BookItem) {
+        currentReaderSnapshot()?.let(onReaderStateChange)
+        onOpenTextTab(tab)
+    }
+
     // Repair stored highlight locators that point at the wrong place.
     //
     // Highlights written before the reader had a usable coordinate space carry offsets that were
@@ -2231,7 +2244,7 @@ fun SharedMobileEpubReaderScreen(
                                         isSelected = tab.id == activeTextTabBookId,
                                         progress = tab.progressPercentage?.let { (it / 100f).coerceIn(0f, 1f) },
                                         onSelect = {
-                                            onOpenTextTab(tab)
+                                            openTextTabNow(tab)
                                             drawerScope.launch { drawerState.close() }
                                         },
                                         onClose = { onCloseTextTab(tab) },
@@ -3541,7 +3554,7 @@ fun SharedMobileEpubReaderScreen(
                                     },
                                     activeBookId = activeTextTabBookId,
                                     onSelect = { bookId ->
-                                        textTabs.firstOrNull { it.id == bookId }?.let(onOpenTextTab)
+                                        textTabs.firstOrNull { it.id == bookId }?.let(::openTextTabNow)
                                     },
                                     onClose = { bookId ->
                                         textTabs.firstOrNull { it.id == bookId }?.let(onCloseTextTab)
@@ -4187,7 +4200,12 @@ fun SharedMobileEpubReaderScreen(
                 candidates = candidates,
                 onPick = { bookId ->
                     showNewTabSheet = false
-                    newTextTabCandidates.firstOrNull { it.id == bookId }?.let(onNewTextTabPicked)
+                    newTextTabCandidates.firstOrNull { it.id == bookId }?.let { target ->
+                        // Opening a new tab leaves this book in the set: its position must be the
+                        // one the user left it at, not the last debounced snapshot.
+                        currentReaderSnapshot()?.let(onReaderStateChange)
+                        onNewTextTabPicked(target)
+                    }
                 },
             )
         }

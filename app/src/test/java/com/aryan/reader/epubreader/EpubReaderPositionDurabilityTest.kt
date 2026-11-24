@@ -15,11 +15,11 @@ class EpubReaderPositionDurabilityTest {
     @Test
     fun `scroll stop auto save is gated on the restore settle state`() {
         val source = readEpubReaderScreenSource()
-        val debounce = source.substringAfter("isVerticalRestoreSettled) {")
+        val debounce = source.substringAfter("if (!shouldSaveVerticalOpenPosition(")
             .substringBefore("webViewRefForTts?.evaluateJavascript")
 
-        assertTrue(debounce.contains("shouldSaveVerticalOpenPosition"))
         assertTrue(debounce.contains("isRestoreSettled = isVerticalRestoreSettled"))
+        assertTrue(debounce.contains("delay(1500L)"))
     }
 
     @Test
@@ -41,6 +41,44 @@ class EpubReaderPositionDurabilityTest {
             .substringBefore("LaunchedEffect(verticalRestoreStartedAtMillis")
 
         assertTrue(dispose.contains("flushInMemoryReadingPosition(\"reader_dispose\")"))
+    }
+
+    @Test
+    fun `tab switches capture the live position and switch only afterwards`() {
+        val source = readEpubReaderScreenSource()
+        // Both the strip and the drawer route a tab tap through the same sequence: capture first,
+        // switch second. A flush-only capture would reopen at a stale locator, and a switch that
+        // does not wait for the capture would read the row before the write lands.
+        listOf(
+            source.substringAfter("val textTabStrip:"),
+            source.substringAfter("onTextTabSelected = { tabBookId ->"),
+            source.substringAfter("onPick = { tabBookId ->"),
+        ).forEach { callSite ->
+            val capture = callSite.substringAfter("captureLiveReadingPosition").substringBefore("}")
+            val switch = capture.substringAfter("viewModel.switchTab")
+            assertTrue(switch.isNotBlank())
+        }
+    }
+
+    @Test
+    fun `live capture waits for the webview and falls back to the flush`() {
+        val source = readEpubReaderScreenSource()
+        val capture = source.substringAfter("suspend fun captureLiveReadingPosition")
+            .substringBefore("fun ensureVerticalChunksLoaded")
+
+        assertTrue(capture.contains("withTimeoutOrNull(CAPTURE_LIVE_POSITION_TIMEOUT_MS)"))
+        assertTrue(capture.contains("readingPositionCfiFromJavascriptResult"))
+        assertTrue(capture.contains("flushInMemoryReadingPosition(reason)"))
+        assertTrue(capture.contains("saveResolvedLocatorPosition"))
+    }
+
+    @Test
+    fun `text tab switch joins pending position writes before reopening`() {
+        val source = readSource("MainViewModel.kt")
+        val switch = source.substringAfter("ReaderTabKind.TEXT -> viewModelScope.launch {")
+            .substringBefore("openBook(")
+
+        assertTrue(switch.contains("awaitAllPendingReaderStateWrites()"))
     }
 
     @Test
