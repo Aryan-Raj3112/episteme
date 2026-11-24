@@ -50,7 +50,6 @@ import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -907,10 +906,14 @@ internal fun PdfAnnotationLayer(
             fun drawData(data: AnnotationRenderData) {
                 when (data) {
                     is AnnotationRenderData.Standard -> {
+                        // The spec is immutable and comes pre-built with the render data: building
+                        // it here allocated one Stroke per annotation per frame
+                        // (docs/crashlytics-triage.md#163).
                         drawPath(
-                            path = data.path, color = data.color, style = Stroke(
-                                width = data.strokeWidth, cap = data.cap, join = StrokeJoin.Round
-                            ), blendMode = data.blendMode
+                            path = data.path,
+                            color = data.color,
+                            style = data.stroke,
+                            blendMode = data.blendMode
                         )
                     }
 

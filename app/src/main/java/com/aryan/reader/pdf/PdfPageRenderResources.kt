@@ -16,6 +16,8 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfInkRenderer
 import com.aryan.reader.shared.pdf.buildPdfInkCubicSegments
@@ -363,7 +365,14 @@ internal sealed interface AnnotationRenderData {
         val strokeWidth: Float,
         val cap: StrokeCap,
         val blendMode: BlendMode
-    ) : AnnotationRenderData
+    ) : AnnotationRenderData {
+        // Derived, so it is built once when the render data is created instead of on every draw
+        // frame: the layer draws every annotation on every frame, and constructing this 32 B spec
+        // there was the allocation that failed on a full heap
+        // (docs/crashlytics-triage.md#163). Excluded from equals/copy because it is derived and
+        // Stroke compares by identity. Immutable, so sharing the instance is safe.
+        val stroke: Stroke = Stroke(width = strokeWidth, cap = cap, join = StrokeJoin.Round)
+    }
 
     data class Fountain(val path: Path, val color: Color) : AnnotationRenderData
 
