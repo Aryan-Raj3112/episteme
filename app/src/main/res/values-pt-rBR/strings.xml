@@ -1523,7 +1523,7 @@
     <string name="unified_library_manage_shelves">Gerenciar estantes</string>
     <string name="unified_library_no_shelves">Ainda não há estantes</string>
     <string name="unified_library_no_folders">Ainda não há pastas sincronizadas</string>
-    <string name="unified_library_search_books">Procure seus livros</string>
+    <string name="unified_library_search_books">Pesquisar</string>
     <string name="unified_library_sort_filter">Organizar e filtrar</string>
     <string name="unified_library_account">Conta</string>
     <string name="unified_library_signed_out">Você não está conectado</string>

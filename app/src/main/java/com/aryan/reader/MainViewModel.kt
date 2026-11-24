@@ -1691,8 +1691,21 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun closeTab(bookId: String) {
-        Timber.tag("PdfTabSync").i("ViewModel: closeTab called for $bookId")
+    fun closeTab(bookId: String) = closeTab(bookId, openReplacement = true)
+
+    /**
+     * Closes a tab from the library's tab switcher. The library is what is on screen, so the next
+     * tab is promoted in state and nothing is opened; switching readers from the panel goes
+     * through [switchTab] instead.
+     */
+    fun closeTabFromLibrary(bookId: String) = closeTab(bookId, openReplacement = false)
+
+    /**
+     * [openReplacement] reopens the promoted tab in the reader. That is only right when the closed
+     * tab belonged to the reader on screen; from the library it would pull the user into a book.
+     */
+    private fun closeTab(bookId: String, openReplacement: Boolean) {
+        Timber.tag("PdfTabSync").i("ViewModel: closeTab called for $bookId (openReplacement=$openReplacement)")
         val projectedState = uiState.value
         val availableBookIds = projectedState.rawLibraryFiles.mapTo(mutableSetOf()) { it.bookId }
         val currentState = reconcileTabState(_internalState.value, availableBookIds)
@@ -1713,7 +1726,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
 
-        if (readerKind == kind && currentState.selectedBookId == bookId) {
+        if (openReplacement && readerKind == kind && currentState.selectedBookId == bookId) {
             val nextTabId = kindTabs.activeBookId ?: kindTabs.openBookIds.last()
             applyTabState(currentState.tabState.withGroup(kind, kindTabs.copy(activeBookId = nextTabId)))
             switchTab(nextTabId)
@@ -10205,12 +10218,20 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun closeAllTabs(kind: ReaderTabKind = ReaderTabKind.FIXED_LAYOUT) {
-        Timber.tag("PdfTabSync").i("ViewModel: closeAllTabs called for $kind")
+    /**
+     * Closes one reader's tabs, or both sets when [kind] is null (the library's tab switcher,
+     * which lists EPUB and PDF tabs together).
+     */
+    fun closeAllTabs(kind: ReaderTabKind? = ReaderTabKind.FIXED_LAYOUT) {
+        Timber.tag("PdfTabSync").i("ViewModel: closeAllTabs called for ${kind?.name ?: "all kinds"}")
         val current = _internalState.value
-        applyTabState(current.tabState.withGroup(kind, AppTabGroup()))
+        val kinds = kind?.let(::setOf) ?: ReaderTabKind.entries.toSet()
+        val tabState = kinds.fold(current.tabState) { tabs, tabKind ->
+            tabs.withGroup(tabKind, AppTabGroup())
+        }
+        applyTabState(tabState)
         // Closing another reader's tabs must not close the open reader.
-        if (current.selectedFileType?.readerTabKind() == kind) clearSelectedFile()
+        if (current.selectedFileType?.readerTabKind()?.let(kinds::contains) == true) clearSelectedFile()
     }
 
     fun setStrictFileFilter(enabled: Boolean) {

@@ -1537,7 +1537,7 @@
     <string name="unified_library_manage_shelves">Regale verwalten</string>
     <string name="unified_library_no_shelves">Keine Regale</string>
     <string name="unified_library_no_folders">Keine synchronisierten Ordner</string>
-    <string name="unified_library_search_books">Bücher durchsuchen</string>
+    <string name="unified_library_search_books">Suchen</string>
     <string name="unified_library_grid_view">Rasteransicht</string>
     <string name="unified_library_list_view">Listenansicht</string>
     <string name="unified_library_sort_filter">Sortieren und filtern</string>

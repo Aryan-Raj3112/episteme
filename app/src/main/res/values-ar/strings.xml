@@ -1539,7 +1539,7 @@
     <string name="unified_library_manage_shelves">إدارة الرفوف</string>
     <string name="unified_library_no_shelves">لا توجد رفوف</string>
     <string name="unified_library_no_folders">لا توجد مجلدات متزامنة</string>
-    <string name="unified_library_search_books">البحث في الكتب</string>
+    <string name="unified_library_search_books">بحث</string>
     <string name="unified_library_grid_view">عرض شبكي</string>
     <string name="unified_library_list_view">عرض قائمة</string>
     <string name="unified_library_sort_filter">فرز وتصفية</string>

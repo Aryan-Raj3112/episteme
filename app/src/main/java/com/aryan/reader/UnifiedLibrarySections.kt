@@ -1,6 +1,7 @@
 package com.aryan.reader
 
 import android.view.View
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -192,6 +194,11 @@ internal fun UnifiedLibraryTopBar(
      * without pretending the tag is a shelf in the top-bar back path.
      */
     titleOverride: String? = null,
+    /** Open reader tabs, text first, as the shared tab switcher lists them. */
+    openTabs: List<com.aryan.reader.shared.ui.SharedOpenTab> = emptyList(),
+    onOpenTabSelected: (bookId: String) -> Unit = {},
+    onOpenTabClosed: (bookId: String) -> Unit = {},
+    onCloseAllTabs: (() -> Unit)? = null,
 ) {
     val title = selectedShelf?.name ?: titleOverride ?: when (section) {
         UnifiedLibrarySection.HOME -> null
@@ -221,6 +228,44 @@ internal fun UnifiedLibraryTopBar(
         searchInsideFiles = searchInsideFiles,
         onSearchInsideFilesChange = onSearchInsideFilesChange,
         searchInsideFilesLabel = stringResource(R.string.unified_library_search_inside_files),
+        trailingActions = {
+            if (openTabs.isNotEmpty()) {
+                val context = LocalContext.current
+                val booksById = remember(uiState.textOpenTabs, uiState.openTabs) {
+                    (uiState.textOpenTabs + uiState.openTabs).associateBy { it.bookId }
+                }
+                com.aryan.reader.shared.ui.SharedTabsMenuButton(
+                    tabs = openTabs,
+                    label = stringResource(R.string.home_tabs_title),
+                    openTabsDescription = stringResource(R.string.content_desc_open_tabs),
+                    closeTabDescription = stringResource(R.string.close_tab),
+                    openCountLabel = stringResource(R.string.home_tabs_open_count, openTabs.size),
+                    epubLabel = stringResource(R.string.home_tabs_epub),
+                    pdfLabel = stringResource(R.string.home_tabs_pdf),
+                    chapterLabel = { number -> context.getString(R.string.home_tabs_chapter, number) },
+                    pageLabel = { number -> context.getString(R.string.home_tabs_page, number) },
+                    percentLabel = { percent -> context.getString(R.string.home_tabs_percent, percent) },
+                    closeAllLabel = onCloseAllTabs?.let { stringResource(R.string.home_tabs_close_all) },
+                    onCloseAllTabs = onCloseAllTabs,
+                    onTabSelected = { tab -> onOpenTabSelected(tab.bookId) },
+                    onTabClosed = { tab -> onOpenTabClosed(tab.bookId) },
+                    cover = { tab, coverModifier ->
+                        val item = booksById[tab.bookId]
+                        if (item != null) {
+                            ThemedBookCover(
+                                item = item,
+                                modifier = coverModifier,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                            )
+                        } else {
+                            Box(coverModifier.background(MaterialTheme.colorScheme.surfaceVariant))
+                        }
+                    },
+                    modifier = Modifier.padding(end = 2.dp),
+                )
+            }
+        },
     )
 }
 
@@ -267,10 +312,6 @@ internal fun UnifiedLibraryHome(
     onListViewChange: (Boolean) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
-    openTabs: List<RecentFileItem>,
-    tabsEnabled: Boolean,
-    onCloseTab: (RecentFileItem) -> Unit,
-    onCloseAllTabs: () -> Unit,
     widthSizeClass: WindowWidthSizeClass,
     searchInsideFiles: Boolean = false,
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
@@ -320,19 +361,6 @@ internal fun UnifiedLibraryHome(
         onControls = onControlsClick,
         onAdvancedFilters = onAdvancedFiltersClick,
         onListViewChange = onListViewChange,
-        openTabsContent = {
-            com.aryan.reader.shared.ui.SharedAndroidActiveTabsRow(
-                openTabs = openTabs,
-                tabsEnabled = tabsEnabled,
-                closeAllTabsDescription = stringResource(R.string.close_all_tabs),
-                closeTabDescription = stringResource(R.string.close_tab),
-                itemKey = { it.bookId },
-                itemTitle = { it.title?.takeIf(String::isNotBlank) ?: it.displayName },
-                onItemClick = onBookClick,
-                onCloseTab = onCloseTab,
-                onCloseAllTabs = onCloseAllTabs,
-            )
-        },
         continueCard = { item, cardModifier -> UnifiedContinueReadingCard(item, { onBookClick(item) }, cardModifier) },
         bookCard = { item ->
             RecentFileCard(

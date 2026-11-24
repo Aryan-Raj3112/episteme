@@ -607,7 +607,7 @@ fun SharedMobileUnifiedLibraryScreen(
                     onAccount = onOpenAccountDrawer,
                     accountAvatar = accountAvatar,
                     searchQuery = query.takeIf { section == MobileUnifiedLibrarySection.HOME },
-                    searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
+                    searchPlaceholder = readerString("unified_library_search_books", "Search"),
                     clearSearchDescription = readerString("content_desc_clear_query", "Clear search"),
                     onSearchQueryChange = {
                         query = it
@@ -692,7 +692,7 @@ fun SharedMobileUnifiedLibraryScreen(
                             SharedAndroidUnifiedLibrarySearch(
                                 books = unifiedLibraryModel.visibleBooks,
                                 query = query,
-                                searchPlaceholder = readerString("unified_library_search_books", "Search your books"),
+                                searchPlaceholder = readerString("unified_library_search_books", "Search"),
                                 clearDescription = readerString("content_desc_clear_query", "Clear search"),
                                 closeDescription = readerString("action_close", "Close"),
                                 resultLabel = readerQuantityString("unified_library_search_results", visibleBooks.size, "%1\$d result", "%1\$d results", visibleBooks.size),
@@ -1358,6 +1358,24 @@ fun SharedMobileHomeScreen(
     ) {
         state.toNonReaderHomeLayoutModel()
     }
+    // Every open tab, both readers. Home's old strip only listed fixed-layout tabs; the
+    // top-bar switcher replaces it and answers "what is open?" for the whole library.
+    val switcherTabs = remember(
+        state.textOpenTabs,
+        state.openTabs,
+        state.activeTextTabBookId,
+        state.activeTabBookId,
+        state.isTabsEnabled,
+        state.usePdfFileNameAsDisplayName
+    ) {
+        if (state.isTabsEnabled) state.openTabsForSwitcher() else emptyList()
+    }
+    val tabBooksById = remember(state.textOpenTabs, state.openTabs) {
+        (state.textOpenTabs + state.openTabs).associateBy { it.id }
+    }
+    val tabsChapterTemplate = readerString("home_tabs_chapter", "Chapter %1\$d")
+    val tabsPageTemplate = readerString("home_tabs_page", "Page %1\$d")
+    val tabsPercentTemplate = readerString("home_tabs_percent", "%1\$d%%")
 
     Scaffold(
         modifier = modifier,
@@ -1389,6 +1407,63 @@ fun SharedMobileHomeScreen(
                         onExportLogs = actions::exportLogs,
                         fpsOverlayEnabled = fpsOverlayEnabled,
                         onFpsOverlayToggle = onFpsOverlayToggle,
+                        tabsMenu = {
+                            if (switcherTabs.isNotEmpty()) {
+                                SharedTabsMenuButton(
+                                    tabs = switcherTabs,
+                                    label = readerString("home_tabs_title", "Tabs"),
+                                    openTabsDescription = readerString("content_desc_open_tabs", "Open tabs"),
+                                    closeTabDescription = readerString("close_tab", "Close tab"),
+                                    openCountLabel = readerString(
+                                        "home_tabs_open_count",
+                                        "%1\$d open",
+                                        switcherTabs.size,
+                                    ),
+                                    epubLabel = readerString("home_tabs_epub", "EPUB"),
+                                    pdfLabel = readerString("home_tabs_pdf", "PDF"),
+                                    chapterLabel = { number ->
+                                        formatAndroidString(tabsChapterTemplate, listOf(number))
+                                    },
+                                    pageLabel = { number ->
+                                        formatAndroidString(tabsPageTemplate, listOf(number))
+                                    },
+                                    percentLabel = { percent ->
+                                        formatAndroidString(tabsPercentTemplate, listOf(percent))
+                                    },
+                                    closeAllLabel = if (switcherTabs.size > 1) {
+                                        readerString("home_tabs_close_all", "Close all tabs")
+                                    } else {
+                                        null
+                                    },
+                                    onCloseAllTabs = {
+                                        showCloseAllTabsConfirmation = true
+                                    },
+                                    onTabSelected = { tab ->
+                                        tabBooksById[tab.bookId]?.let(actions::openBook)
+                                    },
+                                    onTabClosed = { tab ->
+                                        tabBooksById[tab.bookId]?.let(actions::closeTab)
+                                    },
+                                    cover = { tab, coverModifier ->
+                                        val book = tabBooksById[tab.bookId]
+                                        if (book?.coverImagePath != null) {
+                                            LocalBookCoverImage(
+                                                path = book.coverImagePath,
+                                                contentDescription = null,
+                                                modifier = coverModifier,
+                                            )
+                                        } else {
+                                            Box(
+                                                coverModifier.background(
+                                                    MaterialTheme.colorScheme.surfaceVariant,
+                                                ),
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.padding(end = 4.dp),
+                                )
+                            }
+                        },
                     )
                 }
             }
@@ -1424,23 +1499,6 @@ fun SharedMobileHomeScreen(
                         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 112.dp),
                         verticalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
-                        // A single open tab is already surfaced by the recent/continue card.
-                        if (state.isTabsEnabled && model.activeTabs.size > 1) {
-                            item(key = "tabs") {
-                                SharedMobileActiveTabs(
-                                    openTabs = model.activeTabs,
-                                    onOpenTab = { book ->
-                                        when (mobileBookTapIntent(selectedIds)) {
-                                            SharedMobileBookTapIntent.OPEN -> actions.openBook(book)
-                                            SharedMobileBookTapIntent.TOGGLE_SELECTION -> actions.longPressBook(book)
-                                        }
-                                    },
-                                    onCloseTab = actions::closeTab,
-                                    onCloseAllTabs = { showCloseAllTabsConfirmation = true }
-                                )
-                            }
-                        }
-
                         item(key = "recent") {
                             SharedMobileBookGridSection(
                                 title = readerString("recent_files", "Recent files"),
@@ -2823,6 +2881,8 @@ private fun SharedMobileHomeTopBar(
     onExportLogs: () -> Unit,
     fpsOverlayEnabled: Boolean = false,
     onFpsOverlayToggle: () -> Unit = {},
+    /** Open-tabs switcher rendered before the settings actions, e.g. the library's "Tabs" pill. */
+    tabsMenu: @Composable () -> Unit = {},
 ) {
     var showOptionsMenu by remember { mutableStateOf(false) }
     val overflowItems = sharedMobileHomeOverflowItems(
@@ -2930,6 +2990,7 @@ private fun SharedMobileHomeTopBar(
             }
         },
         actions = {
+            tabsMenu()
             IconButton(onClick = onSettingsClick, modifier = Modifier.testTag("MobileHomeSettings")) {
                 Icon(Icons.Default.Settings, contentDescription = "Settings")
             }

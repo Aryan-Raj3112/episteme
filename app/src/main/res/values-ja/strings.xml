@@ -1534,7 +1534,7 @@
     <string name="unified_library_manage_shelves">本棚を管理</string>
     <string name="unified_library_no_shelves">本棚がまだありません</string>
     <string name="unified_library_no_folders">同期済みフォルダがまだありません</string>
-    <string name="unified_library_search_books">本を検索</string>
+    <string name="unified_library_search_books">検索</string>
     <string name="unified_library_grid_view">グリッド表示</string>
     <string name="unified_library_list_view">リスト表示</string>
     <string name="unified_library_sort_filter">並べ替えとフィルタ</string>

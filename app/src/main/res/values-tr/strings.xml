@@ -1529,7 +1529,7 @@
     <string name="unified_library_manage_shelves">Rafları yönet</string>
     <string name="unified_library_no_shelves">Henüz bir raf yok</string>
     <string name="unified_library_no_folders">Henüz eşitlenmiş klasörler yok</string>
-    <string name="unified_library_search_books">Kitaplarınızı arayın</string>
+    <string name="unified_library_search_books">Ara</string>
     <string name="unified_library_grid_view">Izgara görünümü</string>
     <string name="unified_library_list_view">Liste görünümü</string>
     <string name="unified_library_sort_filter">Sırala ve filtrele</string>

@@ -1534,7 +1534,7 @@
     <string name="unified_library_manage_shelves">Gestisci scaffali</string>
     <string name="unified_library_no_shelves">Ancora nessuno scaffale</string>
     <string name="unified_library_no_folders">Ancora nessuna cartella sincronizzata</string>
-    <string name="unified_library_search_books">Cerca nei tuoi libri</string>
+    <string name="unified_library_search_books">Cerca</string>
     <string name="unified_library_grid_view">Vista griglia</string>
     <string name="unified_library_list_view">Vista elenco</string>
     <string name="unified_library_sort_filter">Ordina e filtra</string>

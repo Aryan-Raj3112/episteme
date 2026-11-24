@@ -1533,7 +1533,7 @@
     <string name="unified_library_manage_shelves">Gestionar estantes</string>
     <string name="unified_library_no_shelves">Aún no hay estantes</string>
     <string name="unified_library_no_folders">Aún no hay carpetas sincronizadas</string>
-    <string name="unified_library_search_books">Buscar en tus libros</string>
+    <string name="unified_library_search_books">Buscar</string>
     <string name="unified_library_grid_view">Vista de cuadrícula</string>
     <string name="unified_library_list_view">Vista de lista</string>
     <string name="unified_library_sort_filter">Ordenar y filtrar</string>

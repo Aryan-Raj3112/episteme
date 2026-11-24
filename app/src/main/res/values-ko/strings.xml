@@ -1534,7 +1534,7 @@
     <string name="unified_library_manage_shelves">책장 관리</string>
     <string name="unified_library_no_shelves">책장이 아직 없습니다</string>
     <string name="unified_library_no_folders">동기화된 폴더가 아직 없습니다</string>
-    <string name="unified_library_search_books">책 검색</string>
+    <string name="unified_library_search_books">검색</string>
     <string name="unified_library_grid_view">격자 보기</string>
     <string name="unified_library_list_view">목록 보기</string>
     <string name="unified_library_sort_filter">정렬 및 필터</string>

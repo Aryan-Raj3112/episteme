@@ -1535,7 +1535,7 @@
     <string name="unified_library_manage_shelves">Zarządzaj półkami</string>
     <string name="unified_library_no_shelves">Brak półek</string>
     <string name="unified_library_no_folders">Brak synchronizowanych folderów</string>
-    <string name="unified_library_search_books">Szukaj w książkach</string>
+    <string name="unified_library_search_books">Szukaj</string>
     <string name="unified_library_grid_view">Widok siatki</string>
     <string name="unified_library_list_view">Widok listy</string>
     <string name="unified_library_sort_filter">Sortuj i filtruj</string>

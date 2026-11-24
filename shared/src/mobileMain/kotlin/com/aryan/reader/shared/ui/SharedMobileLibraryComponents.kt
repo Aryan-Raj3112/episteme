@@ -551,28 +551,6 @@ fun SharedMobileLibraryFilterChips(
 }
 
 @Composable
-internal fun SharedMobileActiveTabs(
-    openTabs: List<BookItem>,
-    onOpenTab: (BookItem) -> Unit,
-    onCloseTab: (BookItem) -> Unit,
-    onCloseAllTabs: () -> Unit
-) {
-    // Same compact row as Android: shared layout keeps both platforms identical.
-    val usePdfFileNameAsDisplayName = LocalUsePdfFileNameAsDisplayName.current
-    SharedAndroidActiveTabsRow(
-        openTabs = openTabs,
-        tabsEnabled = true,
-        closeAllTabsDescription = "Close all tabs",
-        closeTabDescription = "Close tab",
-        itemKey = { it.id },
-        itemTitle = { it.cardTitle(usePdfFileNameAsDisplayName) },
-        onItemClick = onOpenTab,
-        onCloseTab = onCloseTab,
-        onCloseAllTabs = onCloseAllTabs,
-    )
-}
-
-@Composable
 internal fun SharedMobileBookGridSection(
     title: String,
     books: List<BookItem>,

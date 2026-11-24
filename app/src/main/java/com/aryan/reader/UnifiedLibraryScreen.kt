@@ -248,6 +248,18 @@ fun UnifiedLibraryScreen(
     var showRemoveSelectedFromShelfConfirmation by remember { mutableStateOf(false) }
     var shelfIdAddingBooks by remember { mutableStateOf<String?>(null) }
     var showCloseAllTabsDialog by remember { mutableStateOf(false) }
+    // The top-bar tab switcher replaces the Home tabs row and covers both readers, which that
+    // row never did. Keyed on the two projected lists so closing or switching a tab re-reads them.
+    val openTabs = remember(
+        uiState.textOpenTabs,
+        uiState.openTabs,
+        uiState.tabState,
+        uiState.usePdfFileNameAsDisplayName,
+    ) {
+        // Disabling multi-tab reading parks each reader on one tab; the button would then
+        // advertise a single "tab" and open an empty panel, so it follows the toggle.
+        if (uiState.isTabsEnabled) uiState.homeOpenTabs() else emptyList()
+    }
     val canUseCloudFolderSync = uiState.canUseCloudFolderSync()
     val canPullToSync = com.aryan.reader.shared.ui.canPullToSyncLibrary(
         cloudSyncEnabled = uiState.isSyncEnabled,
@@ -773,6 +785,14 @@ fun UnifiedLibraryScreen(
                         onSearchQueryChange = { query = it },
                         searchInsideFiles = uiState.libraryState.searchInsideFiles,
                         onSearchInsideFilesChange = viewModel::setSearchInsideFiles,
+                        openTabs = openTabs,
+                        onOpenTabSelected = viewModel::switchTab,
+                        onOpenTabClosed = viewModel::closeTabFromLibrary,
+                        onCloseAllTabs = if (openTabs.size > 1) {
+                            { showCloseAllTabsDialog = true }
+                        } else {
+                            null
+                        },
                     )
                 }
             },
@@ -805,10 +825,6 @@ fun UnifiedLibraryScreen(
                     onContentHitClick = { item, hit, hitQuery ->
                         viewModel.openLibrarySearchHit(item, hit, hitQuery)
                     },
-                    openTabs = uiState.openTabs,
-                    tabsEnabled = uiState.isTabsEnabled,
-                    onCloseTab = { viewModel.closeTab(it.bookId) },
-                    onCloseAllTabs = { showCloseAllTabsDialog = true },
                     searchInsideFiles = uiState.libraryState.searchInsideFiles,
                     contentSearchResults = uiState.libraryState.contentSearchResults,
                     isLoading = uiState.isLoading,
@@ -1165,7 +1181,7 @@ fun UnifiedLibraryScreen(
     if (showCloseAllTabsDialog) {
         LibraryCloseAllTabsDialog(
             onConfirm = {
-                viewModel.closeAllTabs()
+                viewModel.closeAllTabs(kind = null)
                 showCloseAllTabsDialog = false
             },
             onDismiss = { showCloseAllTabsDialog = false }

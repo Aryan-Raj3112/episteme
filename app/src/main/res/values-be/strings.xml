@@ -1536,7 +1536,7 @@
     <string name="unified_library_manage_shelves">Кіраваць паліцамі</string>
     <string name="unified_library_no_shelves">Няма паліц</string>
     <string name="unified_library_no_folders">Няма сінхранізаваных папак</string>
-    <string name="unified_library_search_books">Пошук у кнігах</string>
+    <string name="unified_library_search_books">Пошук</string>
     <string name="unified_library_grid_view">Сетка</string>
     <string name="unified_library_list_view">Спіс</string>
     <string name="unified_library_sort_filter">Сартаванне і фільтры</string>

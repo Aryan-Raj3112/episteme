@@ -1575,7 +1575,7 @@
     <string name="unified_library_manage_shelves">Quản lý kệ</string>
     <string name="unified_library_no_shelves">Chưa có kệ nào</string>
     <string name="unified_library_no_folders">Chưa có thư mục đồng bộ nào</string>
-    <string name="unified_library_search_books">Tìm sách của bạn</string>
+    <string name="unified_library_search_books">Tìm kiếm</string>
     <string name="unified_library_grid_view">Dạng lưới</string>
     <string name="unified_library_list_view">Dạng danh sách</string>
     <string name="unified_library_sort_filter">Sắp xếp và lọc</string>

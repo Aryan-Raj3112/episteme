@@ -63,6 +63,11 @@ fun SharedAndroidUnifiedTopBar(
     searchInsideFiles: Boolean = false,
     onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
     searchInsideFilesLabel: String = "Search inside files",
+    /**
+     * Extra control between the search field and the profile avatar, e.g. the library's
+     * open-tabs button. Hosts that draw nothing keep the bar unchanged.
+     */
+    trailingActions: @Composable () -> Unit = {},
     density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
     modifier: Modifier = Modifier,
 ) {
@@ -131,6 +136,7 @@ fun SharedAndroidUnifiedTopBar(
             } else {
                 Spacer(Modifier.weight(1f))
             }
+            trailingActions()
             IconButton(onClick = onAccount, modifier = Modifier.testTag("UnifiedLibraryProfile")) { accountAvatar() }
         }
             if (showContentScopeToggle) {

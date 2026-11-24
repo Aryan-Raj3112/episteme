@@ -5711,11 +5711,11 @@ private fun ReaderIosApp(
     }
 
     fun closeAllHomeTabs() {
-        // Android parity (`MainViewModel.closeAllTabs`): closing every tab
-        // exits the reader instead of leaving a selection behind. Home's strip
-        // is the fixed-layout set, so only that set closes.
-        state = state.reduce(AppAction.BookTabsClosed(ReaderTabKind.FIXED_LAYOUT))
-            .copy(openTabs = emptyList())
+        // Android parity (`MainViewModel.closeAllTabs(kind = null)`): the library's close-all
+        // spans both readers, so closing every tab also exits the reader instead of leaving a
+        // selection behind. Home lists EPUB and PDF tabs in one menu, so both sets close.
+        state = ReaderTabKind.entries
+            .fold(state) { acc, kind -> acc.reduce(AppAction.BookTabsClosed(kind)) }
             .withoutMobileReaderSession()
         clearIosReaderSession()
         activeReaderBook = null

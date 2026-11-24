@@ -1529,7 +1529,7 @@
     <string name="unified_library_manage_shelves">漫画书架</string>
     <string name="unified_library_no_shelves">还没有书架</string>
     <string name="unified_library_no_folders">还没有同步的文件夹</string>
-    <string name="unified_library_search_books">搜索你的书籍</string>
+    <string name="unified_library_search_books">搜索</string>
     <string name="unified_library_sort_filter">排序和分类</string>
     <string name="unified_library_account">账号</string>
     <string name="unified_library_signed_out">你还未登录</string>

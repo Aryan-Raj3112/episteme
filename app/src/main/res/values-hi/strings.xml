@@ -1928,7 +1928,7 @@
     <string name="unified_library_manage_shelves">शेल्फ़ प्रबंधित करें</string>
     <string name="unified_library_no_shelves">अभी कोई शेल्फ़ नहीं</string>
     <string name="unified_library_no_folders">अभी कोई सिंक्ड फ़ोल्डर नहीं</string>
-    <string name="unified_library_search_books">अपनी किताबें खोजें</string>
+    <string name="unified_library_search_books">खोजें</string>
     <string name="unified_library_grid_view">ग्रिड व्यू</string>
     <string name="unified_library_list_view">लिस्ट व्यू</string>
     <string name="unified_library_sort_filter">क्रम और फ़िल्टर</string>

@@ -45,6 +45,15 @@
     <string name="pdf_tabs_show_top_app_bar_tabs">Show tabs in top app bar</string>
     <string name="close_tab">Close Tab</string>
     <string name="close_all_tabs">Close All Tabs</string>
+    <string name="home_tabs_title">Tabs</string>
+    <string name="home_tabs_open_count">%1$d open</string>
+    <string name="home_tabs_epub">EPUB</string>
+    <string name="home_tabs_pdf">PDF</string>
+    <string name="home_tabs_chapter">Chapter %1$d</string>
+    <string name="home_tabs_page">Page %1$d</string>
+    <string name="home_tabs_percent">%1$d%%</string>
+    <string name="home_tabs_close_all">Close all tabs</string>
+    <string name="content_desc_open_tabs">Open tabs</string>
     <string name="dialog_close_all_tabs">Close All Tabs?</string>
     <string name="dialog_close_all_tabs_desc">Are you sure you want to close all active tabs?</string>
 
@@ -114,7 +123,7 @@
     <string name="unified_library_manage_shelves">Manage shelves</string>
     <string name="unified_library_no_shelves">No shelves yet</string>
     <string name="unified_library_no_folders">No synced folders yet</string>
-    <string name="unified_library_search_books">Search your books</string>
+    <string name="unified_library_search_books">Search</string>
     <string name="unified_library_search_inside_files">Search inside files</string>
     <string name="library_content_search_more_matches">%1$d more matches</string>
     <string name="library_content_search_fewer_matches">Show fewer</string>

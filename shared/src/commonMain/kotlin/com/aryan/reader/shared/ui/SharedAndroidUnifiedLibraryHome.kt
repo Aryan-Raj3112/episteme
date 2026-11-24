@@ -82,8 +82,6 @@ fun <T> SharedAndroidUnifiedLibraryHome(
     gridCells: GridCells? = null,
     /** Host override (Duo). Standard keeps today's spacing on every other device. */
     density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
-    /** Rendered above the continue-reading card; empty when multi-tab reading is idle. */
-    openTabsContent: @Composable () -> Unit = {},
     /**
      * Inside-file content search. When [contentSearchActive] is true the grid
      * is replaced by one row per matching book, expanded to show more of that
@@ -112,7 +110,6 @@ fun <T> SharedAndroidUnifiedLibraryHome(
         contentSearchResults.associateBy { it.bookId }
     }
     Column(modifier.fillMaxSize().padding(horizontal = SharedSpacing.Lg)) {
-        openTabsContent()
         continueReading?.let { continueCard(it, Modifier.padding(top = density.continueCardTopGap)) }
         // Hierarchy is carried by one header row: what this section is, how it is ordered, and the
         // two view controls. The status filters get their own row underneath, which is also what

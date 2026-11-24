@@ -1528,7 +1528,7 @@
     <string name="unified_library_manage_shelves">Gérer les étagères</string>
     <string name="unified_library_no_shelves">Aucune étagère</string>
     <string name="unified_library_no_folders">Aucun dossier synchronisé pour le moment</string>
-    <string name="unified_library_search_books">Rechercher vos livres</string>
+    <string name="unified_library_search_books">Rechercher</string>
     <string name="unified_library_grid_view">Vue en grille</string>
     <string name="unified_library_list_view">Vue en liste</string>
     <string name="unified_library_sort_filter">Trier et filtrer</string>

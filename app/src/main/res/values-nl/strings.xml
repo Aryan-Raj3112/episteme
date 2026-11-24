@@ -1535,7 +1535,7 @@
     <string name="unified_library_manage_shelves">Boekenplanken beheren</string>
     <string name="unified_library_no_shelves">Nog geen boekenplanken</string>
     <string name="unified_library_no_folders">Nog geen gesynchroniseerde mappen</string>
-    <string name="unified_library_search_books">Uw boeken doorzoeken</string>
+    <string name="unified_library_search_books">Zoeken</string>
     <string name="unified_library_grid_view">Rasterweergave</string>
     <string name="unified_library_list_view">Lijstweergave</string>
     <string name="unified_library_sort_filter">Sorteren en filteren</string>

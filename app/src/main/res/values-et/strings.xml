@@ -1579,7 +1579,7 @@
     <string name="unified_library_manage_shelves">Halda riiuleid</string>
     <string name="unified_library_no_shelves">Riiuleid pole</string>
     <string name="unified_library_no_folders">Sünkroniseeritud kaustu pole</string>
-    <string name="unified_library_search_books">Otsi raamatutest</string>
+    <string name="unified_library_search_books">Otsi</string>
     <string name="unified_library_grid_view">Ruudustikkuva</string>
     <string name="unified_library_list_view">Loendivaade</string>
     <string name="unified_library_sort_filter">Sortimine ja filtrid</string>
