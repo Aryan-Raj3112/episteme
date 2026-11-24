@@ -240,7 +240,7 @@ import com.aryan.reader.shared.MobileBookOpenPreflightAction
 import com.aryan.reader.shared.reduce
 import com.aryan.reader.shared.withMobileBookOpened
 import com.aryan.reader.shared.withMobileBookClosed
-import com.aryan.reader.shared.withMobileTabMoved
+import com.aryan.reader.shared.withMobileTabsReordered
 import com.aryan.reader.shared.withMobileTabsEnabled
 import com.aryan.reader.shared.withReconciledMobileTabs
 import com.aryan.reader.shared.withMobileLibrarySearchActive
@@ -5712,11 +5712,11 @@ private fun ReaderIosApp(
     }
 
     /**
-     * Reorders one reader's tabs from Home. Home lists both readers in one switcher, so the drag
-     * reports the set it happened in; nothing else about the session changes.
+     * Applies the tab order a Home drag produced. Home lists both readers in one switcher, so the
+     * order arrives with the set it happened in; nothing else about the session changes.
      */
-    fun moveHomeTab(kind: ReaderTabKind, bookId: String, targetBookId: String) {
-        state = state.withMobileTabMoved(kind, bookId, targetBookId)
+    fun reorderHomeTabs(kind: ReaderTabKind, orderedBookIds: List<String>) {
+        state = state.withMobileTabsReordered(kind, orderedBookIds)
     }
 
     fun closeAllHomeTabs() {
@@ -7442,12 +7442,11 @@ private fun ReaderIosApp(
                                         override fun closeAllTabs() {
                                             closeAllHomeTabs()
                                         }
-                                        override fun moveTab(
+                                        override fun reorderTabs(
                                             kind: ReaderTabKind,
-                                            bookId: String,
-                                            targetBookId: String,
+                                            orderedBookIds: List<String>,
                                         ) {
-                                            moveHomeTab(kind, bookId, targetBookId)
+                                            reorderHomeTabs(kind, orderedBookIds)
                                         }
                                         override fun togglePinned(book: BookItem) {
                                             state = state.toggleHomePinned(book.id)

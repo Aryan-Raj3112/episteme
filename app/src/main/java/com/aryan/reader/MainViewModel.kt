@@ -992,14 +992,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Reorders one reader's tab set from the library switcher. The order is shared tab state, so
-     * the reader's own tab strip lists the same movement.
+     * Applies the tab order a finished drag in the library switcher produced. The order is shared
+     * tab state, so the reader's own tab strip lists the same sequence.
      */
-    fun moveTab(kind: ReaderTabKind, bookId: String, targetBookId: String) {
+    fun reorderTabs(kind: ReaderTabKind, orderedBookIds: List<String>) {
         val current = _internalState.value.tabState
-        val moved = current.reduce(SharedAppAction.BookTabMoved(kind, bookId, targetBookId))
-        if (moved == current) return
-        applyTabState(moved)
+        val reordered = current.reduce(SharedAppAction.BookTabsReordered(kind, orderedBookIds))
+        if (reordered == current) return
+        applyTabState(reordered)
     }
 
     fun switchTab(bookId: String) {

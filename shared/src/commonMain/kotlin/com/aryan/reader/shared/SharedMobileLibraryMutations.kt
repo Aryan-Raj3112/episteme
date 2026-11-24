@@ -695,15 +695,14 @@ fun SharedReaderScreenState.withMobileBookTabsClosed(kind: ReaderTabKind): Share
     reduce(AppAction.BookTabsClosed(kind)).withRecomputedTabBooks()
 
 /**
- * Reorders [kind]'s tabs, which is also the order the reader's tab strip shows. Moving a tab to
- * where [targetBookId] sits keeps the readers' active tabs untouched.
+ * Applies the tab order a finished drag produced for [kind], which is also the order the reader's
+ * tab strip shows. Reordering keeps the readers' active tabs untouched.
  */
-fun SharedReaderScreenState.withMobileTabMoved(
+fun SharedReaderScreenState.withMobileTabsReordered(
     kind: ReaderTabKind,
-    bookId: String,
-    targetBookId: String,
+    orderedBookIds: List<String>,
 ): SharedReaderScreenState =
-    reduce(AppAction.BookTabMoved(kind, bookId, targetBookId)).withRecomputedTabBooks()
+    reduce(AppAction.BookTabsReordered(kind, orderedBookIds)).withRecomputedTabBooks()
 
 /**
  * Disabling tabs parks each set on its active tab instead of forgetting it, so re-enabling

@@ -1,6 +1,7 @@
 package com.aryan.reader
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -110,7 +111,7 @@ class SharedTabsMenuButtonTest {
                     openCountLabel = "5 open",
                     onTabSelected = {},
                     onTabClosed = {},
-                    onTabMoved = { _, _, _ -> },
+                    onTabOrderCommitted = { _, _ -> },
                 )
             }
         }
@@ -123,11 +124,59 @@ class SharedTabsMenuButtonTest {
     }
 
     @Test
-    fun draggingARowReportsTheRowItLandedOn() {
-        val textTabs = (1..3).map { index ->
+    fun draggingARowReportsTheFinishedOrderOnceOnDrop() {
+        // More rows than the window, so the group could scroll while a row is lifted.
+        val textTabs = (1..5).map { index ->
             SharedOpenTab(bookId = "epub$index", title = "Book $index", kind = ReaderTabKind.TEXT)
         }
-        val moves = mutableListOf<Pair<String, String>>()
+        val commits = mutableListOf<List<String>>()
+        val tabsState = mutableStateOf(textTabs)
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedTabsMenuButton(
+                    tabs = tabsState.value,
+                    label = "Tabs",
+                    openTabsDescription = "Open tabs",
+                    closeTabDescription = "Close tab",
+                    openCountLabel = "5 open",
+                    onTabSelected = {},
+                    onTabClosed = {},
+                    onTabOrderCommitted = { _, ordered ->
+                        commits += ordered
+                        tabsState.value = ordered.map { id -> textTabs.first { it.bookId == id } }
+                    },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("HomeTabsButton").performClick()
+        // The row merges its children, so the handle is only addressable in the unmerged tree.
+        val handle = composeTestRule.onNodeWithTag("HomeTabDrag_epub1", useUnmergedTree = true)
+        handle.performTouchInput {
+            down(center)
+            moveBy(Offset(0f, 20.dp.toPx()))
+            moveBy(Offset(0f, 40.dp.toPx()))
+        }
+        // The row is lifted, not scrolled: its neighbours must stay where they were under the finger.
+        composeTestRule.onNodeWithTag("HomeTab_epub1").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("HomeTab_epub3").assertIsDisplayed()
+        // The panel owns the order while the finger is down and reports it once, on drop.
+        assertThat(commits).isEmpty()
+        handle.performTouchInput { up() }
+
+        composeTestRule.runOnIdle {
+            assertThat(commits).containsExactly(listOf("epub2", "epub1", "epub3", "epub4", "epub5"))
+        }
+    }
+
+    @Test
+    fun pushingTheDragPastTheWindowEdgeScrollsTheGroup() {
+        // The window follows the push instead of running on by itself, so the row stays in view
+        // and the tab it passes is reordered on the way.
+        val textTabs = (1..5).map { index ->
+            SharedOpenTab(bookId = "epub$index", title = "Book $index", kind = ReaderTabKind.TEXT)
+        }
+        val commits = mutableListOf<List<String>>()
         composeTestRule.setContent {
             MaterialTheme {
                 SharedTabsMenuButton(
@@ -135,25 +184,30 @@ class SharedTabsMenuButtonTest {
                     label = "Tabs",
                     openTabsDescription = "Open tabs",
                     closeTabDescription = "Close tab",
-                    openCountLabel = "3 open",
+                    openCountLabel = "5 open",
                     onTabSelected = {},
                     onTabClosed = {},
-                    onTabMoved = { _, bookId, targetBookId -> moves += bookId to targetBookId },
+                    onTabOrderCommitted = { _, ordered -> commits += ordered },
                 )
             }
         }
 
         composeTestRule.onNodeWithTag("HomeTabsButton").performClick()
-        // The row merges its children, so the handle is only addressable in the unmerged tree.
-        composeTestRule.onNodeWithTag("HomeTabDrag_epub1", useUnmergedTree = true).performTouchInput {
-            down(center)
-            moveBy(Offset(0f, 20.dp.toPx()))
-            moveBy(Offset(0f, 40.dp.toPx()))
-            up()
-        }
+        composeTestRule.onNodeWithTag("HomeTab_epub5").assertDoesNotExist()
+        val handle = composeTestRule.onNodeWithTag("HomeTabDrag_epub1", useUnmergedTree = true)
+        handle.performTouchInput { down(center) }
+        // Push the row to the bottom of the window and keep pushing: each push scrolls the group by
+        // the overflow it leaves, which is what brings the rows below it into reach.
+        repeat(6) { handle.performTouchInput { moveBy(Offset(0f, 60.dp.toPx())) } }
+        // The last rows are in reach only because the window scrolled along with the push.
+        composeTestRule.onNodeWithTag("HomeTab_epub5").assertIsDisplayed()
+        // The lifted row is still one of the group's rows, pushed along with the finger.
+        composeTestRule.onNodeWithTag("HomeTab_epub1").assertExists()
+        handle.performTouchInput { up() }
 
         composeTestRule.runOnIdle {
-            assertThat(moves.first()).isEqualTo("epub1" to "epub2")
+            // Scrolling moved the tab past the rows it revealed instead of leaving it at the top.
+            assertThat(commits.single().last()).isEqualTo("epub1")
         }
     }
 

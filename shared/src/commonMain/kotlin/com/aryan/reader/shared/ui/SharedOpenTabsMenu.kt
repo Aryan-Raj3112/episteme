@@ -4,7 +4,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -37,12 +35,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -66,6 +65,7 @@ import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.ReaderTabKind
 import com.aryan.reader.shared.SharedReaderScreenState
 import com.aryan.reader.shared.cardTitle
+import com.aryan.reader.shared.movedItem
 import com.aryan.reader.shared.readerTabKind
 import kotlin.math.roundToInt
 
@@ -102,8 +102,8 @@ data class SharedOpenTab(
  *
  * Each reader's rows stop at three and scroll from there, so the panel's height answers to the
  * bar rather than to how many books are open. Rows can be dragged by their handle into a new
- * order when [onTabMoved] is supplied; the caller owns that order so both readers' tab strips
- * follow the same list.
+ * order when [onTabOrderCommitted] is supplied; the panel owns the order while the drag is in
+ * flight and hands the finished list to the caller once, so both readers' tab strips follow it.
  */
 @Composable
 fun SharedTabsMenuButton(
@@ -114,7 +114,7 @@ fun SharedTabsMenuButton(
     dragToReorderDescription: String = "Drag to reorder",
     onTabSelected: (SharedOpenTab) -> Unit,
     onTabClosed: (SharedOpenTab) -> Unit,
-    onTabMoved: ((kind: ReaderTabKind, bookId: String, targetBookId: String) -> Unit)? = null,
+    onTabOrderCommitted: ((kind: ReaderTabKind, orderedBookIds: List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier,
     openCountLabel: String = "${tabs.size} open",
     epubLabel: String = "EPUB",
@@ -199,7 +199,7 @@ fun SharedTabsMenuButton(
                     onTabSelected(tab)
                 },
                 onTabClosed = onTabClosed,
-                onTabMoved = onTabMoved,
+                onTabOrderCommitted = onTabOrderCommitted,
                 cover = cover,
             )
         }
@@ -218,7 +218,7 @@ fun SharedOpenTabsMenuContent(
     onTabSelected: (SharedOpenTab) -> Unit,
     onTabClosed: (SharedOpenTab) -> Unit,
     dragToReorderDescription: String = "Drag to reorder",
-    onTabMoved: ((kind: ReaderTabKind, bookId: String, targetBookId: String) -> Unit)? = null,
+    onTabOrderCommitted: ((kind: ReaderTabKind, orderedBookIds: List<String>) -> Unit)? = null,
     modifier: Modifier = Modifier,
     chapterLabel: (Int) -> String = { "Chapter $it" },
     pageLabel: (Int) -> String = { "Page $it" },
@@ -270,8 +270,8 @@ fun SharedOpenTabsMenuContent(
                 dragToReorderDescription = dragToReorderDescription,
                 onTabSelected = onTabSelected,
                 onTabClosed = onTabClosed,
-                onTabMoved = onTabMoved?.let { move ->
-                    { bookId, targetBookId -> move(ReaderTabKind.TEXT, bookId, targetBookId) }
+                onTabOrderCommitted = onTabOrderCommitted?.let { commit ->
+                    { ordered -> commit(ReaderTabKind.TEXT, ordered) }
                 },
                 cover = cover,
             )
@@ -285,8 +285,8 @@ fun SharedOpenTabsMenuContent(
                 dragToReorderDescription = dragToReorderDescription,
                 onTabSelected = onTabSelected,
                 onTabClosed = onTabClosed,
-                onTabMoved = onTabMoved?.let { move ->
-                    { bookId, targetBookId -> move(ReaderTabKind.FIXED_LAYOUT, bookId, targetBookId) }
+                onTabOrderCommitted = onTabOrderCommitted?.let { commit ->
+                    { ordered -> commit(ReaderTabKind.FIXED_LAYOUT, ordered) }
                 },
                 cover = cover,
             )
@@ -326,17 +326,42 @@ private fun OpenTabsSectionLabel(label: String) {
 private const val OpenTabsVisibleRows = 3
 private val OpenTabRowHeight = 60.dp
 
-/** How close to a group's edge a dragged row gets before the list scrolls itself. */
-private val OpenTabAutoScrollEdge = 20.dp
-private val OpenTabAutoScrollStep = 10.dp
+/** Carries a scroll that has been applied but whose layout has not been measured yet. */
+private class PendingWindowScroll {
+    var value = 0f
+}
+
+/** The lifted row's centre must reach this close to the window edge before the window scrolls. */
+private val OpenTabAutoScrollEdge = 24.dp
+
+/**
+ * How far the lifted row's centre is past the window's edge band, in pixels: negative when it is
+ * above the band, positive when it is below it and zero while it sits comfortably inside.
+ */
+internal fun openTabDragEdgeOverflow(
+    liftedCenter: Float,
+    viewportStart: Int,
+    viewportEnd: Int,
+    edge: Float,
+): Float = when {
+    liftedCenter < viewportStart + edge -> liftedCenter - (viewportStart + edge)
+    liftedCenter > viewportEnd - edge -> liftedCenter - (viewportEnd - edge)
+    else -> 0f
+}
 
 /**
  * One reader's tab rows: at most [OpenTabsVisibleRows] are on screen, the rest scroll inside the
  * window, so EPUB and PDF keep independent lengths without the panel growing past the bar.
  *
- * Rows are dragged by their handle using [SharedToolbarDragDropState], the same machinery the
- * toolbar customiser uses. A drag reports the row it landed on; the caller owns the order, so the
- * panel renders from state instead of keeping a second copy that could drift from it.
+ * Rows are dragged by their handle with [SharedToolbarDragDropState], the same machinery as the
+ * toolbar customiser: the lifted row follows the finger and the rows it passes make room. The
+ * order a drag builds lives here until the drag ends and is reported once through
+ * [onTabOrderCommitted]: reporting every crossing to the caller left the slot change a few frames
+ * behind its offset correction, which read as the lifted row jumping back up and dropping again.
+ *
+ * The window scrolls only while the lifted row is pushed into the last [OpenTabAutoScrollEdge] of
+ * it, and by exactly the overflow of that push, so the rows already on screen never move on their
+ * own and the window travels only as far as the finger asks.
  */
 @Composable
 private fun OpenTabsGroup(
@@ -347,25 +372,93 @@ private fun OpenTabsGroup(
     dragToReorderDescription: String,
     onTabSelected: (SharedOpenTab) -> Unit,
     onTabClosed: (SharedOpenTab) -> Unit,
-    onTabMoved: ((bookId: String, targetBookId: String) -> Unit)?,
+    onTabOrderCommitted: ((orderedBookIds: List<String>) -> Unit)?,
     cover: @Composable (SharedOpenTab, Modifier) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    val currentMove = rememberUpdatedState(onTabMoved)
-    val dragState = remember(listState) {
-        SharedToolbarDragDropState(listState) { from, target -> currentMove.value?.invoke(from, target) }
-    }
     val density = LocalDensity.current
-    val canReorder = onTabMoved != null && tabs.size > 1
+    // Set on drag start and owned by the drag until the caller's list has caught up with it.
+    var draggedOrder by remember { mutableStateOf<List<String>?>(null) }
+    // A keyed lazy list follows its first visible row into that row's new index, so a reorder that
+    // crosses the top of the window scrolls the window by a row on its own. The position is pinned
+    // back before the next measure so that only the lifted row changes slot.
+    var pinnedScroll by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    val dragState = remember(listState) {
+        SharedToolbarDragDropState(listState) { from, target ->
+            draggedOrder?.let { order ->
+                val fromIndex = order.indexOf(from)
+                val targetIndex = order.indexOf(target)
+                if (fromIndex >= 0 && targetIndex >= 0) {
+                    val next = order.movedItem(fromIndex, targetIndex)
+                    if (next != order) {
+                        pinnedScroll = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                        draggedOrder = next
+                    }
+                }
+            }
+        }
+    }
+    val commitOrder = rememberUpdatedState(onTabOrderCommitted)
+    val canReorder = onTabOrderCommitted != null && tabs.size > 1
+    val order = draggedOrder
+    val orderedTabs = if (order == null) {
+        tabs
+    } else {
+        val tabsById = tabs.associateBy { it.bookId }
+        order.mapNotNull { tabsById[it] }
+    }
+
+    // The finished order reaches this composition as a state change a few frames after the drop;
+    // until it does, keep drawing the order the drag produced instead of snapping back.
+    LaunchedEffect(tabs) {
+        val dragged = draggedOrder ?: return@LaunchedEffect
+        if (dragState.draggedItemId != null) return@LaunchedEffect
+        val openIds = tabs.map { it.bookId }
+        if (openIds == dragged || openIds.toSet() != dragged.toSet()) draggedOrder = null
+    }
+
+    SideEffect {
+        val pin = pinnedScroll ?: return@SideEffect
+        pinnedScroll = null
+        listState.requestScrollToItem(pin.first, pin.second)
+    }
+
+    // Pushing the lifted row into the window's edge scrolls the group by that overflow: the window
+    // follows the push one to one, and the row it passes is reordered before the window moves. A
+    // scroll lands at once while the layout that shows it waits for the next frame, so what is
+    // already pending comes off the next reading instead of being scrolled twice.
+    val edge = with(density) { OpenTabAutoScrollEdge.toPx() }
+    val pendingScroll = remember { PendingWindowScroll() }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo }.collect { pendingScroll.value = 0f }
+    }
+    val scrollByPush: (String, Float) -> Unit = { liftedId, dragOffsetY ->
+        val info = listState.layoutInfo
+        val lifted = info.visibleItemsInfo.find { it.key == liftedId }
+        if (lifted != null) {
+            val overflow = openTabDragEdgeOverflow(
+                liftedCenter = lifted.offset - pendingScroll.value + dragOffsetY + lifted.size / 2f,
+                viewportStart = info.viewportStartOffset,
+                viewportEnd = info.viewportEndOffset,
+                edge = edge,
+            )
+            if (overflow != 0f) pendingScroll.value += listState.dispatchRawDelta(overflow)
+        }
+    }
 
     if (sectionLabel != null) OpenTabsSectionLabel(sectionLabel)
     LazyColumn(
         state = listState,
+        // The window must not follow the finger through this group: while a row is lifted the
+        // drag owns the list, and it scrolls only where the drag asks it to.
+        userScrollEnabled = dragState.draggedItemId == null,
+        // A fixed height, not "wrap up to a cap": a wrap-content lazy list shifts its own scroll
+        // position when its items are reordered, which made the window jump a row mid-drag.
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = OpenTabRowHeight * OpenTabsVisibleRows),
+            .height(OpenTabRowHeight * minOf(orderedTabs.size, OpenTabsVisibleRows)),
     ) {
-        items(tabs, key = { it.bookId }) { tab ->
+        items(orderedTabs, key = { it.bookId }) { tab ->
             val isDragged = dragState.draggedItemId == tab.bookId
             Box(
                 modifier = Modifier
@@ -375,9 +468,9 @@ private fun OpenTabsGroup(
                     .graphicsLayer {
                         if (isDragged) {
                             translationY = dragState.dragOffset.y
-                            scaleX = 1.02f
-                            scaleY = 1.02f
-                            shadowElevation = 6.dp.toPx()
+                            scaleX = 1.03f
+                            scaleY = 1.03f
+                            shadowElevation = 8.dp.toPx()
                         }
                     },
             ) {
@@ -390,58 +483,29 @@ private fun OpenTabsGroup(
                     isDragging = isDragged,
                     onSelect = { onTabSelected(tab) },
                     onClose = { onTabClosed(tab) },
-                    onDragStart = { dragState.onDragStart(tab.bookId) },
-                    onDrag = dragState::onDrag,
-                    onDragEnd = dragState::onDragEnd,
+                    onDragStart = {
+                        draggedOrder = orderedTabs.map { it.bookId }
+                        dragState.onDragStart(tab.bookId)
+                    },
+                    onDrag = { delta ->
+                        // The row is reordered against the layout the finger sees, then the window
+                        // scrolls by whatever the push left past its edge.
+                        dragState.onDrag(delta)
+                        scrollByPush(tab.bookId, dragState.dragOffset.y)
+                    },
+                    onDragEnd = {
+                        val finished = draggedOrder
+                        dragState.onDragEnd()
+                        if (finished != null && finished != tabs.map { it.bookId }) {
+                            commitOrder.value?.invoke(finished)
+                        } else {
+                            draggedOrder = null
+                        }
+                    },
                     cover = cover,
                 )
             }
         }
-    }
-
-    LaunchedEffect(listState, dragState.draggedItemId) {
-        val draggedId = dragState.draggedItemId ?: return@LaunchedEffect
-        autoScrollWhileDragging(
-            listState = listState,
-            dragState = dragState,
-            draggedId = draggedId,
-            edge = with(density) { OpenTabAutoScrollEdge.toPx() },
-            step = with(density) { OpenTabAutoScrollStep.toPx() },
-        )
-    }
-}
-
-/**
- * Scrolls the group while a dragged row is held near an edge, re-checking the drop target after
- * every step: without this a drag could only reach the three rows that happen to be visible.
- */
-private suspend fun autoScrollWhileDragging(
-    listState: LazyListState,
-    dragState: SharedToolbarDragDropState,
-    draggedId: String,
-    edge: Float,
-    step: Float,
-) {
-    while (dragState.draggedItemId == draggedId) {
-        val layout = listState.layoutInfo
-        val item = layout.visibleItemsInfo.firstOrNull { it.key == draggedId }
-        if (item != null) {
-            val top = item.offset + dragState.dragOffset.y
-            val bottom = top + item.size
-            val delta = when {
-                top < layout.viewportStartOffset + edge -> top - layout.viewportStartOffset - edge
-                bottom > layout.viewportEndOffset - edge -> bottom - layout.viewportEndOffset + edge
-                else -> 0f
-            }
-            if (delta != 0f) {
-                val scrolled = listState.scrollBy(delta.coerceIn(-step, step))
-                if (scrolled != 0f) {
-                    dragState.onViewportScrolled(scrolled)
-                    dragState.onDrag(Offset.Zero)
-                }
-            }
-        }
-        withFrameNanos { }
     }
 }
 
@@ -461,12 +525,15 @@ private fun OpenTabRow(
     cover: @Composable (SharedOpenTab, Modifier) -> Unit,
 ) {
     val active = tab.isActive
-    val container = when {
-        isDragging -> MaterialTheme.colorScheme.surfaceContainerHighest
-        active -> MaterialTheme.colorScheme.secondaryContainer
-        else -> Color.Transparent
+    // Only the lifted row is tinted, exactly like the toolbar customiser: a tinted row always means
+    // "in your hand". The tab a reader is showing is marked by its rail and title instead, so the
+    // panel does not look like a list with one selected file.
+    val container = if (isDragging) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
+    val content = when {
+        isDragging -> MaterialTheme.colorScheme.onPrimaryContainer
+        active -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurface
     }
-    val content = if (active) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -506,11 +573,7 @@ private fun OpenTabRow(
                 Text(
                     meta,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (active) {
-                        MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.78f)
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -554,7 +617,7 @@ private fun OpenTabRow(
         if (dragEnabled) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(44.dp)
                     .clip(CircleShape)
                     .testTag("HomeTabDrag_${tab.bookId}")
                     .pointerInput(tab.bookId) {
@@ -574,7 +637,7 @@ private fun OpenTabRow(
                     Icons.Default.Menu,
                     contentDescription = dragToReorderDescription,
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp),
+                    modifier = Modifier.size(18.dp),
                 )
             }
         }

@@ -89,13 +89,15 @@ sealed interface AppAction {
     data class BookTabsClosed(val kind: ReaderTabKind) : AppAction
 
     /**
-     * Reorders one reader's set: [bookId] takes [targetBookId]'s slot, landing after it when
-     * dragged down and before it when dragged up. This order is the tab order both readers render.
+     * Replaces one reader's tab order with [orderedBookIds], the list a finished drag produced.
+     * The order is shared tab state, so both readers' own tab strips list the same sequence.
+     *
+     * Ids that are not open in [kind] are ignored and open tabs missing from the list keep their
+     * order at the end, so a stale list can never drop a tab.
      */
-    data class BookTabMoved(
+    data class BookTabsReordered(
         val kind: ReaderTabKind,
-        val bookId: String,
-        val targetBookId: String,
+        val orderedBookIds: List<String>,
     ) : AppAction
     data class HomePinToggled(val bookId: String) : AppAction
     data class LibraryPinToggled(val bookId: String) : AppAction

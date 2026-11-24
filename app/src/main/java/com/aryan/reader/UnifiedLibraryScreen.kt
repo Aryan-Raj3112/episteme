@@ -788,7 +788,7 @@ fun UnifiedLibraryScreen(
                         openTabs = openTabs,
                         onOpenTabSelected = viewModel::switchTab,
                         onOpenTabClosed = viewModel::closeTabFromLibrary,
-                        onOpenTabMoved = viewModel::moveTab,
+                        onTabOrderCommitted = viewModel::reorderTabs,
                         onCloseAllTabs = if (openTabs.size > 1) {
                             { showCloseAllTabsDialog = true }
                         } else {

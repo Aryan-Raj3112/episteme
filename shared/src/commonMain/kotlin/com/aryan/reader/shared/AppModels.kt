@@ -263,18 +263,26 @@ data class AppTabGroup(
 }
 
 /**
- * Moves [bookId] into [targetBookId]'s slot.
+ * Moves the item at [fromIndex] into [toIndex]'s slot.
  *
  * Dropping downwards lands after the target and upwards lands before it — the rule the toolbar
  * customiser already uses, so a drag reads the same whether it reorders tools or tabs.
- * Unknown ids and a no-op move return the list unchanged.
+ * Out-of-range indexes and a no-op move return the list unchanged.
  */
-fun List<String>.movedOpenTab(bookId: String, targetBookId: String): List<String> {
-    val fromIndex = indexOf(bookId)
-    val toIndex = indexOf(targetBookId)
-    if (fromIndex < 0 || toIndex < 0 || fromIndex == toIndex) return this
-    val moved = toMutableList()
-    return moved.apply { add(toIndex, removeAt(fromIndex)) }
+fun <T> List<T>.movedItem(fromIndex: Int, toIndex: Int): List<T> {
+    if (fromIndex == toIndex) return this
+    if (fromIndex !in indices || toIndex !in indices) return this
+    return toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
+}
+
+/**
+ * Applies a dragged tab order to [this] set: known ids keep the dragged order and anything the
+ * drag did not mention (a tab opened mid-drag) stays at the end instead of disappearing.
+ */
+fun List<String>.reorderedOpenTabs(ordered: List<String>): List<String> {
+    val known = ordered.filter { it in this }.distinct()
+    val rest = filterNot { it in known }
+    return known + rest
 }
 
 /**

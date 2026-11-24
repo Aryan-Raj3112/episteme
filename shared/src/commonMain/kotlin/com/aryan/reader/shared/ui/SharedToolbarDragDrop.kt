@@ -385,22 +385,27 @@ class SharedToolbarDragDropState(
         val startY = currentItem.offset + dragOffset.y
         val center = startY + currentItem.size / 2f
 
+        // The row under the finger takes the place. A row pushed out of the window altogether still
+        // takes the first or last one in view: otherwise a push that scrolls the list would stall
+        // until the finger came back over a row, and the order would stop following the scroll.
+        val info = lazyListState.layoutInfo
+        val currentIndex = currentItem.index
         val targetItem = visibleItems.find {
             it.key != draggedId && center >= it.offset && center <= (it.offset + it.size)
+        } ?: when {
+            // Only rows on the far side of the lifted one count, so a push out of the window never
+            // sends it back over the rows it has already passed.
+            center > info.viewportEndOffset ->
+                visibleItems.lastOrNull { it.key != draggedId && it.index > currentIndex }
+            center < info.viewportStartOffset ->
+                visibleItems.firstOrNull { it.key != draggedId && it.index < currentIndex }
+            else -> null
         }
 
         if (targetItem != null) {
             onMove(draggedId, targetItem.key.toString())
             dragOffset = dragOffset.copy(y = dragOffset.y - (targetItem.offset - currentItem.offset))
         }
-    }
-
-    /**
-     * Keeps the lifted row under the finger when the list scrolls itself (auto-scroll at an edge):
-     * a forward scroll moves every item up by [delta], so the row's offset has to grow by it.
-     */
-    fun onViewportScrolled(delta: Float) {
-        if (draggedItemId != null) dragOffset += Offset(0f, delta)
     }
 
     fun onDragEnd() {

@@ -1448,7 +1448,7 @@ fun SharedMobileHomeScreen(
                                         "content_desc_drag_to_reorder",
                                         "Drag to reorder",
                                     ),
-                                    onTabMoved = actions::moveTab,
+                                    onTabOrderCommitted = actions::reorderTabs,
                                     cover = { tab, coverModifier ->
                                         val book = tabBooksById[tab.bookId]
                                         if (book?.coverImagePath != null) {

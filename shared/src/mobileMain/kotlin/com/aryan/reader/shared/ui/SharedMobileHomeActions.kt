@@ -22,8 +22,8 @@ interface SharedMobileHomeActions {
     fun closeTab(book: BookItem)
     fun closeAllTabs()
 
-    /** Reorders one reader's tabs from the Home switcher; the order is the tab strip's order. */
-    fun moveTab(kind: ReaderTabKind, bookId: String, targetBookId: String)
+    /** Applies the tab order a finished drag produced; the order is the tab strip's order. */
+    fun reorderTabs(kind: ReaderTabKind, orderedBookIds: List<String>)
 
     fun togglePinned(book: BookItem)
     fun toggleSelectedPins() {}
