@@ -20,7 +20,7 @@ class TtsLifecycleSourceTest {
         val source = sourceFile("com/aryan/reader/tts/DirectLocalTtsPlayer.kt").readText()
 
         assertFalse(source.contains("init {\n        initialize()"))
-        assertTrue(source.contains("if (!initialized) {\n            initialize()"))
+        assertTrue(Regex("if \\(!initialized\\) \\{\\s*initialize\\(\\)").containsMatchIn(source))
         assertTrue(source.contains("tts?.speak(request.text, request.queueMode"))
         assertFalse(source.contains("synthesizeToFile"))
     }

@@ -226,7 +226,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
@@ -334,6 +336,15 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
     )
     private val firestoreRepository = appGraph.firestoreRepository
     private val googleDriveRepository = appGraph.googleDriveRepository
+
+    /**
+     * Bounds how many book uploads run at once. A library-wide sync queues one upload per
+     * book; unbounded, every in-flight upload keeps a resumable-upload buffer alive and
+     * `uploadingBookIds` (an immutable set copied on every change) grows with the library,
+     * which is how #194 died at <1% heap on a 256 MB device.
+     */
+    private val bookContentUploadGate = Semaphore(MAX_CONCURRENT_BOOK_CONTENT_UPLOADS)
+
     private val billingClientWrapper =
         BillingClientWrapper(appContext, viewModelScope) { purchase ->
             verifyPurchaseWithBackend(purchase)
@@ -1794,7 +1805,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 ids.forEach { bookId ->
                     cleanupBookDataLocally(bookId)
                     try {
-                        val cacheDir = File(appContext.cacheDir, "opds_stream_${bookId.hashCode()}")
+                        val cacheDir = File(appContext.cacheDir, "$OPDS_STREAM_CACHE_PREFIX${bookId.hashCode()}")
                         if (cacheDir.exists()) cacheDir.deleteRecursively()
                     } catch (e: Exception) {
                         Timber.e(e, "Failed to clean stream cache for $bookId")
@@ -3753,12 +3764,14 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                             "localContentTs=${bookForMetadata.fileContentModifiedTimestamp} " +
                             "remoteContentTs=${remoteForContent?.fileContentModifiedTimestamp ?: 0L}"
                     }
-                    val uploadedFile = googleDriveRepository.uploadFile(
-                        accessToken,
-                        bookForMetadata.bookId,
-                        source,
-                        bookForMetadata.type
-                    )
+                    val uploadedFile = bookContentUploadGate.withPermit {
+                        googleDriveRepository.uploadFile(
+                            accessToken,
+                            bookForMetadata.bookId,
+                            source,
+                            bookForMetadata.type
+                        )
+                    }
                     if (uploadedFile == null) {
                         logCloudSyncTrace { "android.upload.content_guard_failed book=${bookForMetadata.bookId}" }
                         return@launch
@@ -7297,6 +7310,40 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         _internalState.update { it.copy(errorMessage = null) }
     }
 
+    /**
+     * Which library-id indexes a cache sweep has to build before it may delete anything.
+     *
+     * Both indexes cost O(library size) transient strings: one directory name per book and one
+     * `hashCode()` string per book. The cache usually holds none of the entries tested against them,
+     * so building them up front only allocates ahead of the reclaim - and on a nearly-full 256 MB heap
+     * that is the allocation that dies (a Crashlytics report caught `Integer.toString` in the middle of
+     * `sweepOrphanedCache`, before the sweep had freed a single file).
+     */
+    internal data class CacheSweepTargets(
+        val needsActiveBookDirs: Boolean,
+        val needsStreamHashes: Boolean,
+    ) {
+        /** Library row ids are only worth loading when at least one index is actually needed. */
+        val needsLibraryIds: Boolean get() = needsActiveBookDirs || needsStreamHashes
+
+        companion object {
+            fun of(entryNames: Sequence<String>): CacheSweepTargets {
+                var activeBookDirs = false
+                var streamHashes = false
+                for (name in entryNames) {
+                    if (!activeBookDirs && ImportedFileCache.isActiveBookDir(name)) {
+                        activeBookDirs = true
+                    }
+                    if (!streamHashes && name.startsWith(OPDS_STREAM_CACHE_PREFIX)) {
+                        streamHashes = true
+                    }
+                    if (activeBookDirs && streamHashes) break
+                }
+                return CacheSweepTargets(activeBookDirs, streamHashes)
+            }
+        }
+    }
+
     private fun sweepOrphanedCache() {
         viewModelScope.launch(Dispatchers.IO) {
             Timber.d("Running Cache Sweeper to clean up orphaned temporary files...")
@@ -7305,10 +7352,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                 if (!cacheDir.exists()) return@launch
 
                 val oneHourAgo = System.currentTimeMillis() - TimeUnit.HOURS.toMillis(1)
-                val allDbIds = bookStore.getAllBookIdsForMaintenance()
-                val validStreamHashes = allDbIds.map { it.hashCode().toString() }.toSet()
-                val validActiveBookCacheDirs = allDbIds.mapTo(mutableSetOf()) {
-                    ImportedFileCache.activeBookDirName(it)
+                // Snapshot the entries once: what the cache holds decides whether the O(library)
+                // indexes below are built at all.
+                val cacheEntries = cacheDir.listFiles().orEmpty()
+                val sweepTargets = CacheSweepTargets.of(cacheEntries.asSequence().map { it.name })
+                val libraryIds = if (sweepTargets.needsLibraryIds) {
+                    bookStore.getAllBookIdsForMaintenance()
+                } else {
+                    emptySet()
+                }
+                val validStreamHashes = if (sweepTargets.needsStreamHashes) {
+                    libraryIds.mapTo(HashSet(libraryIds.size)) { it.hashCode().toString() }
+                } else {
+                    emptySet()
+                }
+                val validActiveBookCacheDirs = if (sweepTargets.needsActiveBookDirs) {
+                    libraryIds.mapTo(HashSet(libraryIds.size)) {
+                        ImportedFileCache.activeBookDirName(it)
+                    }
+                } else {
+                    emptySet()
                 }
                 ImportedFileCache.deleteStaleTemporaryBookDirs(appContext, TimeUnit.HOURS.toMillis(1))
                 AndroidShareArtifactManager.sweep(appContext).takeIf { it > 0 }?.let { deletedCount ->
@@ -7320,7 +7383,7 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     Timber.d("Sweeper pruned $pruned orphaned cover files")
                 }
 
-                cacheDir.listFiles()?.forEach { file ->
+                cacheEntries.forEach { file ->
                     val name = file.name
                     if (name.startsWith("temp_") || name.startsWith("sync_bundle_")) {
                         if (file.lastModified() < oneHourAgo) {
@@ -7329,12 +7392,12 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         }
                     } else if (ImportedFileCache.isActiveBookDir(name)) {
                         val legacyBookId = name.removePrefix("imported_file_")
-                        if (name !in validActiveBookCacheDirs && legacyBookId !in allDbIds && file.lastModified() < oneHourAgo) {
+                        if (name !in validActiveBookCacheDirs && legacyBookId !in libraryIds && file.lastModified() < oneHourAgo) {
                             val deleted = file.deleteRecursively()
                             if (deleted) Timber.d("Sweeper cleaned orphaned extracted cache: $name")
                         }
-                    } else if (name.startsWith("opds_stream_")) {
-                        val bookIdHash = name.removePrefix("opds_stream_")
+                    } else if (name.startsWith(OPDS_STREAM_CACHE_PREFIX)) {
+                        val bookIdHash = name.removePrefix(OPDS_STREAM_CACHE_PREFIX)
                         if (bookIdHash !in validStreamHashes) {
                             val deleted = if (file.isDirectory) file.deleteRecursively() else file.delete()
                             if (deleted) Timber.d("Sweeper cleaned orphaned OPDS stream cache for hash: $bookIdHash")
@@ -9125,48 +9188,56 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         }
 
         viewModelScope.launch {
-            _internalState.update { it.copy(uploadingBookIds = it.uploadingBookIds + book.bookId) }
-            try {
-                logCloudSyncTrace { "android.upload_content.start ${book.cloudSyncTraceSummary()}" }
-                val accessToken = googleDriveRepository.getAccessToken(appContext) ?: run {
-                    logCloudSyncTrace { "android.upload_content.skip reason=no_access_token ${book.cloudSyncTraceSummary()}" }
-                    return@launch
-                }
-
-                book.getUri()?.path?.let { path ->
-                    val file = File(path)
-                    if (file.exists()) {
-                        logCloudSyncTrace { "android.upload_content.file book=${book.bookId} path=${path.cloudSyncPreview()} bytes=${file.length()}" }
-                        Timber.d("Uploading newly added book content: ${book.displayName}")
-                        val uploadedFile = googleDriveRepository.uploadFile(
-                            accessToken, book.bookId, file, book.type
-                        )
-                        if (uploadedFile != null) {
-                            logCloudSyncTrace { "android.upload_content.success book=${book.bookId} driveId=${uploadedFile.id}" }
-                            Timber.d("Upload successful, now syncing metadata for ${book.bookId}")
-                            val latestBookState = bookStore.getFileByBookId(book.bookId)
-                            if (latestBookState != null) {
-                                uploadSingleBookMetadata(latestBookState)
-                            } else {
-                                uploadSingleBookMetadata(book)
-                            }
-                        } else {
-                            logCloudSyncTrace { "android.upload_content.failed_null book=${book.bookId}" }
-                            Timber.e("Google Drive upload returned null for ${book.bookId}")
-                        }
-                    } else {
-                        logCloudSyncTrace { "android.upload_content.skip reason=file_missing book=${book.bookId} path=${path.cloudSyncPreview()}" }
-                        Timber.w("File for new book upload does not exist at path: $path")
+            bookContentUploadGate.withPermit {
+                _internalState.update { it.copy(uploadingBookIds = it.uploadingBookIds + book.bookId) }
+                try {
+                    uploadBookContent(book)
+                } finally {
+                    _internalState.update {
+                        it.copy(uploadingBookIds = it.uploadingBookIds - book.bookId)
                     }
                 }
-            } catch (e: Exception) {
-                logCloudSyncError(e) { "android.upload_content.failed ${book.cloudSyncTraceSummary()}" }
-                Timber.e(e, "Failed to upload new book content for bookId: ${book.bookId}")
-            } finally {
-                _internalState.update {
-                    it.copy(uploadingBookIds = it.uploadingBookIds - book.bookId)
+            }
+        }
+    }
+
+    private suspend fun uploadBookContent(book: RecentFileItem) {
+        try {
+            logCloudSyncTrace { "android.upload_content.start ${book.cloudSyncTraceSummary()}" }
+            val accessToken = googleDriveRepository.getAccessToken(appContext) ?: run {
+                logCloudSyncTrace { "android.upload_content.skip reason=no_access_token ${book.cloudSyncTraceSummary()}" }
+                return
+            }
+
+            book.getUri()?.path?.let { path ->
+                val file = File(path)
+                if (file.exists()) {
+                    logCloudSyncTrace { "android.upload_content.file book=${book.bookId} path=${path.cloudSyncPreview()} bytes=${file.length()}" }
+                    Timber.d("Uploading newly added book content: ${book.displayName}")
+                    val uploadedFile = googleDriveRepository.uploadFile(
+                        accessToken, book.bookId, file, book.type
+                    )
+                    if (uploadedFile != null) {
+                        logCloudSyncTrace { "android.upload_content.success book=${book.bookId} driveId=${uploadedFile.id}" }
+                        Timber.d("Upload successful, now syncing metadata for ${book.bookId}")
+                        val latestBookState = bookStore.getFileByBookId(book.bookId)
+                        if (latestBookState != null) {
+                            uploadSingleBookMetadata(latestBookState)
+                        } else {
+                            uploadSingleBookMetadata(book)
+                        }
+                    } else {
+                        logCloudSyncTrace { "android.upload_content.failed_null book=${book.bookId}" }
+                        Timber.e("Google Drive upload returned null for ${book.bookId}")
+                    }
+                } else {
+                    logCloudSyncTrace { "android.upload_content.skip reason=file_missing book=${book.bookId} path=${path.cloudSyncPreview()}" }
+                    Timber.w("File for new book upload does not exist at path: $path")
                 }
             }
+        } catch (e: Exception) {
+            logCloudSyncError(e) { "android.upload_content.failed ${book.cloudSyncTraceSummary()}" }
+            Timber.e(e, "Failed to upload new book content for bookId: ${book.bookId}")
         }
     }
 
@@ -10553,6 +10624,11 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
         private const val KEY_APP_FONT_KIND = "app_font_kind"
         private const val KEY_APP_FONT_CUSTOM_ID = "app_font_custom_id"
         private const val KEY_CUSTOM_APP_THEMES = "custom_app_themes"
+
+        private const val MAX_CONCURRENT_BOOK_CONTENT_UPLOADS = 2
+
+        /** Cache-dir prefix of an OPDS stream extraction; must match the creation sites. */
+        private const val OPDS_STREAM_CACHE_PREFIX = "opds_stream_"
 
         val SUPPORTED_MIME_TYPES = SharedFileCapabilities.androidFilePickerMimeTypes.toTypedArray()
     }

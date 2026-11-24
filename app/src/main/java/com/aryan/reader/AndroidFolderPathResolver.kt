@@ -1,7 +1,6 @@
 package com.aryan.reader
 
 import android.net.Uri
-import androidx.core.net.toUri
 import com.aryan.reader.data.RecentFileItem
 import timber.log.Timber
 
@@ -34,7 +33,7 @@ class AndroidFolderPathResolver : FolderPathResolver {
 
         return try {
             val rootDocId = cachedRootDocumentId(rootFolderUriString) ?: return emptyList()
-            val documentId = documentUriString.toUri().documentIdOrNull() ?: return emptyList()
+            val documentId = documentIdOf(documentUriString) ?: return emptyList()
 
             val rootPath = rootDocId.substringAfter(':', "")
             val documentPath = documentId.substringAfter(':', "")
@@ -60,27 +59,59 @@ class AndroidFolderPathResolver : FolderPathResolver {
         synchronized(rootDocumentIds) {
             rootDocumentIds[rootFolderUriString]?.let { return if (it.isEmpty()) null else it }
             rootDocumentIdParseCount++
-            val resolved = rootFolderUriString.toUri().treeDocumentIdOrNull().orEmpty()
+            val resolved = segmentAfter(rootFolderUriString, TREE_SEGMENT).orEmpty()
             rootDocumentIds[rootFolderUriString] = resolved
             resolved.ifEmpty { null }
         }
 
-    private fun Uri.treeDocumentIdOrNull(): String? {
-        val segments = pathSegments
-        val treeIndex = segments.indexOf("tree")
-        return segments.getOrNull(treeIndex + 1)
-    }
+    private fun documentIdOf(documentUriString: String): String? =
+        segmentAfter(documentUriString, DOCUMENT_SEGMENT)
+            ?: segmentAfter(documentUriString, TREE_SEGMENT)
 
-    private fun Uri.documentIdOrNull(): String? {
-        val segments = pathSegments
-        val documentIndex = segments.indexOf("document")
-        if (documentIndex >= 0) {
-            return segments.getOrNull(documentIndex + 1)
+    /**
+     * The decoded path segment that follows [marker] in [uriString], or `null` when there is none.
+     *
+     * Equivalent to `Uri.parse(uriString).pathSegments` bookkeeping, but without the `Uri`: a book's
+     * document URI is unique per book, so unlike [rootDocumentIds] it cannot be memoized, and
+     * `Uri.parse` allocates a `StringUri` while `getPathSegments` decodes *every* segment of the
+     * path - once per book on every projection pass. That `Uri.parse` allocation is the frame an
+     * OOM report died on, so the path is walked as an encoded string and only the segment we return
+     * is decoded.
+     *
+     * A marker only matches as a whole path segment, and the walk stops at the query or fragment so
+     * `?next=document/x` cannot match. SAF document ids percent-encode `:` and `/` but not letters,
+     * so the marker itself appears literally in the encoded path.
+     */
+    private fun segmentAfter(uriString: String, marker: String): String? {
+        val authorityStart = uriString.indexOf("//")
+        if (authorityStart < 0) return null
+        val pathStart = uriString.indexOf('/', authorityStart + 2)
+        if (pathStart < 0) return null
+        val pathEnd = uriString.indexOfAny(PATH_TERMINATORS, pathStart).let {
+            if (it < 0) uriString.length else it
         }
-        return treeDocumentIdOrNull()
+
+        var match = uriString.indexOf(marker, pathStart + 1)
+        while (match >= 0 && match + marker.length <= pathEnd) {
+            val segmentEnd = match + marker.length
+            val isWholeSegment = uriString[match - 1] == '/' &&
+                (segmentEnd == pathEnd || uriString[segmentEnd] == '/')
+            if (isWholeSegment) {
+                if (segmentEnd == pathEnd) return null
+                val valueEnd = uriString.indexOf('/', segmentEnd + 1).let {
+                    if (it < 0 || it > pathEnd) pathEnd else it
+                }
+                return Uri.decode(uriString.substring(segmentEnd + 1, valueEnd))
+            }
+            match = uriString.indexOf(marker, match + 1)
+        }
+        return null
     }
 
     private companion object {
         const val MAX_CACHED_FOLDERS = 64
+        const val TREE_SEGMENT = "tree"
+        const val DOCUMENT_SEGMENT = "document"
+        val PATH_TERMINATORS = charArrayOf('?', '#')
     }
 }
