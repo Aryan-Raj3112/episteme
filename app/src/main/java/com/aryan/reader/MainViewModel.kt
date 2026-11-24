@@ -4406,9 +4406,9 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                     if (cfi != null) {
                         val locator = locatorConverter.getLocatorFromCfi(book, nextIdx, cfi, bookId)
                         if (locator != null) {
-                            bookStore.getFileByBookId(bookId)?.uriString?.let { uriString ->
-                                bookStore.updateEpubReadingPosition(uriString, locator, cfi, 0f)
-                            }
+                            // The row id is already known here; the write addresses it directly
+                            // instead of reading the row back just to get its URI.
+                            bookStore.updateEpubReadingPosition(bookId, locator, cfi, 0f)
                         }
                     }
                     break
@@ -8572,23 +8572,26 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         "beforeReadTs=${book.effectiveReadingPositionModifiedTimestamp()} " +
                         "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} progress=$progress",
                 )
-                bookStore.updateEpubReadingPosition(
-                    uriString = book.uriString ?: uri.toString(),
+                val positionWritten = bookStore.updateEpubReadingPosition(
+                    bookId = book.bookId,
                     locator = locator,
                     cfiForWebView = cfiForWebView,
                     progress = progress
                 )
-                val updated = bookStore.getFileByBookId(book.bookId)
+                // The repository reports whether the row was updated; no read-back is needed to
+                // log the outcome, and this path runs on every page turn.
+                val writeResult = if (positionWritten) "success" else "missing"
                 logCloudSyncTrace {
                     "android.reader.position_save_done beforeTs=${book.lastModifiedTimestamp} " +
-                        (updated?.cloudSyncTraceSummary("after") ?: "after=null")
+                        "result=$writeResult " +
+                        "locator={chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset}} " +
+                        "progress=$progress"
                 }
                 cloudFolderLogD(
                     "event=reader_position_save_end operation=$positionOperation correlation=$positionCorrelation " +
-                        "book=${cloudFolderSafeId(book.bookId)} kind=epub result=${if (updated != null) "success" else "missing"} " +
-                        "afterReadTs=${updated?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
-                        "afterChapter=${updated?.lastChapterIndex ?: "none"} afterBlock=${updated?.locatorBlockIndex ?: "none"} " +
-                        "afterChar=${updated?.locatorCharOffset ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
+                        "book=${cloudFolderSafeId(book.bookId)} kind=epub result=$writeResult " +
+                        "afterChapter=${locator.chapterIndex} afterBlock=${locator.blockIndex} " +
+                        "afterChar=${locator.charOffset} afterProgress=$progress",
                 )
                 // Room is the durable record; the cloud copy follows on the
                 // slow cadence. See scheduleReadingPositionFlush.
@@ -8778,19 +8781,18 @@ open class MainViewModel(application: Application) : AndroidViewModel(applicatio
                         "book=${cloudFolderSafeId(book.bookId)} kind=pdf " +
                         "beforeReadTs=${book.effectiveReadingPositionModifiedTimestamp()} page=$page progress=$progress",
                 )
-                bookStore.updatePdfReadingPosition(
-                    uriString = book.uriString ?: uri.toString(), page = page, progress = progress
+                val positionWritten = bookStore.updatePdfReadingPosition(
+                    bookId = book.bookId, page = page, progress = progress
                 )
-                val updated = bookStore.getFileByBookId(book.bookId)
+                val writeResult = if (positionWritten) "success" else "missing"
                 logCloudSyncTrace {
                     "android.reader.pdf_position_save_done beforeTs=${book.lastModifiedTimestamp} " +
-                        (updated?.cloudSyncTraceSummary("after") ?: "after=null")
+                        "result=$writeResult page=$page progress=$progress"
                 }
                 cloudFolderLogD(
                     "event=reader_position_save_end operation=$positionOperation correlation=$positionCorrelation " +
-                        "book=${cloudFolderSafeId(book.bookId)} kind=pdf result=${if (updated != null) "success" else "missing"} " +
-                        "afterReadTs=${updated?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
-                        "afterPage=${updated?.lastPage ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
+                        "book=${cloudFolderSafeId(book.bookId)} kind=pdf result=$writeResult " +
+                        "afterPage=$page afterProgress=$progress",
                 )
                 // Room is the durable record; the cloud copy follows on the
                 // slow cadence. See scheduleReadingPositionFlush.

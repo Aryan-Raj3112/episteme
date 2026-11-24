@@ -19,6 +19,9 @@ class SharedGlobalSearchIndex private constructor(
 ) {
     val chunkCount: Int get() = chunks.size
 
+    /** Chunk-text chars held by this index; the resident-budget unit. */
+    val indexedChars: Int = chunks.sumOf { it.text.length }
+
     companion object {
         private const val K1 = 1.2
         private const val B = 0.75
@@ -194,26 +197,47 @@ class SharedGlobalSearchIndex private constructor(
 }
 
 /**
- * Owns all per-book indexes in memory, fans queries out, merges book
- * results. Platforms feed it via [upsertBookChunks] from background work
- * and persist via [SharedGlobalSearchStorage].
+ * Owns the resident per-book indexes, fans queries out, merges book results.
+ * Platforms feed it via [upsertBookChunks] from background work and persist via
+ * [SharedGlobalSearchStorage].
+ *
+ * The resident set is a **bounded cache**, not a copy of the library: only up to
+ * [maxResidentChars] of chunk text is kept, least-recently-used books are
+ * evicted, and [searchAcrossLibrary] reloads them from storage as it scans.
+ * An unbounded map here was what filled a 256 MB heap with every indexed book
+ * and then refused a 24 B substring while decoding one more
+ * (docs/crashlytics-triage.md#179).
  */
 class SharedGlobalSearchCoordinator(
     private val storage: SharedGlobalSearchStorage = InMemorySharedGlobalSearchStorage(),
+    private val maxResidentChars: Int = SharedGlobalSearchPolicy.MAX_RESIDENT_INDEX_CHARS,
 ) {
-    private val indexes = mutableMapOf<String, SharedGlobalSearchIndex>()
-    private val hashes = mutableMapOf<String, String>()
+    private class Resident(val index: SharedGlobalSearchIndex, val chars: Int, var lastUsed: Long)
 
-    fun bookCount(): Int = indexes.size
+    private val resident = mutableMapOf<String, Resident>()
+
+    /** Payload hashes known to be persisted for [bookId] (survives eviction). */
+    private val hashes = mutableMapOf<String, String>()
+    private var residentChars = 0L
+    private var tick = 0L
+
+    fun bookCount(): Int = resident.size
+
+    /** Chunk-text chars currently resident; the budget this class enforces. */
+    fun residentCharCount(): Long = residentChars
 
     fun needsIndex(bookId: String, contentHash: String): Boolean {
         if (hashes[bookId] == contentHash) return false
-        val persisted = storage.loadBook(bookId) ?: return true
-        if (persisted.contentHash != contentHash) return true
         // Same content but an old payload without location arrays would render
         // label-less rows (PDFs showing only the file name with no page).
-        return !persisted.hasCompleteLocations()
+        val metadata = storage.loadMetadata(bookId) ?: return true
+        if (metadata.contentHash != contentHash) return true
+        return !metadata.locationsComplete
     }
+
+    /** Header of the persisted payload, or null when none. Never builds an index. */
+    fun metadataOf(bookId: String): SharedGlobalSearchPersistedMetadata? =
+        storage.loadMetadata(bookId)
 
     /** Returns false when there was nothing indexable ( caller maps to NO_NATIVE_TEXT). */
     fun upsertBookChunks(bookId: String, contentHash: String, chunks: List<SharedSearchChunk>): Boolean {
@@ -221,7 +245,7 @@ class SharedGlobalSearchCoordinator(
             // Persist the tombstone so needsIndex() goes quiet: without it the
             // worker would re-extract a natively empty book on every enqueue.
             val tombstone = SharedGlobalSearchIndex.build(bookId, contentHash, emptyList())
-            indexes.remove(bookId)
+            forgetResident(bookId)
             hashes[bookId] = contentHash
             storage.saveBook(
                 tombstone.toPersisted().copy(status = SharedSearchIndexStatus.NO_NATIVE_TEXT.name),
@@ -229,41 +253,83 @@ class SharedGlobalSearchCoordinator(
             return false
         }
         val index = SharedGlobalSearchIndex.build(bookId, contentHash, chunks)
-        indexes[bookId] = index
+        putResident(bookId, index)
         hashes[bookId] = contentHash
         storage.saveBook(index.toPersisted())
         return true
     }
 
+    /**
+     * Makes [bookId] resident, loading it from storage when it was evicted or
+     * never seen. Returns false when there is no usable payload (missing,
+     * tombstone, or a pre-location-array payload).
+     */
     fun loadPersistedBook(bookId: String): Boolean {
+        resident[bookId]?.let {
+            it.lastUsed = ++tick
+            return true
+        }
+        // Header first so tombstones (scanned books) and pre-location payloads
+        // are skipped without decoding their JSON on every scan.
+        val metadata = storage.loadMetadata(bookId) ?: return false
+        hashes[bookId] = metadata.contentHash
+        if (metadata.chunkCount == 0 || !metadata.locationsComplete) return false
         val persisted = storage.loadBook(bookId) ?: return false
-        if (!persisted.hasCompleteLocations()) return false
-        indexes[bookId] = SharedGlobalSearchIndex.fromPersisted(persisted)
-        hashes[bookId] = persisted.contentHash
+        if (persisted.chunkCount == 0 || !persisted.hasCompleteLocations()) return false
+        putResident(bookId, SharedGlobalSearchIndex.fromPersisted(persisted))
         return true
     }
 
-    fun removeBook(bookId: String) {
-        indexes.remove(bookId)
+    /** Drops the resident payload for [bookId] without touching storage. */
+    fun forget(bookId: String) {
+        forgetResident(bookId)
         hashes.remove(bookId)
+    }
+
+    fun removeBook(bookId: String) {
+        forget(bookId)
         storage.deleteBook(bookId)
     }
 
     fun statusOf(bookId: String): SharedSearchIndexStatus =
-        if (indexes.containsKey(bookId)) SharedSearchIndexStatus.INDEXED
+        if (resident.containsKey(bookId)) SharedSearchIndexStatus.INDEXED
         else SharedSearchIndexStatus.NOT_INDEXED
 
-    /** Content hash of the in-memory payload, or null when absent. */
-    fun contentHashOf(bookId: String): String? = indexes[bookId]?.contentHash
+    /** Content hash of the resident payload, or null when absent. */
+    fun contentHashOf(bookId: String): String? = resident[bookId]?.index?.contentHash
 
+    /** Searches the books already resident. Prefer [searchAcrossLibrary] from the UI paths. */
     fun search(
         rawQuery: String,
         maxBooks: Int = SharedGlobalSearchPolicy.MAX_BOOKS_RETURNED,
+    ): List<SharedGlobalSearchBookResult> = searchIds(rawQuery, resident.keys.toList(), maxBooks, loadMissing = false)
+
+    /**
+     * Searches every book in [bookIds], loading each one from storage on demand
+     * and evicting least-recently-used payloads to stay inside the budget.
+     */
+    fun searchAcrossLibrary(
+        rawQuery: String,
+        bookIds: Collection<String>,
+        maxBooks: Int = SharedGlobalSearchPolicy.MAX_BOOKS_RETURNED,
+    ): List<SharedGlobalSearchBookResult> = searchIds(rawQuery, bookIds, maxBooks, loadMissing = true)
+
+    private fun searchIds(
+        rawQuery: String,
+        bookIds: Collection<String>,
+        maxBooks: Int,
+        loadMissing: Boolean,
     ): List<SharedGlobalSearchBookResult> {
         val query = parseSharedSearchQuery(rawQuery)
         if (query.isEmpty) return emptyList()
         val out = mutableListOf<SharedGlobalSearchBookResult>()
-        for ((bookId, index) in indexes) {
+        for (bookId in bookIds) {
+            val index = if (loadMissing) {
+                if (!loadPersistedBook(bookId)) continue
+                resident[bookId]?.index ?: continue
+            } else {
+                resident[bookId]?.index ?: continue
+            }
             val result = index.searchWithTotal(query)
             val hits = result.hits
             if (hits.isEmpty()) continue
@@ -277,5 +343,23 @@ class SharedGlobalSearchCoordinator(
             )
         }
         return out.sortedByDescending { it.score }.take(maxBooks.coerceAtLeast(1))
+    }
+
+    private fun putResident(bookId: String, index: SharedGlobalSearchIndex) {
+        forgetResident(bookId)
+        resident[bookId] = Resident(index, index.indexedChars, ++tick)
+        residentChars += index.indexedChars
+        while (residentChars > maxResidentChars && resident.size > 1) {
+            // Never evict the payload we just loaded; the caller is about to use it.
+            val victim = resident.entries
+                .filter { it.key != bookId }
+                .minByOrNull { it.value.lastUsed } ?: break
+            forgetResident(victim.key)
+        }
+    }
+
+    private fun forgetResident(bookId: String) {
+        val existing = resident.remove(bookId) ?: return
+        residentChars -= existing.chars
     }
 }

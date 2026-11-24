@@ -125,10 +125,46 @@ data class SharedGlobalSearchPersistedBookIndex(
     }
 }
 
+/**
+ * Header-only view of a persisted payload: enough to decide freshness without
+ * building the index graph. File stores keep this in a small sidecar next to
+ * the payload (docs/crashlytics-triage.md#179); decoding a whole payload just
+ * to read [contentHash] is what made library reconciliation pay full prices.
+ */
+@Serializable
+data class SharedGlobalSearchPersistedMetadata(
+    val bookId: String,
+    val contentHash: String,
+    val chunkCount: Int = 0,
+    val totalTerms: Int = 0,
+    val status: String = SharedSearchIndexStatus.INDEXED.name,
+    /** False for payloads that predate the location arrays; they must re-index. */
+    val locationsComplete: Boolean = true,
+)
+
+fun SharedGlobalSearchPersistedBookIndex.toMetadata(): SharedGlobalSearchPersistedMetadata =
+    SharedGlobalSearchPersistedMetadata(
+        bookId = bookId,
+        contentHash = contentHash,
+        chunkCount = chunkCount,
+        totalTerms = totalTerms,
+        status = status,
+        locationsComplete = hasCompleteLocations(),
+    )
+
 /** Storage seam platforms implement (files/Room). Shared owns the bytes. */
 interface SharedGlobalSearchStorage {
     fun saveBook(index: SharedGlobalSearchPersistedBookIndex)
     fun loadBook(bookId: String): SharedGlobalSearchPersistedBookIndex?
+
+    /**
+     * Cheap header read. Default loads the payload, which is correct for
+     * in-memory stores; file stores override it with a sidecar read so
+     * freshness checks never materialize a book's index.
+     */
+    fun loadMetadata(bookId: String): SharedGlobalSearchPersistedMetadata? =
+        loadBook(bookId)?.toMetadata()
+
     fun deleteBook(bookId: String)
     /** Ids with a persisted payload. Defaults to none; file stores override. */
     fun storedBookIds(): Set<String> = emptySet()
@@ -152,6 +188,14 @@ object SharedGlobalSearchPolicy {
     const val MAX_CHUNK_CHARS = 2000
     /** Total native chars indexed per book; the rest is dropped (head-kept). */
     const val MAX_INDEXED_CHARS_PER_BOOK = 2_000_000
+
+    /**
+     * Total chunk-text chars allowed to stay resident across all books. Indexes
+     * are a cache over the per-book payloads, not a second copy of the library:
+     * a 256 MB device holds a few full-size books, so the resident set is capped
+     * and older books are reloaded on demand (docs/crashlytics-triage.md#179).
+     */
+    const val MAX_RESIDENT_INDEX_CHARS = 4_000_000
     const val MAX_HITS_PER_BOOK = 20
     const val MAX_BOOKS_RETURNED = 50
     const val SNIPPET_RADIUS = 60

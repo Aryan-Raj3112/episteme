@@ -136,27 +136,54 @@ class LibraryStateProjector(
     )
 }
 
-fun filterBySearch(files: List<RecentFileItem>, searchQuery: String): List<RecentFileItem> {
-    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
-    return files.mapSharedResults(sharedFilterBySearch(mapper.map(files), searchQuery))
-}
+/**
+ * One projection cache per library pass. The helpers below are called back to back on the same
+ * book instances (filter -> view filter -> sort), so they must share a cache: each one builds a
+ * [SharedBookItem] per book, and a per-call cache maps the whole list 3-4 times per pass.
+ */
+internal fun projectionCacheFor(files: List<RecentFileItem>): SharedProjectionBookItemCache =
+    SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
 
-fun applyLibraryFilters(files: List<RecentFileItem>, filters: LibraryFilters): List<RecentFileItem> {
-    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
-    return files.mapSharedResults(
+fun filterBySearch(files: List<RecentFileItem>, searchQuery: String): List<RecentFileItem> =
+    filterBySearch(files, searchQuery, projectionCacheFor(files))
+
+internal fun filterBySearch(
+    files: List<RecentFileItem>,
+    searchQuery: String,
+    mapper: SharedProjectionBookItemCache,
+    byId: Map<String, RecentFileItem> = files.associateBy { it.bookId },
+): List<RecentFileItem> =
+    files.mapSharedResults(sharedFilterBySearch(mapper.map(files), searchQuery), byId)
+
+fun applyLibraryFilters(files: List<RecentFileItem>, filters: LibraryFilters): List<RecentFileItem> =
+    applyLibraryFilters(files, filters, projectionCacheFor(files))
+
+internal fun applyLibraryFilters(
+    files: List<RecentFileItem>,
+    filters: LibraryFilters,
+    mapper: SharedProjectionBookItemCache,
+    byId: Map<String, RecentFileItem> = files.associateBy { it.bookId },
+): List<RecentFileItem> =
+    files.mapSharedResults(
         sharedApplyLibraryFilters(
             books = mapper.map(files),
             filters = filters
-        )
+        ),
+        byId
     )
-}
 
-fun sortFiles(files: List<RecentFileItem>, sortOrder: SortOrder): List<RecentFileItem> {
-    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
-    return files.mapSharedResults(sharedSortBooks(mapper.map(files), sortOrder))
-}
+fun sortFiles(files: List<RecentFileItem>, sortOrder: SortOrder): List<RecentFileItem> =
+    sortFiles(files, sortOrder, projectionCacheFor(files))
 
-private fun List<RecentFileItem>.mapSharedResults(sharedBooks: List<com.aryan.reader.shared.BookItem>): List<RecentFileItem> {
-    val byId = associateBy { it.bookId }
-    return sharedBooks.mapNotNull { byId[it.id] }
-}
+internal fun sortFiles(
+    files: List<RecentFileItem>,
+    sortOrder: SortOrder,
+    mapper: SharedProjectionBookItemCache,
+    byId: Map<String, RecentFileItem> = files.associateBy { it.bookId },
+): List<RecentFileItem> =
+    files.mapSharedResults(sharedSortBooks(mapper.map(files), sortOrder), byId)
+
+private fun List<RecentFileItem>.mapSharedResults(
+    sharedBooks: List<com.aryan.reader.shared.BookItem>,
+    byId: Map<String, RecentFileItem> = associateBy { it.bookId },
+): List<RecentFileItem> = sharedBooks.mapNotNull { byId[it.id] }

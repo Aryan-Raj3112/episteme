@@ -3,7 +3,9 @@
 package com.aryan.reader.shared.ios
 
 import com.aryan.reader.shared.search.SharedGlobalSearchPersistedBookIndex
+import com.aryan.reader.shared.search.SharedGlobalSearchPersistedMetadata
 import com.aryan.reader.shared.search.SharedGlobalSearchStorage
+import com.aryan.reader.shared.search.toMetadata
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
@@ -52,6 +54,7 @@ internal class IosGlobalSearchStorage(
             index,
         ).encodeToByteArray()
         bytes.toNSData().writeToFile(target, atomically = true)
+        writeMetadata(index.toMetadata())
     }
 
     override fun loadBook(bookId: String): SharedGlobalSearchPersistedBookIndex? {
@@ -68,28 +71,70 @@ internal class IosGlobalSearchStorage(
         }
     }
 
+    /**
+     * Header read from the small sidecar, so freshness checks never decode a
+     * whole payload (docs/crashlytics-triage.md#179). Payloads written before
+     * the sidecar existed are decoded once and then get one.
+     */
+    override fun loadMetadata(bookId: String): SharedGlobalSearchPersistedMetadata? {
+        val dir = directoryPath() ?: return null
+        val metaPath = "$dir/${fileNameFor(bookId)}$MetaSuffix"
+        val meta = NSData.dataWithContentsOfFile(metaPath)
+        // A corrupt sidecar falls through and is rebuilt from the payload.
+        if (meta != null) decodeMetadata(meta)?.let { return it }
+        val metadata = loadBook(bookId)?.toMetadata() ?: return null
+        writeMetadata(metadata)
+        return metadata
+    }
+
     override fun deleteBook(bookId: String) {
         val dir = directoryPath() ?: return
         NSFileManager.defaultManager.removeItemAtPath("$dir/${fileNameFor(bookId)}", error = null)
+        NSFileManager.defaultManager.removeItemAtPath(
+            "$dir/${fileNameFor(bookId)}$MetaSuffix",
+            error = null,
+        )
     }
 
     override fun storedBookIds(): Set<String> {
         val dir = directoryPath() ?: return emptySet()
         val names = NSFileManager.defaultManager.contentsOfDirectoryAtPath(dir, error = null)
             as? List<String> ?: return emptySet()
-        return names
-            .filter { it.startsWith(FilePrefix) && it.endsWith(".json") }
-            .mapNotNull { name ->
-                val data = NSData.dataWithContentsOfFile("$dir/$name") ?: return@mapNotNull null
-                val text = NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString()
-                    ?: return@mapNotNull null
-                runCatching {
-                    json.decodeFromString(
-                        SharedGlobalSearchPersistedBookIndex.serializer(),
-                        text,
-                    ).bookId
-                }.getOrNull()
-            }.toSet()
+        val ids = mutableSetOf<String>()
+        for (name in names.filter { it.startsWith(FilePrefix) && it.endsWith(MetaSuffix) }) {
+            val data = NSData.dataWithContentsOfFile("$dir/$name") ?: continue
+            decodeMetadata(data)?.let { ids += it.bookId }
+        }
+        // Payloads written before the sidecar existed still count, and gain one.
+        for (name in names.filter { it.startsWith(FilePrefix) && it.endsWith(".json") }) {
+            if (names.contains(name + MetaSuffix)) continue
+            val data = NSData.dataWithContentsOfFile("$dir/$name") ?: continue
+            val text = NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString()
+                ?: continue
+            val decoded = runCatching {
+                json.decodeFromString(SharedGlobalSearchPersistedBookIndex.serializer(), text)
+            }.getOrNull() ?: continue
+            writeMetadata(decoded.toMetadata())
+            ids += decoded.bookId
+        }
+        return ids
+    }
+
+    private fun decodeMetadata(data: NSData): SharedGlobalSearchPersistedMetadata? {
+        val text = NSString.create(data = data, encoding = NSUTF8StringEncoding)?.toString()
+            ?: return null
+        return runCatching {
+            json.decodeFromString(SharedGlobalSearchPersistedMetadata.serializer(), text)
+        }.getOrNull()
+    }
+
+    private fun writeMetadata(metadata: SharedGlobalSearchPersistedMetadata) {
+        val dir = directoryPath() ?: return
+        val path = "$dir/${fileNameFor(metadata.bookId)}$MetaSuffix"
+        json.encodeToString(SharedGlobalSearchPersistedMetadata.serializer(), metadata)
+            .encodeToByteArray()
+            .toNSData()
+            .writeToFile(path, atomically = true)
     }
 
     private fun directoryPath(): String? {
@@ -103,6 +148,7 @@ internal class IosGlobalSearchStorage(
     companion object {
         private const val DirectoryName = "GlobalSearchIndex"
         private const val FilePrefix = "gsi_"
+        private const val MetaSuffix = ".meta"
 
         internal fun fileNameFor(bookId: String): String =
             "$FilePrefix${fnv1aHex(bookId)}.json"

@@ -414,14 +414,18 @@ fun UnifiedLibraryScreen(
         uiState.libraryState.searchInsideFiles,
         uiState.libraryState.contentSearchResults,
     ) {
+        // One projection cache for the whole pass: filtering, the section filter and the sort all
+        // map the same books, so the cache builds each SharedBookItem once instead of 3-4 times.
+        val projectionCache = projectionCacheFor(uiState.rawLibraryFiles)
         filterUnifiedLibraryBooks(
-            applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters),
+            applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters, projectionCache),
             filter,
             debouncedQuery,
             uiState.libraryState.searchInsideFiles,
             uiState.libraryState.contentSearchResults,
             uiState.sortOrder,
             uiState.pinnedLibraryBookIds,
+            projectionCache,
         )
     }
     val section = UnifiedLibrarySection.fromPersisted(uiState.unifiedLibrarySection)
@@ -1448,16 +1452,17 @@ internal fun filterUnifiedLibraryBooks(
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     sortOrder: SortOrder = SortOrder.RECENT,
     pinnedBookIds: Set<String> = emptySet(),
+    mapper: SharedProjectionBookItemCache = projectionCacheFor(books),
 ): List<RecentFileItem> {
     if (books.isEmpty()) return emptyList()
     val normalizedQuery = query.trim()
     val byId = books.associateBy { it.bookId }
-    val sharedBooks = SharedProjectionBookItemCache(maxEntries = books.size).map(books)
+    val sharedBooks = mapper.map(books)
     val metadataBooks = sharedBooks
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
         .mapNotNull { byId[it.id] }
     val ordered = if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
-        sortFiles(metadataBooks, sortOrder)
+        sortFiles(metadataBooks, sortOrder, mapper, byId)
     } else {
         // Content-only books follow metadata hits but still respect the active
         // status filter (blank query = filter check without text matching).
@@ -1469,7 +1474,7 @@ internal fun filterUnifiedLibraryBooks(
             .filter { it.id !in metadataIds && it.matchesMobileUnifiedLibraryFilter(filter, "") }
             .sortedByDescending { contentScores[it.id] ?: Double.NEGATIVE_INFINITY }
             .mapNotNull { byId[it.id] }
-        sortFiles(metadataBooks, sortOrder) + contentOnly
+        sortFiles(metadataBooks, sortOrder, mapper, byId) + contentOnly
     }
     // Android benchmark: pinned books lead the home/library list. Applied here
     // because Library Beta re-derives the list from raw books instead of using

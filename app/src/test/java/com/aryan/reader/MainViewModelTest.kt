@@ -404,14 +404,14 @@ class MainViewModelTest {
         )
         coEvery {
             anyConstructed<RecentFilesRepository>().updateEpubReadingPosition(any(), any(), any(), any())
-        } just Runs
+        } returns true
 
         viewModel.saveEpubReadingPosition(uri, locator, "/4/2/6:14", 37.25f)
         testDispatcher.scheduler.advanceUntilIdle()
 
         coVerify {
             anyConstructed<RecentFilesRepository>().updateEpubReadingPosition(
-                uriString = uriString,
+                bookId = "book-1",
                 locator = locator,
                 cfiForWebView = "/4/2/6:14",
                 progress = 37.25f

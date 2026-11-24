@@ -138,11 +138,16 @@ interface RecentFileDao {
     @Query("DELETE FROM recent_files")
     suspend fun clearAll()
 
+    /**
+     * Returns the number of updated rows (1 when the book exists, 0 otherwise) so callers can report
+     * the outcome without a follow-up `SELECT *` — see [com.aryan.reader.data.RecentFilesRepository].
+     */
     @Query("UPDATE recent_files SET lastPositionCfi = :cfi, lastChapterIndex = :chapterIndex, locatorBlockIndex = :blockIndex, locatorCharOffset = :charOffset, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
-    suspend fun updateEpubReadingPosition(bookId: String, cfi: String?, chapterIndex: Int, blockIndex: Int, charOffset: Int, progress: Float, timestamp: Long)
+    suspend fun updateEpubReadingPosition(bookId: String, cfi: String?, chapterIndex: Int, blockIndex: Int, charOffset: Int, progress: Float, timestamp: Long): Int
 
+    /** Returns the number of updated rows; see [updateEpubReadingPosition]. */
     @Query("UPDATE recent_files SET lastPage = :page, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
-    suspend fun updatePdfReadingPosition(bookId: String, page: Int, progress: Float, timestamp: Long)
+    suspend fun updatePdfReadingPosition(bookId: String, page: Int, progress: Float, timestamp: Long): Int
 
     @Query("UPDATE recent_files SET progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updateAudiobookPosition(bookId: String, progress: Float, timestamp: Long)

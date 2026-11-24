@@ -777,42 +777,49 @@ class RecentFilesRepository(
         }
     }
 
-    override suspend fun updateEpubReadingPosition(uriString: String, locator: Locator, cfiForWebView: String?, progress: Float) = withContext(Dispatchers.IO) {
-        val item = recentFileDao.getFileByUri(uriString)
-        if (item != null) {
-            val currentTime = System.currentTimeMillis()
-            val operation = com.aryan.reader.cloudFolderOperationId("reader-position", item.bookId, currentTime)
-            val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", item.bookId, currentTime)
-            cloudFolderLogD(
-                "event=room_position_write_start operation=$operation correlation=$correlation " +
-                    "book=${cloudFolderSafeId(item.bookId)} kind=epub " +
-                    "beforeReadTs=${item.toRecentFileItem().effectiveReadingPositionModifiedTimestamp()} " +
-                    "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} " +
-                    "progress=$progress",
-            )
-            recentFileDao.updateEpubReadingPosition(
-                bookId = item.bookId,
-                cfi = cfiForWebView,
-                chapterIndex = locator.chapterIndex,
-                blockIndex = locator.blockIndex,
-                charOffset = locator.charOffset,
-                progress = progress,
-                timestamp = currentTime
-            )
-            val updated = recentFileDao.getFileByBookId(item.bookId)
-            cloudFolderLogD(
-                "event=room_position_write_end operation=$operation correlation=$correlation " +
-                    "book=${cloudFolderSafeId(item.bookId)} kind=epub result=${if (updated != null) "success" else "missing"} " +
-                    "afterReadTs=${updated?.toRecentFileItem()?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
-                    "afterChapter=${updated?.lastChapterIndex ?: "none"} afterBlock=${updated?.locatorBlockIndex ?: "none"} " +
-                    "afterChar=${updated?.locatorCharOffset ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
-            )
-            Timber.d("Updated EPUB reading position for ${item.bookId} to Locator: $locator, Progress: $progress%")
+    override suspend fun updateEpubReadingPosition(
+        bookId: String,
+        locator: Locator,
+        cfiForWebView: String?,
+        progress: Float,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val currentTime = System.currentTimeMillis()
+        val operation = com.aryan.reader.cloudFolderOperationId("reader-position", bookId, currentTime)
+        val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", bookId, currentTime)
+        cloudFolderLogD(
+            "event=room_position_write_start operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} kind=epub " +
+                "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} " +
+                "progress=$progress",
+        )
+        // Address the row by its primary key: the caller already holds the Room row, so resolving it
+        // again by URI would only add a full-row read to a per-page-turn write.
+        val updatedRows = recentFileDao.updateEpubReadingPosition(
+            bookId = bookId,
+            cfi = cfiForWebView,
+            chapterIndex = locator.chapterIndex,
+            blockIndex = locator.blockIndex,
+            charOffset = locator.charOffset,
+            progress = progress,
+            timestamp = currentTime
+        )
+        // The affected-row count is the write's own report; the old read-back here existed only to
+        // log what had just been written (see CRASHLYTICS note in docs/crashlytics-triage.md #177).
+        cloudFolderLogD(
+            "event=room_position_write_end operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} kind=epub rows=$updatedRows " +
+                "afterReadTs=$currentTime afterChapter=${locator.chapterIndex} " +
+                "afterBlock=${locator.blockIndex} afterChar=${locator.charOffset} afterProgress=$progress",
+        )
+        if (updatedRows > 0) {
+            Timber.d("Updated EPUB reading position for $bookId to Locator: $locator, Progress: $progress%")
+            true
         } else {
             cloudFolderLogW(
-                "event=room_position_write_end book=${cloudFolderSafeId(uriString)} kind=epub " +
+                "event=room_position_write_end book=${cloudFolderSafeId(bookId)} kind=epub " +
                     "result=skipped reason=book_not_found",
             )
+            false
         }
     }
 
@@ -910,36 +917,40 @@ class RecentFilesRepository(
         Timber.d("Updated bookmarks for $bookId")
     }
 
-    override suspend fun updatePdfReadingPosition(uriString: String, page: Int, progress: Float) = withContext(Dispatchers.IO) {
-        val item = recentFileDao.getFileByUri(uriString)
-        if (item != null) {
-            val currentTime = System.currentTimeMillis()
-            val operation = com.aryan.reader.cloudFolderOperationId("reader-position", item.bookId, currentTime)
-            val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", item.bookId, currentTime)
-            cloudFolderLogD(
-                "event=room_position_write_start operation=$operation correlation=$correlation " +
-                    "book=${cloudFolderSafeId(item.bookId)} kind=pdf " +
-                    "beforeReadTs=${item.toRecentFileItem().effectiveReadingPositionModifiedTimestamp()} " +
-                    "page=$page progress=$progress",
-            )
-            recentFileDao.updatePdfReadingPosition(item.bookId, page, progress, currentTime)
-            val updated = recentFileDao.getFileByBookId(item.bookId)
-            cloudFolderLogD(
-                "event=room_position_write_end operation=$operation correlation=$correlation " +
-                    "book=${cloudFolderSafeId(item.bookId)} kind=pdf result=${if (updated != null) "success" else "missing"} " +
-                    "afterReadTs=${updated?.toRecentFileItem()?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
-                    "afterPage=${updated?.lastPage ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
-            )
-            Timber.tag("PdfPositionDebug").i("Repository: Executed DB update for ${item.bookId} to Page $page, Progress $progress% at TS: $currentTime")
+    override suspend fun updatePdfReadingPosition(
+        bookId: String,
+        page: Int,
+        progress: Float,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val currentTime = System.currentTimeMillis()
+        val operation = com.aryan.reader.cloudFolderOperationId("reader-position", bookId, currentTime)
+        val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", bookId, currentTime)
+        cloudFolderLogD(
+            "event=room_position_write_start operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} kind=pdf " +
+                "page=$page progress=$progress",
+        )
+        // Primary-key write: the caller already resolved this row, so no lookup (and no read-back)
+        // belongs on a per-page-turn path. See docs/crashlytics-triage.md #177.
+        val updatedRows = recentFileDao.updatePdfReadingPosition(bookId, page, progress, currentTime)
+        cloudFolderLogD(
+            "event=room_position_write_end operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} kind=pdf rows=$updatedRows " +
+                "afterReadTs=$currentTime afterPage=$page afterProgress=$progress",
+        )
+        if (updatedRows > 0) {
+            Timber.tag("PdfPositionDebug").i("Repository: Executed DB update for $bookId to Page $page, Progress $progress% at TS: $currentTime")
             logCloudSyncTrace {
-                "android.repository.pdf_position_update book=${item.bookId} page=$page progress=$progress ts=$currentTime"
+                "android.repository.pdf_position_update book=$bookId page=$page progress=$progress ts=$currentTime"
             }
+            true
         } else {
             cloudFolderLogW(
-                "event=room_position_write_end book=${cloudFolderSafeId(uriString)} kind=pdf " +
+                "event=room_position_write_end book=${cloudFolderSafeId(bookId)} kind=pdf " +
                     "result=skipped reason=book_not_found",
             )
-            Timber.tag("PdfPositionDebug").e("Repository: DB Update Failed! No recent file found matching URI: $uriString")
+            Timber.tag("PdfPositionDebug").e("Repository: DB Update Failed! No recent file found for bookId: $bookId")
+            false
         }
     }
 

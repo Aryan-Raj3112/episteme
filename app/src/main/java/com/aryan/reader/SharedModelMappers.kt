@@ -84,9 +84,14 @@ internal class SharedProjectionBookItemCache(
         }
     }
 
+    /** Entries this cache actually built; a fully warm pass adds nothing. */
+    internal var missCount: Int = 0
+        private set
+
     fun map(item: RecentFileItem): SharedBookItem {
         entries[item.bookId]?.takeIf { it.source == item }?.let { return it.shared }
         val shared = item.toSharedProjectionBookItem()
+        missCount++
         entries[item.bookId] = Entry(item, shared)
         return shared
     }

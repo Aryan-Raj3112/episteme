@@ -42,6 +42,34 @@ class UnifiedLibraryScreenTest {
     }
 
     @Test
+    fun libraryListPassMapsEachBookOnce() {
+        val books = listOf(
+            book("Alpha", 10f, timestamp = 30L),
+            book("Beta", 50f, timestamp = 20L),
+            book("Gamma", 100f, timestamp = 10L)
+        )
+        val cache = SharedProjectionBookItemCache()
+
+        val filtered = applyLibraryFilters(books, LibraryFilters(), cache)
+        val visible = filterUnifiedLibraryBooks(
+            books = filtered,
+            filter = UnifiedLibraryFilter.ALL,
+            query = "",
+            mapper = cache,
+        )
+
+        // Filtering, the section filter and the sort map the same instances, so a shared cache
+        // builds one SharedBookItem per book; separate caches would rebuild the whole list per step.
+        assertEquals(books.size, cache.missCount)
+        assertEquals(listOf("Alpha", "Beta", "Gamma"), visible.map { it.displayName })
+        assertEquals(
+            filterUnifiedLibraryBooks(applyLibraryFilters(books, LibraryFilters()), UnifiedLibraryFilter.ALL, "")
+                .map { it.bookId },
+            visible.map { it.bookId },
+        )
+    }
+
+    @Test
     fun pinnedBooksLeadTheLibraryListWithoutRewritingTheSort() {
         val books = listOf(
             book("Alpha", 10f, timestamp = 30L),
