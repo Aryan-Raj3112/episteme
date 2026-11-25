@@ -5,6 +5,7 @@ import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -32,12 +33,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.roundToIntRect
@@ -76,6 +79,12 @@ import androidx.compose.ui.window.PopupProperties
  * @param expanded whether the menu is open.
  * @param onDismissRequest invoked when the user taps outside the menu.
  * @param offset offset from the anchor's top-start, matching `DropdownMenu`'s `offset`.
+ * @param scrimColor dims the surface behind the menu; transparent keeps material's plain
+ *   outside-tap layer, which is what the command menus want.
+ * @param horizontalMargin keeps a window-edge-aligned menu off the screen edge.
+ * @param useIntrinsicWidth sizes the card to its widest row. A panel that already lays itself
+ *   out (fixed width, lazy rows) must opt out: intrinsic measurement is not supported for
+ *   [androidx.compose.foundation.lazy.LazyColumn], which subcomposes its items.
  * @param content the menu items.
  */
 @Composable
@@ -84,6 +93,9 @@ fun SharedDropdownMenu(
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     offset: DpOffset = DpOffset(0.dp, 0.dp),
+    scrimColor: Color = Color.Transparent,
+    horizontalMargin: Dp = 0.dp,
+    useIntrinsicWidth: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val density = LocalDensity.current
@@ -152,6 +164,7 @@ fun SharedDropdownMenu(
         contentOffset = offset,
         density = density,
         layoutDirection = layoutDirection,
+        horizontalMargin = horizontalMargin,
     )
     val maxMenuHeight = sharedDropdownMenuMaxHeight(popupSpace.anchor, popupSpace.drawableSize, density)
 
@@ -172,7 +185,9 @@ fun SharedDropdownMenu(
         // Our own tap layer handles dismissal, so the framework's (broken on iOS)
         // outside-press path is disabled to keep a single, predictable code path.
         // `focusable` must stay on: a non-focusable popup would not receive key events
-        // (hardware back / escape) and would let those reach the surface behind.
+        // (hardware back / escape) and would let those reach the surface behind. Back and
+        // escape still route here, which is what closes the panel.
+        onDismissRequest = onDismissRequest,
         properties = SharedDropdownMenuPopupProperties,
     ) {
         Box(
@@ -184,6 +199,7 @@ fun SharedDropdownMenu(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .background(scrimColor)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -191,11 +207,11 @@ fun SharedDropdownMenu(
                     ),
             )
             Card(
-                modifier = Modifier
+                modifier = modifier
                     .align(Alignment.TopStart)
                     .offset { placement.offset }
                     .heightIn(max = with(density) { maxMenuHeight.toDp() })
-                    .width(IntrinsicSize.Max)
+                    .then(if (useIntrinsicWidth) Modifier.width(IntrinsicSize.Max) else Modifier)
                     .graphicsLayer {
                         scaleX = scale
                         scaleY = scale

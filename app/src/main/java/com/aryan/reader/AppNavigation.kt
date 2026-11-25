@@ -58,7 +58,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -67,6 +69,8 @@ import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
+import com.aryan.reader.shared.ui.sharedScreenEnter
+import com.aryan.reader.shared.ui.sharedScreenExit
 import com.aryan.reader.epubreader.EpubReaderScreen
 import com.aryan.reader.feedback.FeedbackScreen
 import com.aryan.reader.feedback.SupportProjectScreen
@@ -296,7 +300,28 @@ fun AppNavigation(
             }
         }
 
-        NavHost(navController = navController, startDestination = SharedMobileAppDestination.MAIN.route) {
+        // The framework default (fade + 0.92x scale) is what made every exit look like the screen
+        // shrinking into the middle. A shared-axis slide says where the content went instead: a
+        // push arrives from the reading-direction end, a pop leaves towards it. The specs come from
+        // the shared motion tokens, so the hub's internal page changes and the route changes use
+        // the same durations and easing, and predictive back can seek them.
+        val navLayoutDirection = LocalLayoutDirection.current
+        val rtl = navLayoutDirection == LayoutDirection.Rtl
+        NavHost(
+            navController = navController,
+            startDestination = SharedMobileAppDestination.MAIN.route,
+            enterTransition = { sharedScreenEnter(rtl = rtl, forward = true) },
+            exitTransition = { sharedScreenExit(rtl = rtl, forward = true) },
+            popEnterTransition = { sharedScreenEnter(rtl = rtl, forward = false) },
+            popExitTransition = { sharedScreenExit(rtl = rtl, forward = false) },
+            // Predictive back has its own defaults, and its pop exit is `scaleOut(0.7f)` — the
+            // reported "shrinks towards the centre" exit. targetSdk 36 turns predictive back on by
+            // default, so these must match the pop transitions or the gesture preview and the
+            // finish animation would disagree with each other.
+            predictivePopEnterTransition = { sharedScreenEnter(rtl = rtl, forward = false) },
+            predictivePopExitTransition = { sharedScreenExit(rtl = rtl, forward = false) },
+            sizeTransform = null
+        ) {
         composable(SharedMobileAppDestination.MAIN.route) {
             Timber.d("Navigating to Main Screen (${SharedMobileAppDestination.MAIN.route}).")
             if (uiState.isTemporaryExternalOpen) {
@@ -473,63 +498,68 @@ fun AppNavigation(
 
             when {
                 epubBook != null -> {
-                    Timber.i("Displaying EPUB Reader for Book: ${epubBook.title}, initialLocator: $initialLocator")
-                    val coverPath = uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.coverImagePath
-                    val epubUri = uiState.selectedEpubUri
-                    uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
-                    val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
+                    // A tab switch swaps the book on the same route. Keying on the book id makes
+                    // that a clean reopen: every reader-scoped remember (paging anchors, search state,
+                    // TTS queue) is discarded instead of leaking into the next book.
+                    androidx.compose.runtime.key(uiState.selectedBookId) {
+                        Timber.i("Displaying EPUB Reader for Book: ${epubBook.title}, initialLocator: $initialLocator")
+                        val coverPath = uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.coverImagePath
+                        val epubUri = uiState.selectedEpubUri
+                        uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
+                        val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
 
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        EpubReaderScreen(
-                            epubBook = epubBook,
-                            renderMode = renderMode,
-                            initialLocator = initialLocator,
-                            initialCfi = initialCfi,
-                            initialBookmarksJson = initialBookmarksJson,
-                            isProUser = uiState.isProUser,
-                            coverImagePath = coverPath,
-                            onNavigateBack = {
-                                Timber.d("Back action from EPUB Reader. Clearing selected file to navigate home.")
-                                viewModel.clearSelectedFile()
-                            },
-                            onSavePosition = { locator, cfiForWebView, progress ->
-                                Timber.d("Auto-saving EPUB position: Locator $locator, Progress $progress%")
-                                epubUri?.let { uri ->
-                                    viewModel.saveEpubReadingPosition(uri, locator, cfiForWebView, progress)
-                                }
-                            },
-                            onBookmarksChanged = { bookmarksJson ->
-                                // Prefer the explicit selection: a delayed save from one book
-                                // must not be attributed to whichever book is active when it runs.
-                                val bookId = uiState.selectedBookId
-                                    ?: uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
-                                if (bookId != null) {
-                                    viewModel.saveBookmarks(bookId, bookmarksJson)
-                                } else {
-                                    Timber.w("Could not find bookId to save bookmarks for URI: ${uiState.selectedEpubUri}")
-                                }
-                            },
-                            onNavigateToPro = {
-                                navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
-                            },
-                            onRenderModeChange = viewModel::setRenderMode,
-                            customFonts = customFonts,
-                            onImportFonts = viewModel::importFonts,
-                            viewModel = viewModel
-                        )
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            EpubReaderScreen(
+                                epubBook = epubBook,
+                                renderMode = renderMode,
+                                initialLocator = initialLocator,
+                                initialCfi = initialCfi,
+                                initialBookmarksJson = initialBookmarksJson,
+                                isProUser = uiState.isProUser,
+                                coverImagePath = coverPath,
+                                onNavigateBack = {
+                                    Timber.d("Back action from EPUB Reader. Clearing selected file to navigate home.")
+                                    viewModel.clearSelectedFile()
+                                },
+                                onSavePosition = { locator, cfiForWebView, progress ->
+                                    Timber.d("Auto-saving EPUB position: Locator $locator, Progress $progress%")
+                                    epubUri?.let { uri ->
+                                        viewModel.saveEpubReadingPosition(uri, locator, cfiForWebView, progress)
+                                    }
+                                },
+                                onBookmarksChanged = { bookmarksJson ->
+                                    // Prefer the explicit selection: a delayed save from one book
+                                    // must not be attributed to whichever book is active when it runs.
+                                    val bookId = uiState.selectedBookId
+                                        ?: uiState.recentFiles.find { it.uriString == uiState.selectedEpubUri.toString() }?.bookId
+                                    if (bookId != null) {
+                                        viewModel.saveBookmarks(bookId, bookmarksJson)
+                                    } else {
+                                        Timber.w("Could not find bookId to save bookmarks for URI: ${uiState.selectedEpubUri}")
+                                    }
+                                },
+                                onNavigateToPro = {
+                                    navController.navigateIfReady(SharedMobileAppDestination.PRO, popUpToStart = true)
+                                },
+                                onRenderModeChange = viewModel::setRenderMode,
+                                customFonts = customFonts,
+                                onImportFonts = viewModel::importFonts,
+                                viewModel = viewModel
+                            )
 
-                        if (uiState.isLoading) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(MaterialTheme.colorScheme.background.copy(alpha = 0.5f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator()
+                            if (uiState.isLoading) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(MaterialTheme.colorScheme.background.copy(alpha = 0.5f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator()
+                                }
                             }
-                        }
 
-                        CustomTopBanner(bannerMessage = uiState.bannerMessage)
+                            CustomTopBanner(bannerMessage = uiState.bannerMessage)
+                        }
                     }
                 }
                 isLoading -> {

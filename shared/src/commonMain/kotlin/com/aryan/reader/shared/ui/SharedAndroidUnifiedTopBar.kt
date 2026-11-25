@@ -8,15 +8,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -24,7 +20,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,7 +33,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -69,6 +63,11 @@ fun SharedAndroidUnifiedTopBar(
     searchInsideFiles: Boolean = false,
     onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
     searchInsideFilesLabel: String = "Search inside files",
+    /**
+     * Extra control between the search field and the profile avatar, e.g. the library's
+     * open-tabs button. Hosts that draw nothing keep the bar unchanged.
+     */
+    trailingActions: @Composable () -> Unit = {},
     density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
     modifier: Modifier = Modifier,
 ) {
@@ -105,16 +104,15 @@ fun SharedAndroidUnifiedTopBar(
                 IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, drawerDescription) }
             }
             if (searchQuery != null && !showingShelf) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
+                SharedSearchField(
+                    query = searchQuery,
+                    onQueryChange = onSearchQueryChange,
+                    placeholder = searchPlaceholder,
+                    onSearch = { focusManager.clearFocus() },
                     modifier = Modifier.weight(1f).padding(horizontal = 4.dp)
                         .focusRequester(focusRequester)
                         .onFocusChanged { searchFocused = it.isFocused }
                         .testTag("UnifiedLibrarySearch"),
-                    shape = CircleShape,
-                    placeholder = { Text(searchPlaceholder, maxLines = 1) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                     trailingIcon = {
                         if (searchQuery.isNotEmpty() || searchFocused) {
                             IconButton(onClick = {
@@ -125,9 +123,6 @@ fun SharedAndroidUnifiedTopBar(
                             }
                         }
                     },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
-                    singleLine = true,
                 )
             } else if (title != null) {
                 Text(
@@ -141,6 +136,7 @@ fun SharedAndroidUnifiedTopBar(
             } else {
                 Spacer(Modifier.weight(1f))
             }
+            trailingActions()
             IconButton(onClick = onAccount, modifier = Modifier.testTag("UnifiedLibraryProfile")) { accountAvatar() }
         }
             if (showContentScopeToggle) {
@@ -153,7 +149,6 @@ fun SharedAndroidUnifiedTopBar(
                         selected = searchInsideFiles,
                         onClick = { onToggle(!searchInsideFiles) },
                         modifier = Modifier.testTag("UnifiedLibrarySearchInsideFiles"),
-                        shape = CircleShape,
                         label = {
                             Text(
                                 searchInsideFilesLabel,

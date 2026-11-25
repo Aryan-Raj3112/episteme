@@ -14,15 +14,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -53,7 +50,6 @@ import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tag
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenuItem
@@ -76,7 +72,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -180,9 +175,9 @@ internal fun BookTile(
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     Card(
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
-        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else sharedCardBorder(0.45f),
+        shape = sharedCardShape(),
         modifier = modifier
             .fillMaxWidth()
             .combinedClickable(
@@ -278,8 +273,8 @@ internal fun BookListItem(
                 },
                 onLongClick = onToggleSelection
             ),
-        shape = RoundedCornerShape(8.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        shape = sharedCardShape(),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
         border = BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
     ) {
         Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -492,7 +487,7 @@ internal fun StatusBadge(icon: ImageVector, label: String) {
 
 @Composable
 internal fun TagChip(name: String, color: Int?) {
-    val tagColor = Color(color ?: 0xFF64B5F6.toInt())
+    val tagColor = color?.let(::Color) ?: SharedTagColorFallback
     Surface(
         shape = RoundedCornerShape(50),
         color = tagColor.copy(alpha = 0.14f),
@@ -516,10 +511,11 @@ internal fun ProgressSection(progressPercentage: Float?) {
             Text("$percent%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(5.dp))
-        LinearProgressIndicator(
-            progress = { percent / 100f },
-            modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(50)),
-            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+        SharedProgressBar(
+            progress = percent / 100f,
+            modifier = Modifier.fillMaxWidth(),
+            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
+            barHeight = 5.dp,
         )
     }
 }
@@ -580,7 +576,7 @@ internal fun ShelfCollection(
 ) {
     if (shelves.isEmpty()) {
         SharedEmptyState(
-            icon = { Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(56.dp)) },
+            icon = Icons.Default.Folder,
             title = emptyTitle,
             body = emptyBody,
             actionLabel = emptyActionLabel,
@@ -640,9 +636,9 @@ internal fun ShelfSection(
     onOpenShelf: ((Shelf) -> Unit)?
 ) {
     Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        shape = sharedCardShape(),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = sharedCardBorder(0.45f)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -754,9 +750,9 @@ internal fun FolderShelfDetail(
 ) {
     Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Surface(
-            shape = RoundedCornerShape(8.dp),
+            shape = sharedCardShape(),
             color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+            border = sharedCardBorder(0.45f)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
@@ -776,7 +772,7 @@ internal fun FolderShelfDetail(
 
         if (childShelves.isEmpty() && shelf.directBooks.isEmpty()) {
             SharedEmptyState(
-                icon = { Icon(Icons.Default.Folder, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                icon = Icons.Default.Folder,
                 title = readerString("desktop_folder_empty", "Folder is empty"),
                 body = readerString("desktop_folder_empty_desc", "No supported files or subfolders are available here."),
                 modifier = Modifier.weight(1f)
@@ -841,9 +837,9 @@ internal fun FolderShelfListItem(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenShelf),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+        shape = sharedCardShape(),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = sharedCardBorder(0.45f)
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
@@ -1033,7 +1029,7 @@ internal fun LibraryImportEmptyState(
     modifier: Modifier = Modifier
 ) {
     SharedEmptyState(
-        icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
+        icon = Icons.AutoMirrored.Filled.LibraryBooks,
         title = readerString("your_library_empty", "Your library is empty"),
         body = readerString("desktop_library_empty_desc", "Import files into app storage or add a folder to read files in place."),
         actionLabel = readerString("desktop_import_files", "Import files"),
@@ -1042,56 +1038,6 @@ internal fun LibraryImportEmptyState(
         onSecondaryAction = onImportFolder,
         modifier = modifier
     )
-}
-
-@Composable
-internal fun SharedEmptyState(
-    icon: @Composable () -> Unit,
-    title: String,
-    body: String,
-    modifier: Modifier = Modifier,
-    actionLabel: String? = null,
-    onAction: (() -> Unit)? = null,
-    secondaryActionLabel: String? = null,
-    onSecondaryAction: (() -> Unit)? = null
-) {
-    Surface(
-        modifier = modifier.fillMaxWidth().fillMaxHeight(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-    ) {
-        Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Box(Modifier.padding(18.dp), contentAlignment = Alignment.Center) {
-                        icon()
-                    }
-                }
-                Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                Text(
-                    body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.widthIn(max = 420.dp)
-                )
-                if (actionLabel != null && onAction != null) {
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Button(onClick = onAction) {
-                            Text(actionLabel)
-                        }
-                        if (secondaryActionLabel != null && onSecondaryAction != null) {
-                            OutlinedButton(onClick = onSecondaryAction) {
-                                Text(secondaryActionLabel)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
 }
 
 @Composable

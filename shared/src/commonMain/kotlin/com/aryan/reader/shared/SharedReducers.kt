@@ -31,7 +31,6 @@ fun LibraryState.reduce(action: LibraryAction): LibraryState {
         )
         LibraryAction.ShelfSelectionCleared -> copy(selectedShelfIds = emptySet())
         is LibraryAction.LibraryPageChanged -> copy(libraryPage = action.page)
-        is LibraryAction.RecentLimitChanged -> copy(recentLimit = action.limit)
     }
 }
 
@@ -125,7 +124,6 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
         selectedBookIds = selectedBookIds,
         selectedShelfIds = selectedShelfIds,
         libraryPage = libraryScreenStartPage,
-        recentLimit = recentFilesLimit,
     ).reduce(action)
     return copy(
         searchQuery = reduced.searchQuery,
@@ -135,7 +133,6 @@ fun SharedReaderScreenState.reduce(action: LibraryAction): SharedReaderScreenSta
         selectedBookIds = reduced.selectedBookIds,
         selectedShelfIds = reduced.selectedShelfIds,
         libraryScreenStartPage = reduced.libraryPage,
-        recentFilesLimit = reduced.recentLimit,
         // Hosts that apply actions straight onto the projected state (iOS) do not run
         // the projector again, so shelf contents have to be re-ordered here or the
         // shelf screens would keep rendering the previous order. Android re-projects
@@ -192,11 +189,8 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
         is AppAction.TabsEnabledChanged,
         is AppAction.BookTabOpened,
         is AppAction.BookTabClosed,
-        AppAction.AllTabsClosed -> withTabState(
-            state = tabState().reduce(action),
-            clearOpenTabs = action == AppAction.AllTabsClosed ||
-                (action is AppAction.TabsEnabledChanged && !action.enabled),
-        )
+        is AppAction.BookTabsReordered,
+        is AppAction.BookTabsClosed -> withTabState(tabState().reduce(action))
         is AppAction.HomePinToggled -> copy(
             pinnedHomeBookIds = if (action.bookId in pinnedHomeBookIds) {
                 pinnedHomeBookIds - action.bookId
@@ -248,29 +242,57 @@ fun SharedReaderScreenState.reduce(action: AppAction): SharedReaderScreenState {
 }
 
 fun AppTabState.reduce(action: AppAction): AppTabState = when (action) {
-    is AppAction.TabsEnabledChanged -> copy(
-        isEnabled = action.enabled,
-        openBookIds = if (action.enabled) openBookIds else emptyList(),
-        activeBookId = if (action.enabled) activeBookId else null,
-    )
+    // The switch covers both sets: one setting, and pausing tabs must not leave the other
+    // engine's set live behind a disabled toggle. Each set keeps its active tab so re-enabling
+    // restores the reader the user was last in, matching Android's historical behaviour.
+    is AppAction.TabsEnabledChanged -> if (action.enabled) {
+        copy(isEnabled = true)
+    } else {
+        copy(
+            isEnabled = false,
+            fixedLayout = fixedLayout.asDisabledSet(),
+            text = text.asDisabledSet(),
+        )
+    }
     is AppAction.BookTabOpened -> {
         val bookId = action.bookId.trim()
-        if (bookId.isBlank()) this else copy(
-            isEnabled = true,
-            openBookIds = openBookIds.distinct().let { if (bookId in it) it else it + bookId },
-            activeBookId = bookId,
-        )
+        if (bookId.isBlank()) {
+            this
+        } else {
+            val group = group(action.kind)
+            withGroup(
+                action.kind,
+                group.copy(
+                    openBookIds = group.openBookIds.distinct().let { if (bookId in it) it else it + bookId },
+                    activeBookId = bookId,
+                ),
+            ).copy(isEnabled = true)
+        }
     }
     is AppAction.BookTabClosed -> {
-        val remaining = openBookIds.filterNot { it == action.bookId }
-        copy(
-            openBookIds = remaining,
-            activeBookId = if (activeBookId == action.bookId) remaining.lastOrNull() else activeBookId,
+        val group = group(action.kind)
+        val remaining = group.openBookIds.filterNot { it == action.bookId }
+        withGroup(
+            action.kind,
+            group.copy(
+                openBookIds = remaining,
+                activeBookId = if (group.activeBookId == action.bookId) remaining.lastOrNull() else group.activeBookId,
+            ),
         )
     }
-    AppAction.AllTabsClosed -> copy(openBookIds = emptyList(), activeBookId = null)
+    is AppAction.BookTabsReordered -> {
+        val group = group(action.kind)
+        val openIds = group.openBookIds.reorderedOpenTabs(action.orderedBookIds)
+        if (openIds == group.openBookIds) this else withGroup(action.kind, group.copy(openBookIds = openIds))
+    }
+    is AppAction.BookTabsClosed -> withGroup(action.kind, AppTabGroup())
     else -> this
 }
+
+/** Disabling tabs parks a set on its active tab instead of forgetting it. */
+private fun AppTabGroup.asDisabledSet(): AppTabGroup = activeBookId
+    ?.let { AppTabGroup(openBookIds = listOf(it), activeBookId = it) }
+    ?: AppTabGroup()
 
 fun AppPinState.toggleSelection(selectedBookIds: Collection<String>, isHome: Boolean): AppPinState {
     val selectedIds = selectedBookIds.mapNotNullTo(linkedSetOf()) { id ->
@@ -288,30 +310,37 @@ fun AppPinState.toggleSelection(selectedBookIds: Collection<String>, isHome: Boo
 
 fun AppTabState.reconcileAvailableBooks(
     availableBookIds: Set<String>,
-    maxOpenTabs: Int = MAX_OPEN_PDF_TABS,
+    maxOpenTabs: Int = MAX_OPEN_TABS_PER_KIND,
 ): AppTabState {
-    val reconciledOpenIds = openBookIds
-        .distinct()
-        .filter(availableBookIds::contains)
-        .take(maxOpenTabs.coerceAtLeast(0))
-    return copy(
-        openBookIds = reconciledOpenIds,
-        activeBookId = activeBookId?.takeIf(reconciledOpenIds::contains),
+    val reconciled = copy(
+        fixedLayout = fixedLayout.reconciled(availableBookIds, maxOpenTabs),
+        text = text.reconciled(availableBookIds, maxOpenTabs),
     )
+    return if (reconciled == this) this else reconciled
 }
 
 private fun SharedReaderScreenState.tabState() = AppTabState(
     isEnabled = isTabsEnabled,
-    openBookIds = openTabIds,
-    activeBookId = activeTabBookId,
+    fixedLayout = AppTabGroup(openTabIds, activeTabBookId),
+    text = AppTabGroup(textOpenTabIds, activeTextTabBookId),
 )
 
-private fun SharedReaderScreenState.withTabState(state: AppTabState, clearOpenTabs: Boolean) = copy(
+/**
+ * Ids are the source of truth for both tab sets; the book lists are derived from them, so a closed
+ * or disabled tab can never linger as a stale row in either reader's strip.
+ */
+private fun SharedReaderScreenState.withTabState(state: AppTabState) = copy(
     isTabsEnabled = state.isEnabled,
-    openTabIds = state.openBookIds,
-    activeTabBookId = state.activeBookId,
-    openTabs = if (clearOpenTabs) emptyList() else openTabs,
+    openTabIds = state.fixedLayout.openBookIds,
+    activeTabBookId = state.fixedLayout.activeBookId,
+    openTabs = openTabsFor(state.fixedLayout.openBookIds),
+    textOpenTabIds = state.text.openBookIds,
+    activeTextTabBookId = state.text.activeBookId,
+    textOpenTabs = openTabsFor(state.text.openBookIds),
 )
+
+private fun SharedReaderScreenState.openTabsFor(bookIds: List<String>): List<BookItem> =
+    bookIds.mapNotNull { id -> rawLibraryBooks.firstOrNull { it.id == id } }
 
 private fun SharedReaderScreenState.appAppearance() = AppAppearanceState(
     themeMode = appThemeMode,

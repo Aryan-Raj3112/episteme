@@ -18,6 +18,7 @@ class MobileUnifiedLibraryDrawerModelsTest {
                 MobileUnifiedLibraryDrawerDestination.HOME,
                 MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS,
                 MobileUnifiedLibraryDrawerDestination.SHELVES,
+                MobileUnifiedLibraryDrawerDestination.TAGS,
                 MobileUnifiedLibraryDrawerDestination.FOLDERS,
                 MobileUnifiedLibraryDrawerDestination.CATALOGS,
             ),
@@ -28,6 +29,7 @@ class MobileUnifiedLibraryDrawerModelsTest {
                 MobileUnifiedLibraryDrawerLabel.HOME,
                 MobileUnifiedLibraryDrawerLabel.AUDIOBOOKS,
                 MobileUnifiedLibraryDrawerLabel.SHELVES,
+                MobileUnifiedLibraryDrawerLabel.TAGS,
                 MobileUnifiedLibraryDrawerLabel.FOLDERS,
                 MobileUnifiedLibraryDrawerLabel.CATALOGS,
             ),
@@ -57,6 +59,7 @@ class MobileUnifiedLibraryDrawerModelsTest {
                 MobileUnifiedLibraryDrawerDestination.HOME,
                 MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS,
                 MobileUnifiedLibraryDrawerDestination.SHELVES,
+                MobileUnifiedLibraryDrawerDestination.TAGS,
                 MobileUnifiedLibraryDrawerDestination.FOLDERS,
             ),
             noOptionalFeatures.destinations,
@@ -76,7 +79,7 @@ class MobileUnifiedLibraryDrawerModelsTest {
                 aiSettingsAvailable = false,
             ),
         )
-        assertEquals(5, catalogsOnly.destinations.size)
+        assertEquals(6, catalogsOnly.destinations.size)
         assertEquals(3, catalogsOnly.appearance.size)
     }
 }

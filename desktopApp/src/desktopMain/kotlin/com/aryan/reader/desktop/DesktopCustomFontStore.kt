@@ -1,6 +1,10 @@
 package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.SharedFontFiles
+import com.aryan.reader.shared.googleFontCatalogEntry
+import com.aryan.reader.shared.googleFontDownloadExtension
+import com.aryan.reader.shared.googleFontDownloadUrlFromCss
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
@@ -21,7 +25,7 @@ class DesktopCustomFontStore(
             return Result.failure(IllegalArgumentException("Choose a font file."))
         }
         val extension = source.extension.lowercase()
-        if (extension !in SupportedFontExtensions) {
+        if (extension !in SharedFontFiles.supportedExtensions) {
             return Result.failure(IllegalArgumentException("Unsupported font format. Use TTF, OTF, or WOFF2."))
         }
 
@@ -94,7 +98,10 @@ class DesktopCustomFontStore(
         }
 
         return runCatching {
-            val encodedName = URLEncoder.encode(normalizedFontName, Charsets.UTF_8.name())
+            // Catalog entries may carry a `:face` suffix for families without a
+            // Regular 400 face (e.g. "Buda:300").
+            val cssFamily = googleFontCatalogEntry(normalizedFontName, loadGoogleFontsList())
+            val encodedName = URLEncoder.encode(cssFamily, Charsets.UTF_8.name())
             val cssConnection = URL("https://fonts.googleapis.com/css?family=$encodedName")
                 .openConnection() as HttpURLConnection
             cssConnection.setRequestProperty("User-Agent", GoogleFontsSafariUserAgent)
@@ -102,15 +109,17 @@ class DesktopCustomFontStore(
             cssConnection.readTimeout = 15_000
 
             if (cssConnection.responseCode != HttpURLConnection.HTTP_OK) {
-                throw IllegalStateException("Font '$normalizedFontName' was not found on Google Fonts.")
+                throw IllegalStateException("'$normalizedFontName' is not available on Google Fonts.")
             }
 
             val css = cssConnection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
             val fontUrl = googleFontDownloadUrlFromCss(css)
-                ?: throw IllegalStateException("Could not parse a download link for $normalizedFontName.")
-            val extension = googleFontFileExtension(fontUrl)
-            if (extension !in SupportedFontExtensions) {
-                throw IllegalStateException("Unsupported format ($extension) returned for $normalizedFontName.")
+                ?: throw IllegalStateException("Could not find a download link for '$normalizedFontName'.")
+            val extension = googleFontDownloadExtension(fontUrl)
+            if (extension !in SharedFontFiles.supportedExtensions) {
+                throw IllegalStateException(
+                    "Google Fonts returned an unsupported format ($extension) for '$normalizedFontName'."
+                )
             }
 
             val tempFile = File.createTempFile("episteme_google_font_", ".$extension")
@@ -129,7 +138,6 @@ class DesktopCustomFontStore(
     }
 
     companion object {
-        private val SupportedFontExtensions = setOf("ttf", "otf", "woff2")
         private const val GoogleFontsResource = "google_fonts.json"
         private const val GoogleFontsSafariUserAgent =
             "Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; en-us) AppleWebKit/533.21.1 (KHTML, like Gecko) Version/5.0.5 Safari/533.21.1"
@@ -138,19 +146,6 @@ class DesktopCustomFontStore(
             return File(desktopUserDataRoot(), "custom_fonts")
         }
     }
-}
-
-internal fun googleFontDownloadUrlFromCss(css: String): String? {
-    return Regex("""url\((https://[^)]+)\)""")
-        .find(css)
-        ?.groupValues
-        ?.getOrNull(1)
-}
-
-internal fun googleFontFileExtension(fontUrl: String): String {
-    return fontUrl.substringBefore('?')
-        .substringAfterLast('.', "ttf")
-        .lowercase()
 }
 
 internal fun googleFontsFromJson(rawJson: String): List<String> {

@@ -321,10 +321,24 @@ kotlin {
             val iosSimulatorArm64Main by getting {
                 dependsOn(iosMain)
             }
+            // Tests for code that only exists in mobileMain (shared phone/tablet UI,
+            // media overlay playback). commonTest has to stay target-agnostic: the
+            // desktop target never sees mobileMain, so keeping these there broke
+            // `:shared:compileTestKotlinDesktop` and every desktop parser test with it.
+            val mobileTest by creating {
+                dependsOn(commonTest.get())
+                dependencies {
+                    implementation(kotlin("test"))
+                }
+            }
+            val androidHostTest by getting {
+                dependsOn(mobileTest)
+            }
             // Manual iosMain intermediates above skip the default hierarchy's iosTest
             // wiring; without this, src/iosTest is never compiled or run.
             val iosTest by creating {
                 dependsOn(commonTest.get())
+                dependsOn(mobileTest)
             }
             val iosArm64Test by getting {
                 dependsOn(iosTest)
@@ -338,6 +352,12 @@ kotlin {
         commonMain.dependencies {
             implementation(compose.foundation)
             implementation(compose.material3)
+            // `compose.material3` still resolves the stable 1.9.0 line, which predates Material 3
+            // Expressive; the iOS klib happens to arrive at 1.11.0-alpha03 through materialkolor
+            // while Android and desktop stayed behind, so the same commonMain file compiled on one
+            // target and not the others. One explicit version aligns all of them, and 1.11.0-alpha03
+            // is what iOS was already building against.
+            implementation(libs.compose.material3.multiplatform)
             implementation(compose.ui)
             implementation(compose.components.resources)
             implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")

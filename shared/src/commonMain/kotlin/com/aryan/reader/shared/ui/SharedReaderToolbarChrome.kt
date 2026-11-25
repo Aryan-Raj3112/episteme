@@ -3,35 +3,51 @@ package com.aryan.reader.shared.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.Stable
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.ui.Modifier
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.ScrollState
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.PdfReaderTool
@@ -71,16 +87,72 @@ class SharedReaderOverflowMenuState {
 fun rememberSharedReaderOverflowMenuState(): SharedReaderOverflowMenuState =
     remember { SharedReaderOverflowMenuState() }
 
+/**
+ * The reader's tool menu.
+ *
+ * It used to be a `DropdownMenu` anchored to the overflow button, which meant a 20-row list of
+ * tools was clipped to the space under a 56dp bar, scrolled inside a popup no taller than the
+ * button, and sat on top of the page with the reader still visible behind it. Tools are a
+ * destination, not a context menu: they open as a sheet that can use the whole screen, scrolls
+ * naturally, and dismisses with back/swipe.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SharedReaderOverflowMenu(
     state: SharedReaderOverflowMenuState,
+    title: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    SharedDropdownMenu(
-        expanded = state.menuExpanded.value,
-        onDismissRequest = state::dismiss,
+    SharedReaderOverflowSheet(
+        visible = state.menuExpanded.value,
+        onDismiss = state::dismiss,
+        title = title,
         content = content,
     )
+}
+
+/**
+ * Sheet host for the tool menus, shared by the state-driven [SharedReaderOverflowMenu] and the
+ * EPUB bar's boolean-driven menu so a reader cannot end up with a different container per platform.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SharedReaderOverflowSheet(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    title: String? = null,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (!visible) return
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        // A full-width sheet on a tablet spans 1200dp of text; the M3 max width keeps tool rows
+        // readable next to the page instead of stretching them across the window.
+        sheetMaxWidth = 560.dp,
+        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+    ) {
+        if (title != null) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 24.dp, top = 4.dp, bottom = 8.dp),
+            )
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(bottom = 16.dp),
+            content = content,
+        )
+    }
 }
 
 fun sharedEpubToolbarTools(
@@ -139,21 +211,44 @@ fun SharedReaderBarVisibility(
     ) { content() }
 }
 
+/**
+ * Reader chrome surface.
+ *
+ * Both readers float their bars over the page, so the bar has to separate from the text without
+ * looking like a card that belongs to another app. A tonal container plus a hairline does that at
+ * every theme (including the custom reader themes, whose `surface` is the page colour itself);
+ * `tonalElevation = 4.dp` used to paint a lighter rectangle that clashed with the reader's paper
+ * texture and made the bars read as floating panels.
+ */
 @Composable
 fun SharedReaderToolbarSurface(
     modifier: Modifier = Modifier,
     height: Dp? = null,
+    /** Which edge of the bar faces the page, so the hairline is drawn only on that side. */
+    edge: SharedReaderBarEdge? = null,
     content: @Composable () -> Unit,
 ) {
-    val surfaceModifier = if (height == null) {
-        modifier.fillMaxWidth()
+    val lineColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)
+    val edgedModifier = if (edge == null) {
+        modifier
     } else {
-        modifier.fillMaxWidth().height(height)
+        modifier.drawBehind {
+            val thickness = 1f
+            drawRect(
+                color = lineColor,
+                topLeft = Offset(0f, if (edge == SharedReaderBarEdge.TOP) size.height - thickness else 0f),
+                size = Size(size.width, thickness),
+            )
+        }
+    }
+    val surfaceModifier = if (height == null) {
+        edgedModifier.fillMaxWidth()
+    } else {
+        edgedModifier.fillMaxWidth().height(height)
     }
     Surface(
         modifier = surfaceModifier,
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 4.dp,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         content = content,
     )
 }
@@ -202,11 +297,54 @@ fun SharedEpubBottomToolbarRow(
     )
 }
 
+/**
+ * One tool in a reader bar.
+ *
+ * Both PDF bars used to hand-roll this: Android through the app module's tooltip wrapper, iOS
+ * through a bare `IconButton` with a `contentDescription` and a tint for its active state. The
+ * button contract belongs next to the bar it lives in, so "active tool", "busy tool" and the
+ * tooltip behave the same whichever host is drawing the bar.
+ */
 @Composable
-fun SharedPdfTopToolbarRow(content: @Composable RowScope.() -> Unit) {
+fun SharedReaderToolButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier.size(48.dp),
+    enabled: Boolean = true,
+    description: String? = null,
+    active: Boolean = false,
+    loading: Boolean = false,
+    content: @Composable () -> Unit,
+) {
+    SharedTooltipIconButton(
+        text = label,
+        onClick = onClick,
+        modifier = modifier.semantics { contentDescription = label },
+        enabled = enabled,
+        description = description,
+        active = active,
+    ) {
+        if (loading) {
+            CircularProgressIndicator(Modifier.size(20.dp))
+        } else {
+            content()
+        }
+    }
+}
+
+@Composable
+fun SharedPdfTopToolbarRow(
+    /**
+     * Status-bar inset. It lives inside the row so the bar's Surface colour reaches the screen
+     * edge behind the status bar, and so a host whose reader already paints that area can pass 0.
+     */
+    topInset: Dp = 0.dp,
+    content: @Composable RowScope.() -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(top = topInset)
             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             .height(56.dp)
             .padding(horizontal = 4.dp),
@@ -241,7 +379,12 @@ fun <T> SharedReaderOverflowSectionList(
     content: @Composable (T) -> Unit,
 ) {
     sections.forEachIndexed { index, section ->
-        if (index > 0) HorizontalDivider()
+        if (index > 0) {
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+        }
         content(section)
     }
 }

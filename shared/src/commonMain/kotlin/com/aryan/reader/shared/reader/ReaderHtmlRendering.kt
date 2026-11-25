@@ -675,32 +675,21 @@ internal fun ReaderSettings.readerTextAlignCss(): String {
     }
 }
 
-internal fun ReaderSettings.readerCustomFontUrl(): String? {
-    return customFontPath?.takeIf { it.isNotBlank() }?.toCssFontUrl()
-}
-
-internal fun ReaderSettings.readerCustomFontFaceCss(): String {
-    val customFontUrl = readerCustomFontUrl() ?: return ""
-    return "@font-face { font-family: 'ReaderCustomFont'; src: url('$customFontUrl'); font-display: swap; }"
-}
-
-internal fun ReaderSettings.readerFontFamilyCss(): String {
-    return if (readerCustomFontUrl() != null) {
-        "'ReaderCustomFont', Georgia, 'Times New Roman', serif"
-    } else {
-        // Android parity (epub_reader.js updateReaderStyles + FormatSettings):
-        // the format sheet stores concrete family names ("Lora", "Merriweather",
-        // "Lato", ...) while FormatSettings maps them to "Serif"/"Sans"/"Mono".
-        // Both must render identically; matching only the canonical names left
-        // "Lora" on system-ui just like "Default", so Original->Lora changed
-        // nothing in the WebView while the native preview (toSharedReaderFontFamily)
-        // did change.
-        when (fontFamily) {
-            "Serif", "Merriweather", "Lora" -> "Georgia, 'Times New Roman', serif"
-            "Sans", "Lato", "Lexend" -> "Inter, Segoe UI, Arial, sans-serif"
-            "Mono", "Roboto Mono" -> "'Roboto Mono', Consolas, monospace"
-            else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-        }
+/**
+ * Generic CSS stack for a system family selection. Android parity
+ * (epub_reader.js updateReaderStyles + FormatSettings): the format sheet stores
+ * concrete family names ("Lora", "Merriweather", "Lato", ...) while
+ * FormatSettings maps them to "Serif"/"Sans"/"Mono". Both must render
+ * identically; matching only the canonical names left "Lora" on system-ui
+ * just like "Default", so Original->Lora changed nothing in the WebView while
+ * the native preview (toSharedReaderFontFamily) did change.
+ */
+internal fun readerSystemFontFamilyCss(fontFamily: String): String {
+    return when (fontFamily) {
+        "Serif", "Merriweather", "Lora" -> "Georgia, 'Times New Roman', serif"
+        "Sans", "Lato", "Lexend" -> "Inter, Segoe UI, Arial, sans-serif"
+        "Mono", "Roboto Mono" -> "'Roboto Mono', Consolas, monospace"
+        else -> "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
     }
 }
 

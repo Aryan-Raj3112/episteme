@@ -404,14 +404,14 @@ class MainViewModelTest {
         )
         coEvery {
             anyConstructed<RecentFilesRepository>().updateEpubReadingPosition(any(), any(), any(), any())
-        } just Runs
+        } returns true
 
         viewModel.saveEpubReadingPosition(uri, locator, "/4/2/6:14", 37.25f)
         testDispatcher.scheduler.advanceUntilIdle()
 
         coVerify {
             anyConstructed<RecentFilesRepository>().updateEpubReadingPosition(
-                uriString = uriString,
+                bookId = "book-1",
                 locator = locator,
                 cfiForWebView = "/4/2/6:14",
                 progress = 37.25f
@@ -540,23 +540,6 @@ class MainViewModelTest {
 
         // Removing display page 0 shifts the page-index-1 bookmark to page 0.
         assertTrue(result.bookmarksJson.contains("\"pageIndex\":0"))
-    }
-
-    @Test
-    fun `setRecentFilesLimit persists and limits visible home recents`() = runTest(testDispatcher) {
-        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
-            viewModel.uiState.collect {}
-        }
-        val first = recentFile("first", isRecent = true)
-        val second = recentFile("second", isRecent = true)
-        recentFilesFlow.value = listOf(first, second)
-        viewModel.uiState.first { it.rawLibraryFiles.size == 2 }
-
-        viewModel.setRecentFilesLimit(1)
-        val state = viewModel.uiState.first { it.recentFiles.bookIds() == setOf("first") }
-
-        assertEquals(listOf("first"), state.recentFiles.map { it.bookId })
-        verify { mockEditor.putInt("recent_files_limit", 1) }
     }
 
     @Test
@@ -1023,6 +1006,40 @@ class MainViewModelTest {
         try {
             advanceUntilIdle()
             assertEquals(4, restored.uiState.value.unifiedLibrarySection)
+        } finally {
+            restored.clearForTest()
+            testDispatcher.scheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `tags unified library section survives restore`() = runTest(testDispatcher) {
+        val tagsSection = com.aryan.reader.shared.ui.MobileUnifiedLibrarySection.TAGS.persistedValue
+        every { mockPrefs.getInt(KEY_UNIFIED_LIBRARY_SECTION, 0) } returns tagsSection
+
+        val restored = TestMainViewModel(mockApplication)
+        try {
+            advanceUntilIdle()
+            assertEquals(tagsSection, restored.uiState.value.unifiedLibrarySection)
+        } finally {
+            restored.clearForTest()
+            testDispatcher.scheduler.advanceUntilIdle()
+        }
+    }
+
+    @Test
+    fun `shelf list layout defaults to rows and survives restore`() = runTest(testDispatcher) {
+        assertTrue(viewModel.uiState.value.unifiedShelfListView)
+
+        viewModel.setUnifiedShelfListView(false)
+        verify { mockEditor.putBoolean(KEY_UNIFIED_LIBRARY_SHELF_LIST_VIEW, false) }
+
+        every { mockPrefs.getBoolean(KEY_UNIFIED_LIBRARY_SHELF_LIST_VIEW, true) } returns false
+
+        val restored = TestMainViewModel(mockApplication)
+        try {
+            advanceUntilIdle()
+            assertFalse(restored.uiState.value.unifiedShelfListView)
         } finally {
             restored.clearForTest()
             testDispatcher.scheduler.advanceUntilIdle()

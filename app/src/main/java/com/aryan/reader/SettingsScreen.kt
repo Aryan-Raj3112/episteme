@@ -3,6 +3,7 @@ package com.aryan.reader
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,7 +22,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -92,8 +92,11 @@ import com.aryan.reader.shared.readerThemeById
 import com.aryan.reader.shared.sharedSettingsHubModel
 import com.aryan.reader.shared.toReaderSettings
 import com.aryan.reader.shared.ui.SharedSettingsHub
+import com.aryan.reader.shared.ui.rememberSharedSettingsItemValues
+import com.aryan.reader.shared.ui.rememberStartupBehaviorValue
+import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.ui.LocalSharedStringResolver
-import com.aryan.reader.shared.ui.SharedStringResolver
+import com.aryan.reader.shared.ui.sharedFadeThrough
 import com.aryan.reader.tts.isReaderTtsVoiceChangeLocked
 import com.aryan.reader.tts.loadTtsMode
 import kotlinx.coroutines.launch
@@ -101,129 +104,6 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private const val ANDROID_SETTINGS_GLOBAL_BOOK_ID = "__global_reader_defaults__"
-
-private fun androidSettingsLiteralResource(context: Context, literal: String): Int? = when (literal) {
-    "Reader settings" -> R.string.settings_hub_literal_0
-    "Global defaults for text, EPUB, PDF, toolbar, and speech" -> R.string.settings_hub_literal_1
-    "App & library" -> R.string.settings_hub_literal_2
-    "App preferences, imports, tabs, and local library behavior" -> R.string.settings_hub_literal_3
-    "AI & TTS" -> R.string.settings_hub_literal_6
-    "Reader AI, keys, models, voices, and speech preferences" -> R.string.settings_hub_literal_7
-    "Storage & advanced" -> R.string.settings_hub_literal_8
-    "Caches and diagnostic tools" -> R.string.settings_hub_literal_9
-    "Help" -> R.string.settings_hub_literal_10
-    "Feedback, support, and app information" -> R.string.settings_hub_literal_11
-    "Extra" -> R.string.settings_hub_literal_12
-    "Overflow options, maintenance, and diagnostics" -> R.string.settings_hub_literal_13
-    "Settings" -> R.string.settings_hub_literal_14
-    "Global defaults, app preferences, and advanced options" -> R.string.settings_hub_literal_15
-    "EPUB & Text" -> R.string.settings_hub_literal_16
-    "Defaults for reflowable reading, layout, EPUB themes, and reader tools" -> R.string.settings_hub_literal_17
-    "PDF & Comics" -> R.string.settings_hub_literal_18
-    "Defaults for fixed-layout reading, PDF themes, and PDF-specific tools" -> R.string.settings_hub_literal_19
-    "App Preferences" -> R.string.settings_hub_literal_20
-    "App theme and general app behavior" -> R.string.settings_hub_literal_21
-    "Library & Files" -> R.string.settings_hub_literal_22
-    "Recent files and local reading fonts" -> R.string.settings_hub_literal_23
-    "More-menu options, maintenance actions, diagnostics, and app info" -> R.string.settings_hub_literal_26
-    "Help & About" -> R.string.settings_hub_literal_27
-    "Feedback, support, project information, and licenses" -> R.string.settings_hub_literal_28
-    "Format Defaults" -> R.string.settings_hub_literal_29
-    "Font, size, spacing, margins, alignment, and reading mode" -> R.string.settings_hub_literal_30
-    "EPUB Theme & Texture" -> R.string.settings_hub_literal_31
-    "Default EPUB reading theme, paper texture, and texture strength" -> R.string.settings_hub_literal_32
-    "Visual Defaults" -> R.string.settings_hub_literal_33
-    "Page indicators, system UI, images, and chapter-turn behavior" -> R.string.settings_hub_literal_34
-    "PDF Theme Defaults" -> R.string.settings_hub_literal_35
-    "Default PDF and comic theme where fixed-layout appearance is supported" -> R.string.settings_hub_literal_36
-    "PDF Reader Tools" -> R.string.settings_hub_literal_37
-    "Auto-scroll, OCR, annotation, and PDF-only tools remain in the PDF reader" -> R.string.settings_hub_literal_38
-    "Reader Toolbar Defaults" -> R.string.settings_hub_literal_39
-    "Visible tools, bottom-bar actions, and reader overflow tools" -> R.string.settings_hub_literal_40
-    "Global TTS Replacements" -> R.string.settings_hub_literal_41
-    "Words and phrases replaced only during speech playback" -> R.string.settings_hub_literal_42
-    "Format, EPUB theme, visual defaults, and reader tools" -> R.string.settings_hub_literal_43
-    "Separate PDF theme and fixed-layout reader defaults" -> R.string.settings_hub_literal_44
-    "More-menu options, maintenance, diagnostics, and app info" -> R.string.settings_hub_literal_45
-    "Format defaults" -> R.string.settings_hub_literal_46
-    "Font, size, line spacing, margins, alignment, and reading mode" -> R.string.settings_hub_literal_47
-    "Theme and texture" -> R.string.settings_hub_literal_48
-    "Reading theme, texture, and page feel for new books" -> R.string.settings_hub_literal_49
-    "Visual defaults" -> R.string.settings_hub_literal_50
-    "System UI, page info, images, and chapter-turn behavior" -> R.string.settings_hub_literal_51
-    "PDF theme defaults" -> R.string.settings_hub_literal_52
-    "PDF and comic theme defaults, separate from EPUB themes" -> R.string.settings_hub_literal_53
-    "PDF reader tools" -> R.string.settings_hub_literal_54
-    "Auto-scroll, OCR, annotations, and PDF-only tools" -> R.string.settings_hub_literal_55
-    "Text and EPUB defaults" -> R.string.settings_hub_literal_56
-    "Format, EPUB theme, texture, visual behavior, and text layout" -> R.string.settings_hub_literal_57
-    "PDF and comic defaults" -> R.string.settings_hub_literal_58
-    "PDF theme, visual defaults, tools, auto-scroll, OCR, and annotation behavior where available" -> R.string.settings_hub_literal_59
-    "Reader toolbar and tools" -> R.string.settings_hub_literal_60
-    "Choose visible tools, bottom-bar tools, and reader overflow tools" -> R.string.settings_hub_literal_61
-    "Per-book overrides" -> R.string.settings_hub_literal_62
-    "Local overrides are available from the active reader screen and still win for that book." -> R.string.settings_hub_literal_63
-    "App theme" -> R.string.settings_hub_literal_64
-    "Theme mode, contrast, reading text dimming, and custom app colors" -> R.string.settings_hub_literal_65
-    "Custom fonts" -> R.string.settings_hub_literal_66
-    "Import, manage, and reuse local reading fonts" -> R.string.settings_hub_literal_67
-    "Recent files limit" -> R.string.settings_hub_literal_68
-    "Control how many recent books appear on Home" -> R.string.settings_hub_literal_69
-    "Sign out" -> R.string.settings_hub_literal_70
-    "Disconnect this device from your account" -> R.string.settings_hub_literal_71
-    "Sign in" -> R.string.settings_hub_literal_72
-    "Connect sync and account features" -> R.string.settings_hub_literal_73
-    "Cloud library sync" -> R.string.settings_hub_literal_74
-    "Folder backup and sync" -> R.string.settings_hub_literal_75
-    "Choose which local folders to back up to Drive" -> R.string.settings_hub_literal_76
-    "Device management" -> R.string.settings_hub_literal_77
-    "Inspect registered devices for this account" -> R.string.settings_hub_literal_78
-    "AI keys and models" -> R.string.settings_hub_literal_79
-    "Configure reader AI and cloud TTS model access" -> R.string.settings_hub_literal_80
-    "TTS voice settings" -> R.string.settings_hub_literal_81
-    "Global TTS replacements" -> R.string.settings_hub_literal_82
-    "Clear book cache" -> R.string.settings_hub_literal_83
-    "Remove generated book cache files and recreate them on demand" -> R.string.settings_hub_literal_84
-    "Clear reflow cache" -> R.string.settings_hub_literal_85
-    "Remove generated PDF text-view files" -> R.string.settings_hub_literal_86
-    "Test panel detection" -> R.string.settings_hub_literal_87
-    "Run the local panel-detection diagnostic" -> R.string.settings_hub_literal_88
-    "Test speech-bubble detection" -> R.string.settings_hub_literal_89
-    "Run the local speech-bubble detection diagnostic" -> R.string.settings_hub_literal_90
-    "Export logs" -> R.string.settings_hub_literal_91
-    "Export recent diagnostic logs" -> R.string.settings_hub_literal_92
-    "Clear cloud and local data" -> R.string.settings_hub_literal_93
-    "Delete cloud records and matching local library data" -> R.string.settings_hub_literal_94
-    "Share recent diagnostic logs collected by the app" -> R.string.settings_hub_literal_95
-    "Screen capture protection" -> R.string.settings_hub_literal_96
-    "Block screenshots and screen recording on sensitive reader screens" -> R.string.settings_hub_literal_97
-    "External file behavior" -> R.string.settings_hub_literal_98
-    "Choose whether external opens are copied into the app library" -> R.string.settings_hub_literal_99
-    "Strict file filter" -> R.string.settings_hub_literal_100
-    "Use only known reader file types in import pickers" -> R.string.settings_hub_literal_101
-    "Use PDF filenames" -> R.string.settings_hub_literal_102
-    "Reader tabs" -> R.string.settings_hub_literal_103
-    "Reader AI visibility" -> R.string.settings_hub_literal_104
-    "Help and feedback" -> R.string.settings_hub_literal_105
-    "Send feedback or report an issue" -> R.string.settings_hub_literal_106
-    "Support project" -> R.string.settings_hub_literal_107
-    "Open support options for the project" -> R.string.settings_hub_literal_108
-    "About" -> R.string.settings_hub_literal_109
-    "Version, source, licenses, and project information" -> R.string.settings_hub_literal_110
-    "A Pro account is required for cloud sync." -> R.string.settings_hub_cloud_sync_pro_required
-    "Sync library metadata across signed-in devices." -> R.string.settings_hub_cloud_sync_ready
-    "Link Google to enable cloud sync." -> R.string.settings_hub_cloud_sync_link_google
-    "Authorize Google Drive to enable sync." -> R.string.settings_hub_cloud_sync_drive_auth
-    "Choose an iOS voice, speech rate, and pitch" -> R.string.settings_hub_tts_ios
-    "Choose cloud or device voices and speech behavior" -> R.string.settings_hub_tts_android
-    "PDF lists and tabs show filenames instead of embedded titles." -> R.string.settings_hub_pdf_filenames
-    "PDF lists and tabs prefer embedded titles when available." -> R.string.settings_hub_pdf_titles
-    "Opening PDFs keeps active tabs." -> R.string.settings_hub_tabs_on
-    "PDFs replace the active reader session." -> R.string.settings_hub_tabs_off
-    "Reader AI tools are hidden." -> R.string.settings_hub_ai_hidden
-    "Reader AI tools are shown where available." -> R.string.settings_hub_ai_visible
-    else -> null
-}
 
 @androidx.annotation.OptIn(UnstableApi::class)
 @kotlin.OptIn(ExperimentalMaterial3Api::class)
@@ -235,6 +115,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val stringResolver = com.aryan.reader.shared.ui.LocalSharedStringResolver.current
     val scope = rememberCoroutineScope()
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val cloudFolderRootStats by viewModel.cloudFolderRootStats.collectAsStateWithLifecycle()
@@ -246,10 +127,12 @@ fun SettingsScreen(
     val customFonts by viewModel.customFonts.collectAsStateWithLifecycle()
     val ttsState by viewModel.ttsController.ttsState.collectAsStateWithLifecycle()
 
+    val reduceMotion = rememberReaderMotionPolicy().reduceMotion
     var query by remember { mutableStateOf("") }
     var settingsDestination by remember { mutableStateOf(SharedSettingsDestination.ROOT) }
     var showAppThemePanel by remember { mutableStateOf(false) }
     var showBehaviorDialog by remember { mutableStateOf(false) }
+    var showStartupBehaviorDialog by remember { mutableStateOf(false) }
     var showStrictFilterDialog by remember { mutableStateOf(false) }
     var showClearBookCacheDialog by remember { mutableStateOf(false) }
     var showClearReflowCacheDialog by remember { mutableStateOf(false) }
@@ -259,7 +142,6 @@ fun SettingsScreen(
     var showSignOutConfirmDialog by remember { mutableStateOf(false) }
     var showUpgradeDialog by remember { mutableStateOf(false) }
     var showCloudFolderSyncDialog by remember { mutableStateOf(false) }
-    var showRecentLimitDialog by remember { mutableStateOf(false) }
     var showTtsSettingsSheet by remember { mutableStateOf(false) }
     var hideReaderAi by remember { mutableStateOf(loadHideReaderAiFeatures(context)) }
     // Home > More owned the FPS toggle before that screen was retired; the store is
@@ -328,15 +210,30 @@ fun SettingsScreen(
         }
     }
 
+    // Current-value previews for the rows the host owns the data for. The shared model only knows a
+    // row's identity, so the host is the one that can say "Literata · 100% · Justified" instead of
+    // making the user open the page to read the value. Formatting is shared with iOS, which keeps the
+    // previews identical when the persisted defaults are the same.
+    val startupBehaviorValue = rememberStartupBehaviorValue(uiState.startupBehavior)
+    val baseItemValues = rememberSharedSettingsItemValues(
+        epubDefaults = epubReaderDefaults,
+        pdfDefaults = pdfReaderDefaults,
+        toolbarPreferences = readerToolbarPreferences,
+        customFontCount = customFonts.count { !it.isDeleted },
+        appVersion = BuildConfig.VERSION_NAME,
+    )
+    val settingsItemValues = remember(baseItemValues, startupBehaviorValue) {
+        baseItemValues + (SharedSettingsAction.STARTUP_BEHAVIOR.name to startupBehaviorValue)
+    }
     // Model build allocates section/item lists; remember on its real inputs
     // so unrelated uiState emissions (progress, sync ticks) skip it.
-    val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled) {
+    val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled, settingsItemValues) {
         sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = uiState,
                 hideReaderAi = hideReaderAi,
                 fpsOverlayEnabled = fpsOverlayEnabled,
-            )
+            ).copy(itemValues = settingsItemValues)
         )
     }
     val settingsPage = remember(settingsModel, settingsDestination) {
@@ -385,7 +282,15 @@ fun SettingsScreen(
         topBar = {
             CustomTopAppBar(
                 title = {
-                    Text(androidSettingsLiteralResource(context, settingsPage.title)?.let(context::getString) ?: settingsPage.title)
+                    // The title follows the page, so it fades through with it. Cutting to a new
+                    // title while the body slides made the bar look detached from the content.
+                    AnimatedContent(
+                        targetState = stringResolver.sharedText(settingsPage.title),
+                        transitionSpec = { sharedFadeThrough() },
+                        label = "settings-title"
+                    ) { title ->
+                        Text(title)
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = ::navigateBackFromSettings) {
@@ -396,13 +301,6 @@ fun SettingsScreen(
         },
         contentWindowInsets = WindowInsets.navigationBars
     ) { padding ->
-        CompositionLocalProvider(
-            LocalSharedStringResolver provides SharedStringResolver(
-                resolveLiteral = { literal ->
-                    androidSettingsLiteralResource(context, literal)?.let(context::getString)
-                }
-            )
-        ) {
             SharedSettingsHub(
             model = settingsModel,
             query = query,
@@ -440,11 +338,11 @@ fun SettingsScreen(
                 texturePickerLauncher.launch(arrayOf("image/png", "image/jpeg", "image/webp", "image/gif", "image/bmp"))
                 current
             },
-            showTopBar = false,
             destination = settingsDestination,
             onDestinationChange = { settingsDestination = it },
             contentPadding = padding,
             modifier = Modifier.fillMaxSize(),
+            reduceMotion = reduceMotion,
             onAction = { action ->
                 // Folder sync is a secondary settings surface now.  Do not
                 // toggle the legacy local-indexing switch merely by opening
@@ -483,8 +381,8 @@ fun SettingsScreen(
                 when (action) {
                     SharedSettingsAction.APP_THEME -> showAppThemePanel = true
                     SharedSettingsAction.LANGUAGE -> showLanguageDialog = true
-                    SharedSettingsAction.RECENT_LIMIT -> showRecentLimitDialog = true
                     SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR -> showBehaviorDialog = true
+                    SharedSettingsAction.STARTUP_BEHAVIOR -> showStartupBehaviorDialog = true
                     SharedSettingsAction.SCREEN_CAPTURE_PROTECTION -> {
                         val next = !uiState.isScreenCaptureProtectionEnabled
                         viewModel.setScreenCaptureProtectionEnabled(next)
@@ -541,8 +439,7 @@ fun SettingsScreen(
                     SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME -> Unit
                 }
             }
-            )
-        }
+        )
     }
 
     if (showCloudFolderSyncDialog) {
@@ -560,14 +457,11 @@ fun SettingsScreen(
         )
     }
 
-    if (showRecentLimitDialog) {
-        RecentLimitDialog(
-            currentLimit = uiState.recentFilesLimit,
-            onSelect = { limit ->
-                viewModel.setRecentFilesLimit(limit)
-                showRecentLimitDialog = false
-            },
-            onDismiss = { showRecentLimitDialog = false }
+    if (showStartupBehaviorDialog) {
+        StartupBehaviorDialog(
+            currentBehavior = uiState.startupBehavior,
+            onDismiss = { showStartupBehaviorDialog = false },
+            onSelect = { viewModel.setStartupBehavior(it) },
         )
     }
 
@@ -689,35 +583,6 @@ fun SettingsScreen(
             isReplacing = uiState.isReplacingDevice
         )
     }
-}
-
-@Composable
-private fun RecentLimitDialog(
-    currentLimit: Int,
-    onSelect: (Int) -> Unit,
-    onDismiss: () -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.options_recent_limit)) },
-        text = {
-            androidx.compose.foundation.layout.Column {
-                listOf(0, 10, 20, 50, 100).forEach { limit ->
-                    TextButton(onClick = { onSelect(limit) }) {
-                        val label = if (limit == 0) {
-                            stringResource(R.string.options_no_limit)
-                        } else {
-                            stringResource(R.string.options_files_limit, limit)
-                        }
-                        Text(if (currentLimit == limit) stringResource(R.string.option_selected_format, label) else label)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-        }
-    )
 }
 
 private fun loadAndroidEpubReaderDefaultSettings(

@@ -1473,6 +1473,8 @@
         } else if (window.reportScrollState) {
             setTimeout(window.reportScrollState, 60);
         }
+        // Type size, line height and margins all move the text the marks are pinned to.
+        if (window.readerScheduleNoteBadgeUpdate) window.readerScheduleNoteBadgeUpdate();
         return true;
     };
 
@@ -1843,70 +1845,286 @@
         return "JS: Search highlights cleared.";
     };
 
+    // ---- Reader search: one matcher, shared with Kotlin -------------------
+    // The results list, the paginated locator and this painter must agree on
+    // *which* occurrence a hit is, and they only agree when they flatten a
+    // chapter the same way and apply the same rule. Both live in shared/
+    // (ReaderSearchMatching.kt): text in document order, whitespace runs
+    // collapsed to one space, one space at every block boundary, and a match
+    // must start a word. Superscript footnote/endnote markup is exactly where a
+    // per-node substring scan used to disagree with the Kotlin scan, which
+    // shifted every later occurrence by one.
+    var READER_SEARCH_BLOCK_BOUNDARY_TAGS = {
+        address: 1, article: 1, aside: 1, blockquote: 1, br: 1, caption: 1, dd: 1,
+        div: 1, dl: 1, dt: 1, figcaption: 1, figure: 1, footer: 1, h1: 1, h2: 1,
+        h3: 1, h4: 1, h5: 1, h6: 1, header: 1, hr: 1, li: 1, main: 1, nav: 1,
+        ol: 1, p: 1, pre: 1, section: 1, table: 1, td: 1, th: 1, tr: 1, ul: 1
+    };
+    var READER_SEARCH_SKIPPED_TAGS = { script: 1, style: 1, noscript: 1, template: 1 };
+    var READER_SEARCH_WORD_CHAR = /[\p{L}\p{N}]/u;
+
+    /**
+     * Flattens one search root the way the shared scanner does, keeping, for
+     * every emitted character, the text node and offset it came from so matches
+     * can be painted without guessing. Boundary spaces carry no node.
+     */
+    function readerSearchTextIndex(root) {
+        var chars = [];
+        var nodes = [];
+        var offsets = [];
+        var lastWasSpace = true;
+
+        function appendSpace() {
+            if (!chars.length || lastWasSpace) {
+                lastWasSpace = true;
+                return;
+            }
+            chars.push(" ");
+            nodes.push(null);
+            offsets.push(-1);
+            lastWasSpace = true;
+        }
+
+        function visit(node) {
+            if (!node) return;
+            if (node.nodeType === 3) {
+                var value = node.nodeValue || "";
+                for (var i = 0; i < value.length; i++) {
+                    var char = value.charAt(i);
+                    if (/\s/.test(char)) {
+                        appendSpace();
+                        continue;
+                    }
+                    chars.push(char);
+                    nodes.push(node);
+                    offsets.push(i);
+                    lastWasSpace = false;
+                }
+                return;
+            }
+            if (node.nodeType === 1) {
+                var tag = (node.tagName || "").toLowerCase();
+                if (READER_SEARCH_SKIPPED_TAGS[tag]) return;
+                if (tag === "br") {
+                    appendSpace();
+                    return;
+                }
+                var children = node.childNodes;
+                for (var c = 0; c < children.length; c++) visit(children[c]);
+                if (READER_SEARCH_BLOCK_BOUNDARY_TAGS[tag]) appendSpace();
+                return;
+            }
+            var kids = node.childNodes || [];
+            for (var k = 0; k < kids.length; k++) visit(kids[k]);
+        }
+
+        visit(root);
+        return { text: chars.join(""), nodes: nodes, offsets: offsets };
+    }
+
+    /** Word-start match offsets in a [readerSearchTextIndex] text. */
+    function readerSearchMatchOffsets(index, query) {
+        var needle = (query || "").trim().toLowerCase();
+        if (!needle) return [];
+        var haystack = index.text.toLowerCase();
+        var out = [];
+        var lastStart = haystack.length - needle.length;
+        var from = 0;
+        while (from <= lastStart) {
+            var found = haystack.indexOf(needle, from);
+            if (found < 0) break;
+            if (found === 0 || !READER_SEARCH_WORD_CHAR.test(index.text.charAt(found - 1))) {
+                out.push(found);
+            }
+            from = found + 1;
+        }
+        return out;
+    }
+
+    /** Match offsets of a whitespace-insensitive quote, as a prefix hint. */
+    function readerSearchQuoteOffsets(text, quote) {
+        var needle = String(quote || "").toLowerCase().replace(/\s+/g, "");
+        if (!needle) return [];
+        var compact = "";
+        var compactToSource = [];
+        for (var i = 0; i < text.length; i++) {
+            var char = text.charAt(i);
+            if (/\s/.test(char)) continue;
+            compactToSource.push(i);
+            compact += char.toLowerCase();
+        }
+        var out = [];
+        var from = 0;
+        while (from <= compact.length - needle.length) {
+            var found = compact.indexOf(needle, from);
+            if (found < 0) break;
+            out.push(compactToSource[found]);
+            from = found + needle.length;
+        }
+        return out;
+    }
+
+    /**
+     * Which match a hit is. The ordinal is exact while the searched text and
+     * this text are identical; the quote is what keeps a divergent chapter on
+     * the intended occurrence, so prefer the match inside the quoted context
+     * that is nearest the expected ordinal.
+     */
+    function readerSearchTargetOrdinal(starts, indexText, quote, fallbackOrdinal) {
+        if (!starts.length) return -1;
+        if (quote) {
+            var quoteOffsets = readerSearchQuoteOffsets(indexText, quote);
+            var quoteSpan = String(quote).toLowerCase().replace(/\s+/g, "").length;
+            var best = -1;
+            var bestDistance = Number.MAX_VALUE;
+            for (var q = 0; q < quoteOffsets.length; q++) {
+                var quoteStart = quoteOffsets[q];
+                var quoteEnd = quoteStart + quoteSpan;
+                for (var m = 0; m < starts.length; m++) {
+                    if (starts[m] < quoteStart) continue;
+                    if (starts[m] > quoteEnd) break;
+                    var distance = Math.abs(m - fallbackOrdinal);
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = m;
+                    }
+                }
+            }
+            if (best >= 0) return best;
+        }
+        if (fallbackOrdinal >= 0 && fallbackOrdinal < starts.length) return fallbackOrdinal;
+        return starts.length - 1;
+    }
+
+    /** Unwraps this root's marks so a repaint never nests or double-counts. */
+    function readerSearchClearRoot(root) {
+        var stale = root && root.querySelectorAll ? root.querySelectorAll("mark.search-highlight") : [];
+        for (var s = 0; s < stale.length; s++) {
+            var el = stale[s], parent = el.parentNode;
+            if (!parent) continue;
+            while (el.firstChild) parent.insertBefore(el.firstChild, el);
+            parent.removeChild(el);
+            parent.normalize();
+        }
+    }
+
+    /** Wraps every match of [query] inside [root]; returns the match count. */
+    function readerSearchPaintRoot(root, query, quote, fallbackOrdinal) {
+        readerSearchClearRoot(root);
+        var index = readerSearchTextIndex(root);
+        var starts = readerSearchMatchOffsets(index, query);
+        if (!starts.length) return { painted: 0, target: null };
+
+        var covered = [];
+        starts.forEach(function (start, ordinal) {
+            var end = start + query.trim().length;
+            var groups = [];
+            for (var i = start; i < end && i < index.nodes.length; i++) {
+                var node = index.nodes[i];
+                if (!node) continue;
+                var group = groups[groups.length - 1];
+                if (group && group.node === node) {
+                    group.end = index.offsets[i] + 1;
+                } else {
+                    groups.push({ node: node, start: index.offsets[i], end: index.offsets[i] + 1 });
+                }
+            }
+            // A match that starts or ends on an inserted boundary space has no
+            // paintable run; it also keeps its own ordinal.
+            if (groups.length) covered.push({ ordinal: ordinal, groups: groups });
+        });
+
+        var byNode = new Map();
+        covered.forEach(function (match) {
+            match.groups.forEach(function (range) {
+                var list = byNode.get(range.node) || [];
+                list.push({ start: range.start, end: range.end, ordinal: match.ordinal });
+                byNode.set(range.node, list);
+            });
+        });
+
+        var painted = 0;
+        byNode.forEach(function (ranges, node) {
+            // Descending within a node: each split shifts only later offsets.
+            if (!node || !node.parentNode) return;
+            ranges.sort(function (a, b) { return b.start - a.start; });
+            for (var r = 0; r < ranges.length; r++) {
+                var range = ranges[r];
+                var value = node.nodeValue || "";
+                var start = Math.max(0, Math.min(range.start, value.length));
+                var end = Math.max(start, Math.min(range.end, value.length));
+                if (end <= start) continue;
+                var after = node.splitText(start);
+                after.splitText(end - start);
+                var mark = document.createElement("mark");
+                mark.className = "search-highlight";
+                mark.setAttribute("data-reader-search-match", String(range.ordinal));
+                after.parentNode.replaceChild(mark, after);
+                mark.appendChild(after);
+                painted++;
+            }
+        });
+
+        var ordinal = readerSearchTargetOrdinal(starts, index.text, quote, fallbackOrdinal);
+        var target = ordinal >= 0 ? root.querySelector('[data-reader-search-match="' + ordinal + '"]') : null;
+        return { painted: painted, target: target };
+    }
+
     window.highlightAllOccurrences = function (query) {
         window.clearSearchHighlights();
         window.CURRENT_SEARCH_QUERY = query;
 
-        if (!query || query.length < 2) return "JS: Query too short for highlighting.";
+        if (!query || query.trim().length < 2) return "JS: Query too short for highlighting.";
 
-        var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
-        var nodesToModify =[];
-
-        while ((node = walker.nextNode())) {
-            if (node.nodeValue.toLowerCase().includes(query.toLowerCase())) {
-                nodesToModify.push(node);
-            }
-        }
-
-        var regex = new RegExp("(" + query.replace(/[-\/\\^$*+?.()|[\]{}]/g, "\\$&") + ")", "gi");
-
-        nodesToModify.forEach(function (textNode) {
-            if (textNode.parentNode && textNode.parentNode.tagName !== "SCRIPT" && textNode.parentNode.tagName !== "STYLE") {
-                var tempDiv = document.createElement("div");
-                tempDiv.innerHTML = textNode.nodeValue.replace(regex, '<mark class="search-highlight">$1</mark>');
-
-                var parent = textNode.parentNode;
-                while (tempDiv.firstChild) {
-                    parent.insertBefore(tempDiv.firstChild, textNode);
-                }
-                parent.removeChild(textNode);
-            }
+        // Per chunk, not per document: the Kotlin scanner windows one chunk at a
+        // time, so matching per chunk keeps the ordinals identical on both sides.
+        var roots = Array.prototype.slice.call(document.querySelectorAll(".chunk-container"));
+        if (!roots.length) roots = [document.body];
+        var painted = 0;
+        roots.forEach(function (root) {
+            painted += readerSearchPaintRoot(root, query, "", -1).painted;
         });
 
-        return "JS: Highlighted " + document.querySelectorAll("mark.search-highlight").length + " occurrences.";
+        return "JS: Highlighted " + painted + " occurrences.";
     };
 
-    window.scrollToChunkOccurrence = function (chunkIndex, relativeIndex) {
+    window.scrollToChunkOccurrence = function (chunkIndex, relativeIndex, quote) {
         console.log("NavDiag: scrollToChunkOccurrence chunk=" + chunkIndex + ", relativeIdx=" + relativeIndex);
         var chunkDiv = document.querySelector(`.chunk-container[data-chunk-index='${chunkIndex}']`);
 
-        if (chunkDiv) {
-            let wasEmpty = false;
+        if (!chunkDiv) return "JS: Chunk " + chunkIndex + " not found.";
 
-            if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
-                console.log("NavDiag: Chunk was empty, restoring content before scrolling.");
-                chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
-                chunkDiv.style.height = "";
-                wasEmpty = true;
-            }
-
-            var highlights = chunkDiv.querySelectorAll("mark.search-highlight");
-
-            if ((wasEmpty || highlights.length === 0) && window.CURRENT_SEARCH_QUERY) {
-                window.highlightAllOccurrences(window.CURRENT_SEARCH_QUERY);
-                highlights = chunkDiv.querySelectorAll("mark.search-highlight");
-            }
-
-            if (highlights && highlights.length > 0) {
-                var targetIdx = (relativeIndex >= 0 && relativeIndex < highlights.length) ? relativeIndex : 0;
-                highlights[targetIdx].scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
-                return "JS: Scrolled to relative occurrence " + targetIdx + " in chunk " + chunkIndex;
-            } else {
-                chunkDiv.scrollIntoView({ behavior: "auto", block: "center" });
-                return "JS: No highlights in chunk, scrolled to chunk center.";
-            }
+        if (chunkDiv.innerHTML === "" && window.virtualization && window.virtualization.chunksData[chunkIndex]) {
+            console.log("NavDiag: Chunk was empty, restoring content before scrolling.");
+            chunkDiv.innerHTML = window.virtualization.chunksData[chunkIndex];
+            chunkDiv.style.height = "";
         }
-        return "JS: Chunk " + chunkIndex + " not found.";
+
+        var target = null;
+        var painted = 0;
+        if (window.CURRENT_SEARCH_QUERY) {
+            // Repaint this chunk first: marks may be missing (fresh chunk) or
+            // stale (query changed), and the quote lookup needs this chunk's own
+            // matches to pick from.
+            var result = readerSearchPaintRoot(chunkDiv, window.CURRENT_SEARCH_QUERY, quote || "", relativeIndex);
+            target = result.target;
+            painted = result.painted;
+        }
+
+        if (target) {
+            target.scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+            return "JS: Scrolled to quoted occurrence in chunk " + chunkIndex;
+        }
+
+        var highlights = chunkDiv.querySelectorAll("mark.search-highlight");
+        if (highlights.length > 0) {
+            var targetIdx = (relativeIndex >= 0 && relativeIndex < highlights.length) ? relativeIndex : 0;
+            highlights[targetIdx].scrollIntoView({ behavior: "auto", block: "center", inline: "nearest" });
+            return "JS: Scrolled to relative occurrence " + targetIdx + " in chunk " + chunkIndex;
+        }
+
+        chunkDiv.scrollIntoView({ behavior: "auto", block: "center" });
+        return "JS: No highlights in chunk (" + painted + " painted), scrolled to chunk center.";
     };
 
     /**
@@ -3080,6 +3298,10 @@
             if (!resolvedNode) return null;
 
             let currentNode = resolvedNode;
+            // The element the path names, kept alongside the first text node it is reduced to: a
+            // structural CFI points at a block, not at characters, and callers that need to find a
+            // passage *inside* that block (rather than at its start) need the block itself.
+            const elementNode = resolvedNode;
 
             if (currentNode.nodeType === Node.ELEMENT_NODE) {
                 const treeWalker = document.createTreeWalker(currentNode, NodeFilter.SHOW_TEXT, null, false);
@@ -3089,7 +3311,7 @@
                 }
             }
 
-            return { node: currentNode, offset: charOffset };
+            return { node: currentNode, offset: charOffset, element: elementNode };
         } catch (e) {
             return null;
         }
@@ -4234,6 +4456,10 @@
                 highlights.forEach(function (h) {
                     self.applyHighlightObject(h);
                 });
+                // Which highlights carry a note travels with this payload, so the marks are rebuilt
+                // here rather than tracked separately: a note added, edited or cleared arrives as a
+                // new payload and the marks follow without any other hook.
+                if (window.readerScheduleNoteBadgeUpdate) window.readerScheduleNoteBadgeUpdate();
             } catch (e) {
                 hlRenderLog("webview_restore_error error=" + hlRenderPreview(e && e.message ? e.message : e, 160));
                 console.log(
@@ -4256,6 +4482,9 @@
                 hlRenderLocatorLabel(highlight.locator || {})
             );
             this.applyHighlight(highlight.cfi, highlight.text, highlight.cssClass, highlight.locator || null, highlight.colorCss || null, highlight.style || "background");
+            // A highlight can arrive one at a time on some paths, so the marks are refreshed here too
+            // rather than only when the whole list is restored.
+            if (window.readerScheduleNoteBadgeUpdate) window.readerScheduleNoteBadgeUpdate();
         },
 
         highlightTextRoot: function () {
@@ -4405,6 +4634,61 @@
             return this.rangeFromTextOffsets(root, best, best + expected.length);
         },
 
+        /**
+         * Locates [text] inside the element a CFI resolved to, across that element's text nodes.
+         *
+         * Search is scoped to the element on purpose: the CFI is what says *where* the highlight is,
+         * and the text only says which characters inside that place. Searching the whole document
+         * instead would let a repeated sentence pull the highlight to another paragraph.
+         */
+        locateTextInsideCfiElement: function (startNode, text) {
+            if (!startNode || !text) return null;
+            var element = startNode.nodeType === Node.TEXT_NODE ? startNode.parentElement : startNode;
+            if (!element) return null;
+            var nodes = [];
+            var flattened = "";
+            try {
+                var walker = document.createTreeWalker(
+                    element,
+                    NodeFilter.SHOW_TEXT,
+                    {
+                        acceptNode: function (node) {
+                            var parent = node.parentElement;
+                            if (!parent) return NodeFilter.FILTER_REJECT;
+                            if (parent.closest && parent.closest("script, style, noscript")) {
+                                return NodeFilter.FILTER_REJECT;
+                            }
+                            return NodeFilter.FILTER_ACCEPT;
+                        }
+                    },
+                    false
+                );
+                var current;
+                while ((current = walker.nextNode())) {
+                    nodes.push({ node: current, start: flattened.length });
+                    flattened += current.nodeValue || "";
+                }
+            } catch (error) {
+                return null;
+            }
+            if (!nodes.length) return null;
+            var index = flattened.indexOf(text);
+            if (index === -1) {
+                var partial = text.substring(0, Math.min(text.length, 20));
+                if (partial.length < 4) return null;
+                index = flattened.indexOf(partial);
+                if (index === -1) return null;
+            }
+            for (var i = 0; i < nodes.length; i++) {
+                var entry = nodes[i];
+                var length = (entry.node.nodeValue || "").length;
+                if (index >= entry.start && index <= entry.start + length) {
+                    return { node: entry.node, offset: index - entry.start };
+                }
+            }
+            return null;
+        },
+
         rangeFromLocator: function (locator, text) {
             if (!locator) {
                 hlRenderLog("webview_locator_skip reason=missing_locator");
@@ -4500,6 +4784,22 @@
                                 " newStartOffset=" + partialIndex + " cfi=" + hlRenderPreview(cfi, 120)
                             );
                             startOffset = partialIndex;
+                        } else {
+                            // The passage is inside the element this CFI names but not inside one text
+                            // node: publisher markup splits a paragraph into several, and a selection
+                            // crossing an inline tag starts elsewhere than the block's first node. The
+                            // CFI still bounds the search — it is the element that says which
+                            // paragraph this is — so the text is located across that element's text
+                            // and the answer mapped back to a node and offset.
+                            const scoped = this.locateTextInsideCfiElement(location.element || startNode, text);
+                            if (scoped) {
+                                hlRenderLog(
+                                    "webview_cfi_text_adjust reason=element_scoped cfi=" +
+                                    hlRenderPreview(cfi, 120) + " nodeOffset=" + scoped.offset
+                                );
+                                startNode = scoped.node;
+                                startOffset = scoped.offset;
+                            }
                         }
                     }
                 }
@@ -4584,19 +4884,37 @@
                     " hasPreciseLocator=" + !!hasPreciseLocator + " " +
                     hlRenderLocatorLabel(locator)
                 );
+                // Every source is a guess until the text under it is checked. A locator or CFI that
+                // resolves to *some* range is not placement: a structural CFI written by another
+                // surface resolves against this DOM to an arbitrary node, and a range over the wrong
+                // characters paints a highlight a reader cannot see — the span exists, covers nothing
+                // of the passage, and looks exactly like a lost highlight. Only a range whose text is
+                // the highlight's own is accepted.
                 var rangeSource = "locator";
                 var sourceCfi = (locator && locator.cfi) || cfi;
                 var hasSourceCfi = sourceCfi && String(sourceCfi).charAt(0) === "/";
-                var range = hasSourceCfi ? null : this.rangeFromLocator(locator, text);
-                if (!range && hasSourceCfi) {
+                var range = null;
+                if (hasSourceCfi) {
                     rangeSource = "cfi";
                     range = this.rangeFromCfi(sourceCfi, text || "");
+                    if (range && !this.rangeMatchesText(range, text)) {
+                        hlRenderLog(
+                            "webview_cfi_text_mismatch_range cfi=" + hlRenderPreview(sourceCfi, 120) +
+                            " rangeText='" + hlRenderPreview(range.toString(), 80) + "' " +
+                            "expected='" + hlRenderPreview(text || "", 80) + "'"
+                        );
+                        range = null;
+                    }
                 }
                 if (!range) {
                     rangeSource = "locator";
                     range = this.rangeFromLocator(locator, text);
                 }
                 if (!range && !hasPreciseLocator && !hasSourceCfi) {
+                    // Only for a highlight that has no position at all (a WebView selection whose
+                    // CFI is a legacy DOM path, before it has been anchored). Anything with a CFI is
+                    // placed by that CFI: searching the document for the text can land on an
+                    // identical sentence elsewhere, which is a silent misplacement.
                     rangeSource = "text_search";
                     range = this.rangeFromVisibleTextSearch(text || "", locator);
                 }
@@ -4608,11 +4926,16 @@
                     return;
                 }
                 var normalizedRange = this.normalizeRangeBoundaries(range);
+                // Read before painting: wrapping moves the range's boundary nodes into new spans, and a
+                // range whose boundaries were re-parented can report empty text afterwards even though
+                // the right words were painted. The old order made a correct highlight look like a
+                // highlight over nothing.
+                var renderedText = normalizedRange.toString();
                 this.highlightRangeSafe(normalizedRange, cssClass, cfi, colorCss, highlightStyle);
                 hlRenderLog(
                     "webview_apply_result applied=true cfi=" + hlRenderPreview(cfi || "", 120) +
                     " source=" + rangeSource +
-                    " renderedText='" + hlRenderPreview(normalizedRange.toString(), 80) + "'"
+                    " renderedText='" + hlRenderPreview(renderedText, 80) + "'"
                 );
             } catch (e) {
                 hlRenderLog("webview_apply_error error=" + hlRenderPreview(e && e.message ? e.message : e, 160));
@@ -4711,4 +5034,309 @@
             this.animationId = requestAnimationFrame(this.loop.bind(this));
         },
     };
+})();
+
+/**
+ * Note marks.
+ *
+ * A highlight that carries a note gets the sticky-note glyph pinned to its end. The mark is a DOM
+ * overlay and never an element inside the text: wrapping text perturbs justified line breaking (that
+ * is what the HIGHLIGHT_SHIFT logging exists for), so the mark is positioned from the highlight's own
+ * client rects and only ever moves.
+ *
+ * Placement is the same rule the Compose surfaces use
+ * (shared/src/commonMain/kotlin/com/aryan/reader/shared/pdf/HighlightNoteBadge.kt): right-aligned
+ * with the highlight's last line, most of the glyph inside the highlight's fill and the rest in the
+ * leading above that line — never more leading than the line actually has, so it cannot touch the
+ * line above, and it never needs a slot of its own beside the text.
+ */
+(function () {
+    var LAYER_ID = "reader-note-badge-layer";
+    var BADGE_CLASS = "reader-note-badge";
+    var SVG_NS = "http://www.w3.org/2000/svg";
+    // A page with a folded corner, drawn as a solid plate: the same path data the Compose surfaces
+    // draw (com.aryan.reader.shared.ui.SHARED_NOTE_MARK_BODY_PATH_DATA). Solid rather than outlined
+    // because at thirteen pixels an outlined glyph loses its interior strokes.
+    var NOTE_BODY_PATH = "M5,3 H19 A2,2 0 0 1 21,5 V15 L15,21 H5 A2,2 0 0 1 3,19 V5 A2,2 0 0 1 5,3 Z";
+    var NOTE_FOLD_PATH = "M15,15 L21,15 L15,21 Z";
+    var VIEWPORT = 24;
+    // The mark's own colour, not the highlight's: a mark that inherits the highlight's colour is the
+    // one colour it cannot be seen against, and at this size the difference is not legible anyway.
+    // The same constants the canvas surfaces draw with
+    // (shared/src/commonMain/kotlin/com/aryan/reader/shared/ui/SharedHighlightNoteBadge.kt).
+    var MARK_FILL = "#FFB400";
+    var MARK_FOLD = "#8A5A00";
+    var MARK_OUTLINE = "rgba(58,38,0,0.6)";
+    var MARK_OUTLINE_WIDTH = 1.4;
+    var MARK_FOLD_OUTLINE_WIDTH = 1.1;
+    // Geometry comes from the shared constants, injected by the host before this script runs
+    // (ChapterWebView.getJsToInject), so tuning the mark is one edit in HighlightNoteBadge.kt and
+    // not a number to keep in step by hand. The literals below only cover a page that was somehow
+    // injected without that config. All are fractions of the line, not px, so the mark keeps its
+    // relationship to the type when the reader changes size.
+    var NOTE_BADGE = window.__readerNoteBadgeConfig || {};
+    var SIZE_FRACTION = NOTE_BADGE.sizeFraction || 0.56;
+    var PROTRUSION_FRACTION = NOTE_BADGE.protrusionFraction || 0.6;
+    var END_OVERHANG_FRACTION = NOTE_BADGE.overhangFraction || 0.45;
+    var LIFT_FRACTION = NOTE_BADGE.liftFraction || 0.3;
+
+    var badges = {};
+    var updateHandle = null;
+
+    function highlightList() {
+        var raw = window.CURRENT_HIGHLIGHTS;
+        if (!raw) return [];
+        var parsed = raw;
+        if (typeof raw === "string") {
+            try {
+                parsed = JSON.parse(raw);
+            } catch (error) {
+                return [];
+            }
+        }
+        return Array.isArray(parsed) ? parsed : [];
+    }
+
+    function cfiOf(highlight) {
+        if (!highlight) return "";
+        return (highlight.locator && highlight.locator.cfi) || highlight.cfi || "";
+    }
+
+    function noteHighlights() {
+        return highlightList().filter(function (highlight) {
+            return highlight && highlight.hasNote === true && cfiOf(highlight);
+        });
+    }
+
+    /**
+     * Inline "!important", so page CSS cannot re-size what this layer draws.
+     *
+     * The reader's own stylesheet caps every body svg at "max-width: 100% !important" with
+     * "height: auto !important", and publisher CSS can add more of the same. Those rules beat a plain
+     * inline style, and a mark whose containing block is 0 wide then resolves to 0x0: present in the
+     * DOM, painted as nothing. The highlight markers are pinned the same way for the same reason.
+     */
+    function setImportant(element, property, value) {
+        try {
+            element.style.setProperty(property, value, "important");
+        } catch (error) {
+            element.style[property] = value;
+        }
+    }
+
+    function layer() {
+        var existing = document.getElementById(LAYER_ID);
+        if (existing) return existing;
+        var element = document.createElement("div");
+        element.id = LAYER_ID;
+        // Fixed to the viewport: a mark keeps its place through scrolling and pagination without
+        // ever joining the chapter's layout. The layer ignores pointer events; the marks themselves
+        // opt back in so they can be tapped. Above the text, but low enough that the reader's own
+        // floating chrome (selection menu and handles) still paints over a mark.
+        //
+        // Full viewport rather than 0x0: percentage constraints ("max-width: 100%") resolve against
+        // the containing block, and against a 0-wide layer they collapse every mark to nothing.
+        setImportant(element, "position", "fixed");
+        setImportant(element, "left", "0");
+        setImportant(element, "top", "0");
+        setImportant(element, "width", "100%");
+        setImportant(element, "height", "100%");
+        setImportant(element, "overflow", "visible");
+        setImportant(element, "pointer-events", "none");
+        setImportant(element, "z-index", "9000");
+        document.body.appendChild(element);
+        return element;
+    }
+
+    function createBadge(highlight) {
+        var badge = document.createElementNS(SVG_NS, "svg");
+        badge.setAttribute("viewBox", "0 0 " + VIEWPORT + " " + VIEWPORT);
+        badge.setAttribute("class", BADGE_CLASS);
+        badge.setAttribute("data-reader-note-highlight-id", highlight.id || cfiOf(highlight));
+        badge.setAttribute("aria-hidden", "true");
+        setImportant(badge, "position", "absolute");
+        setImportant(badge, "left", "0");
+        setImportant(badge, "top", "0");
+        setImportant(badge, "display", "none");
+        // Zero-sized until the geometry pass sizes it. The reader's own `body svg` rule insists on
+        // `display: block`, and an svg with a viewBox and no width renders at the full viewport width
+        // — a freshly created mark would cover the page for as long as it took to position it.
+        setImportant(badge, "width", "0");
+        setImportant(badge, "height", "0");
+        setImportant(badge, "overflow", "visible");
+        setImportant(badge, "pointer-events", "auto");
+        setImportant(badge, "margin", "0");
+        setImportant(badge, "min-width", "0");
+        setImportant(badge, "min-height", "0");
+        setImportant(badge, "max-width", "none");
+        setImportant(badge, "max-height", "none");
+        // Body then fold: a gold plate with a darker corner and a hairline outline. The outline is
+        // what separates the mark from a highlight of a similar hue at thirteen pixels.
+        var body = document.createElementNS(SVG_NS, "path");
+        body.setAttribute("d", NOTE_BODY_PATH);
+        body.setAttribute("fill", MARK_FILL);
+        body.setAttribute("stroke", MARK_OUTLINE);
+        body.setAttribute("stroke-width", String(MARK_OUTLINE_WIDTH));
+        body.setAttribute("stroke-linejoin", "round");
+        badge.appendChild(body);
+        var fold = document.createElementNS(SVG_NS, "path");
+        fold.setAttribute("d", NOTE_FOLD_PATH);
+        fold.setAttribute("fill", MARK_FOLD);
+        fold.setAttribute("stroke", MARK_OUTLINE);
+        fold.setAttribute("stroke-width", String(MARK_FOLD_OUTLINE_WIDTH));
+        fold.setAttribute("stroke-linejoin", "round");
+        badge.appendChild(fold);
+        badge.__readerNoteHighlight = highlight;
+        // Same bridge call a tap on the highlight itself makes, so the annotation sheet opens in the
+        // same state it would from the highlight.
+        badge.addEventListener("click", function (event) {
+            var current = badge.__readerNoteHighlight;
+            if (!current) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (window.getSelection) window.getSelection().removeAllRanges();
+            var rect = badge.getBoundingClientRect();
+            try {
+                if (window.HighlightBridge && window.HighlightBridge.onHighlightClicked) {
+                    window.HighlightBridge.onHighlightClicked(
+                        cfiOf(current),
+                        current.text || "",
+                        Math.round(rect.left),
+                        Math.round(rect.top),
+                        Math.round(rect.right),
+                        Math.round(rect.bottom)
+                    );
+                }
+            } catch (error) {}
+        }, true);
+        layer().appendChild(badge);
+        return badge;
+    }
+
+    function badgeFor(highlight) {
+        var key = highlight.id || cfiOf(highlight);
+        var badge = badges[key];
+        if (!badge) {
+            badge = createBadge(highlight);
+            badges[key] = badge;
+        }
+        badge.__readerNoteHighlight = highlight;
+        return badge;
+    }
+
+    // The highlight's last line: the last client rect of the last marker carrying its cfi.
+    function anchorFor(highlight) {
+        var cfi = cfiOf(highlight);
+        if (!cfi) return null;
+        var spans = document.querySelectorAll("span[data-cfi]");
+        var target = null;
+        for (var i = 0; i < spans.length; i++) {
+            var raw = spans[i].getAttribute("data-cfi") || "";
+            if (!raw) continue;
+            if (raw === cfi || raw.split(";;").indexOf(cfi) !== -1) target = spans[i];
+        }
+        if (!target) return null;
+        var rects = target.getClientRects ? target.getClientRects() : null;
+        if (!rects || rects.length === 0) {
+            var whole = target.getBoundingClientRect();
+            return whole && whole.height > 0 ? { rect: whole, span: target } : null;
+        }
+        var best = rects[0];
+        for (var r = 1; r < rects.length; r++) {
+            var candidate = rects[r];
+            var lower = candidate.top > best.top + 0.5;
+            var sameLineFurtherRight =
+                Math.abs(candidate.top - best.top) <= 0.5 && candidate.right > best.right;
+            if (lower || sameLineFurtherRight) best = candidate;
+        }
+        return { rect: best, span: target };
+    }
+
+    function update() {
+        updateHandle = null;
+        if (!document.body) return;
+        var viewportWidth = window.innerWidth || document.documentElement.clientWidth || 0;
+        var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+        var seen = {};
+
+        noteHighlights().forEach(function (highlight) {
+            var key = highlight.id || cfiOf(highlight);
+            seen[key] = true;
+            var badge = badgeFor(highlight);
+            var anchor = anchorFor(highlight);
+            if (!anchor) {
+                setImportant(badge, "display", "none");
+                return;
+            }
+            var rect = anchor.rect;
+            if (!rect || !(rect.height > 0) || !(rect.width > 0)) {
+                setImportant(badge, "display", "none");
+                return;
+            }
+            var lineHeight = NaN;
+            try {
+                lineHeight = parseFloat(window.getComputedStyle(anchor.span).lineHeight);
+            } catch (error) {}
+            if (!isFinite(lineHeight) || lineHeight <= 0) lineHeight = rect.height * 1.3;
+
+            // Only the leading that exists. An inline background box is shorter than the line box, so
+            // the difference is the room above the text, and the mark never takes more than that.
+            var leadingAbove = Math.max(0, (lineHeight - rect.height) / 2);
+            // Sized from the line, not from the inline box, so the mark keeps its weight against the
+            // type instead of shrinking with the highlight's own padding. Same basis as the shared
+            // geometry the canvas surfaces use.
+            var size = lineHeight * SIZE_FRACTION;
+            if (!isFinite(size) || size < 4) {
+                setImportant(badge, "display", "none");
+                return;
+            }
+            // The leading the line actually has, plus a sliver of descender space in the line box
+            // above: that sliver is what lifts the mark clear of the ascenders it sits on.
+            var protrusion = Math.min(
+                size * PROTRUSION_FRACTION,
+                leadingAbove + size * LIFT_FRACTION
+            );
+            // Hangs past the end rather than sitting flush on the last character's shoulder: it sits
+            // on the passage's edge and leaves the last letter legible.
+            var markRight = rect.right + size * END_OVERHANG_FRACTION;
+            var left = markRight - size;
+            var top = rect.top - protrusion;
+            if (viewportWidth > 0 && (left + size < 0 || left > viewportWidth)) {
+                setImportant(badge, "display", "none");
+                return;
+            }
+            if (viewportHeight > 0 && (top + size < 0 || top > viewportHeight)) {
+                setImportant(badge, "display", "none");
+                return;
+            }
+            setImportant(badge, "display", "block");
+            setImportant(badge, "width", size + "px");
+            setImportant(badge, "height", size + "px");
+            setImportant(badge, "transform", "translate(" + left + "px," + top + "px)");
+        });
+
+        // A highlight whose note was cleared, or that the document no longer has, loses its mark.
+        Object.keys(badges).forEach(function (key) {
+            if (seen[key]) return;
+            var stale = badges[key];
+            if (stale && stale.parentNode) stale.parentNode.removeChild(stale);
+            delete badges[key];
+        });
+    }
+
+    function schedule() {
+        // setTimeout rather than requestAnimationFrame: the frame callback does not run while the
+        // WebView is hidden, which would leave the guard set and stop every later update.
+        if (updateHandle !== null) return;
+        updateHandle = window.setTimeout(update, 0);
+    }
+
+    window.readerScheduleNoteBadgeUpdate = schedule;
+    window.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule, { passive: true });
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", schedule, { once: true });
+    } else {
+        schedule();
+    }
 })();

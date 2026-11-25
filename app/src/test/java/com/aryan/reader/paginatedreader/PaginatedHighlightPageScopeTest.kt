@@ -97,6 +97,33 @@ class PaginatedHighlightPageScopeTest {
     }
 
     @Test
+    fun `the highlight covering a selection is the one the menu shows and edits`() {
+        val blocks = chapterBlocks()
+        val start = blocks[0].startCharOffsetInSource + 6
+        val resolved = resolve(blocks, listOf(rangedHighlight(start, start + 4, "beta")))
+
+        // The exact range, and a selection inside it, both belong to the highlight: the menu shows its
+        // colour instead of a colour nobody picked, and a colour tap edits it rather than adding a
+        // second highlight over the same words.
+        assertEquals("r", resolved.highlightCovering(0, 6, 10)?.id)
+        assertEquals("r", resolved.highlightCovering(0, 7, 9)?.id)
+        // Outside the range, past its end, or on a block the highlight does not touch: no highlight,
+        // so the menu stays a chooser for a new one.
+        assertNull(resolved.highlightCovering(0, 10, 12))
+        assertNull(resolved.highlightCovering(1, 0, 2))
+        assertNull(resolved.highlightCovering(0, 6, 6))
+    }
+
+    @Test
+    fun `a selection that runs past a highlight is not covered by it`() {
+        val blocks = chapterBlocks()
+        val start = blocks[0].startCharOffsetInSource + 6
+        val resolved = resolve(blocks, listOf(rangedHighlight(start, start + 4, "beta")))
+
+        assertNull(resolved.highlightCovering(0, 8, 14))
+    }
+
+    @Test
     fun `ranged highlight spanning two blocks paints a range in each`() {
         val blocks = chapterBlocks()
         val start = blocks[0].startCharOffsetInSource + 11
@@ -441,6 +468,74 @@ class PaginatedHighlightPageScopeTest {
         val painted = firstPageOnly.rangesByHighlight["h"]?.keys?.sorted() ?: emptyList()
         assertTrue("painted on $painted", painted.size == 1)
         assertEquals(listOf(3), painted)
+    }
+
+    @Test
+    fun `a highlight marks where it ends, in the block that holds its last character`() {
+        val blocks = chapterBlocks()
+        val start = blocks[0].startCharOffsetInSource + 6
+
+        val resolved = resolve(blocks, listOf(rangedHighlight(start, start + 4, "beta")))
+
+        // 6..10 in the block, so the exclusive end is 10. A mark derived from the range's end is what
+        // the text renderer draws, and it has to be this block's own coordinate.
+        assertEquals(mapOf("r" to 10), resolved.noteBadgeEndsForBlock(0))
+        assertTrue(resolved.noteBadgeEndsForBlock(1).isEmpty())
+    }
+
+    @Test
+    fun `only the block holding the end gets a mark when a highlight spans two blocks`() {
+        val blocks = chapterBlocks()
+        val start = blocks[0].startCharOffsetInSource + 11
+        val end = blocks[1].startCharOffsetInSource + 5
+
+        val resolved = resolve(blocks, listOf(rangedHighlight(start, end, "gamma keeps")))
+
+        // The first block paints a slice of the highlight, but the highlight does not end there: a mark
+        // at the end of that slice would sit in the middle of the highlight, on the next block's text.
+        assertTrue(resolved.noteBadgeEndsForBlock(0).isEmpty())
+        assertEquals(mapOf("r" to 5), resolved.noteBadgeEndsForBlock(1))
+    }
+
+    @Test
+    fun `a highlight that is not on the page carries no mark`() {
+        val blocks = chapterBlocks()
+
+        val resolved = resolve(listOf(blocks[0]), listOf(quoteOnlyHighlight(filler)))
+
+        assertTrue(resolved.noteEndsByHighlight.isEmpty())
+        assertTrue(resolved.noteBadgeEndsForBlock(1).isEmpty())
+    }
+
+    @Test
+    fun `a fragmented paragraph only marks the fragment that holds the end`() {
+        // A paragraph split across two pages keeps its block index and cfi on both fragments, so block
+        // identity alone cannot tell them apart. Only the fragment the highlight's last character
+        // landed in may carry the mark.
+        val full = "alpha beta gamma delta epsilon"
+        // The chapter index describes the logical paragraph; the paginator hands pages fragments of it
+        // that keep its block index, cfi and source start, so only the fragment offsets differ.
+        val chapter = EpubChapterTextIndex.of(0, listOf(paragraph(full, cfi = "/4/2", startOffset = 0, blockIndex = 0)).toSemanticTextBlocks())
+        val firstFragment = paragraph(full.take(16), cfi = "/4/2", startOffset = 0, blockIndex = 0)
+        val restStart = 16
+        val secondFragment = paragraph(full.drop(restStart), cfi = "/4/2", startOffset = restStart, blockIndex = 0)
+        val highlight = rangedHighlight(6, 20, "beta gamma del")
+
+        val page = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(0, listOf(firstFragment)),
+            highlights = listOf(highlight),
+            chapterTextIndex = chapter
+        )
+        val nextPage = resolvePaginatedPageHighlights(
+            scope = PaginatedPageScope(0, listOf(secondFragment)),
+            highlights = listOf(highlight),
+            chapterTextIndex = chapter
+        )
+
+        assertTrue(page.rangesForBlock(0).isNotEmpty())
+        assertTrue("continuation page must not mark the clipped slice", page.noteBadgeEndsForBlock(0).isEmpty())
+        assertTrue(nextPage.rangesForBlock(0).isNotEmpty())
+        assertTrue("page holding the end must mark it", nextPage.noteBadgeEndsForBlock(0).isNotEmpty())
     }
 
     private fun paragraph(

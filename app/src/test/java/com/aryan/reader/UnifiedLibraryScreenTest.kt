@@ -42,11 +42,72 @@ class UnifiedLibraryScreenTest {
     }
 
     @Test
-    fun continueReadingPrefersMostRecentlyReadInProgressBook() {
+    fun libraryListPassMapsEachBookOnce() {
+        val books = listOf(
+            book("Alpha", 10f, timestamp = 30L),
+            book("Beta", 50f, timestamp = 20L),
+            book("Gamma", 100f, timestamp = 10L)
+        )
+        val cache = SharedProjectionBookItemCache()
+
+        val filtered = applyLibraryFilters(books, LibraryFilters(), cache)
+        val visible = filterUnifiedLibraryBooks(
+            books = filtered,
+            filter = UnifiedLibraryFilter.ALL,
+            query = "",
+            mapper = cache,
+        )
+
+        // Filtering, the section filter and the sort map the same instances, so a shared cache
+        // builds one SharedBookItem per book; separate caches would rebuild the whole list per step.
+        assertEquals(books.size, cache.missCount)
+        assertEquals(listOf("Alpha", "Beta", "Gamma"), visible.map { it.displayName })
+        assertEquals(
+            filterUnifiedLibraryBooks(applyLibraryFilters(books, LibraryFilters()), UnifiedLibraryFilter.ALL, "")
+                .map { it.bookId },
+            visible.map { it.bookId },
+        )
+    }
+
+    @Test
+    fun pinnedBooksLeadTheLibraryListWithoutRewritingTheSort() {
+        val books = listOf(
+            book("Alpha", 10f, timestamp = 30L),
+            book("Beta", 10f, timestamp = 20L),
+            book("Gamma", 10f, timestamp = 10L)
+        )
+
+        assertEquals(
+            listOf("Gamma", "Alpha", "Beta"),
+            filterUnifiedLibraryBooks(
+                books = books,
+                filter = UnifiedLibraryFilter.ALL,
+                query = "",
+                pinnedBookIds = setOf("Gamma"),
+            ).map { it.displayName },
+        )
+        assertEquals(
+            "an empty pin set must keep the raw sort",
+            listOf("Alpha", "Beta", "Gamma"),
+            filterUnifiedLibraryBooks(books, UnifiedLibraryFilter.ALL, "").map { it.displayName },
+        )
+    }
+
+    @Test
+    fun continueReadingPrefersTheLastOpenedBook() {
         val older = book("Older", 30f, timestamp = 10L)
         val newer = book("Newer", 60f, timestamp = 20L)
+        val finished = book("Finished", 100f, timestamp = 30L)
 
-        assertSame(newer, findContinueReadingBook(listOf(older, newer)))
+        assertSame(finished, findContinueReadingBook(listOf(older, newer, finished)))
+    }
+
+    @Test
+    fun continueReadingFollowsABookOpenedAtZeroProgress() {
+        val partway = book("Partway", 42f, timestamp = 10L)
+        val justOpened = book("JustOpened", 0f, timestamp = 40L)
+
+        assertSame(justOpened, findContinueReadingBook(listOf(partway, justOpened)))
     }
 
     @Test

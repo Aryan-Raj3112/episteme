@@ -46,7 +46,6 @@ fun androidSettingsHubInput(
         includeLanguage = true,
         includeScreenCaptureProtection = true,
         includeExternalFileBehavior = true,
-        includeRecentLimit = true,
         includeCustomFonts = true,
         includeStrictFileFilter = true,
         includePdfFileNameDisplayName = true,

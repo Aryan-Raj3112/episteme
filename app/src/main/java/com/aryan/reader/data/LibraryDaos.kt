@@ -68,6 +68,10 @@ interface TagDao {
     @Query("SELECT * FROM tags ORDER BY name ASC")
     fun getAllTags(): Flow<List<TagEntity>>
 
+    /** Snapshot for name lookups (tag dedupe); kept separate from the observed flow. */
+    @Query("SELECT * FROM tags")
+    suspend fun getAllTagsOnce(): List<TagEntity>
+
     @Query("SELECT * FROM book_tag_cross_ref")
     fun getAllBookTagCrossRefs(): Flow<List<BookTagCrossRef>>
 

@@ -11,7 +11,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * iOS owner of the in-memory inside-files index. Mirrors Android's
- * `GlobalSearchSession` (same entry points, same membership-eviction
+ * `GlobalSearchSession` (same entry points, same bounded-residency
  * contract); the only difference is indexing runs in-process on
  * [Dispatchers.Default] ([indexBook]) instead of a WorkManager worker, so
  * there is no cross-process handoff to reconcile.
@@ -31,9 +31,9 @@ internal class IosGlobalSearchSession(
     private val loadedHashes = mutableMapOf<String, String>()
 
     /**
-     * Loads persisted payloads for new/changed books and forgets hashes of
-     * books that left the library. Returns entries still needing an
-     * indexing pass (nothing persisted for this hash).
+     * Records freshness for new/changed books (metadata reads only; no payload
+     * is decoded) and forgets hashes of books that left the library. Returns
+     * entries still needing an indexing pass (nothing persisted for this hash).
      */
     suspend fun syncLibrary(entries: List<Entry>): List<Entry> = withContext(Dispatchers.Default) {
         mutex.withLock {
@@ -53,7 +53,9 @@ internal class IosGlobalSearchSession(
                 refreshLocked(entries.associate { it.bookId to it.contentHash })
                 if (rawQuery.isBlank()) return@withLock emptyList()
                 val wantedIds = entries.mapTo(HashSet()) { it.bookId }
-                coordinator.search(rawQuery).filter { it.bookId in wantedIds }
+                // Same lazy, budget-bounded scan as Android: loads each book's
+                // payload on demand, evicting the least recently used.
+                coordinator.searchAcrossLibrary(rawQuery, wantedIds).filter { it.bookId in wantedIds }
             }
         }
 
@@ -64,8 +66,7 @@ internal class IosGlobalSearchSession(
     suspend fun isFresh(entry: Entry): Boolean = withContext(Dispatchers.Default) {
         mutex.withLock {
             loadedHashes[entry.bookId] == entry.contentHash ||
-                (coordinator.loadPersistedBook(entry.bookId) &&
-                    coordinator.contentHashOf(entry.bookId) == entry.contentHash)
+                hasPersistedPayload(entry.bookId, entry.contentHash)
         }
     }
 
@@ -97,7 +98,8 @@ internal class IosGlobalSearchSession(
     suspend fun storedBookIds(): Set<String> =
         withContext(Dispatchers.Default) { storage.storedBookIds() }
 
-    /** Forgets one book's loaded hash (e.g. after delete). File removal is the caller's job. */    suspend fun remove(bookId: String) {
+    /** Forgets one book (memory + file) after a delete. */
+    suspend fun remove(bookId: String) {
         mutex.withLock { loadedHashes.remove(bookId) }
         withContext(Dispatchers.Default) {
             mutex.withLock { coordinator.removeBook(bookId) }
@@ -109,9 +111,8 @@ internal class IosGlobalSearchSession(
             if (loadedHashes[bookId] != hash) {
                 // A payload indexed under an older hash must not masquerade
                 // as fresh: only record when the persisted hash matches.
-                val loaded = coordinator.loadPersistedBook(bookId) &&
-                    coordinator.contentHashOf(bookId) == hash
-                if (loaded) {
+                // Freshness reads the metadata sidecar, never the payload.
+                if (hasPersistedPayload(bookId, hash)) {
                     loadedHashes[bookId] = hash
                 } else {
                     loadedHashes.remove(bookId)
@@ -119,6 +120,11 @@ internal class IosGlobalSearchSession(
             }
         }
         loadedHashes.keys.retainAll(wanted.keys)
+    }
+
+    private fun hasPersistedPayload(bookId: String, contentHash: String): Boolean {
+        val metadata = coordinator.metadataOf(bookId) ?: return false
+        return metadata.contentHash == contentHash && metadata.locationsComplete
     }
 
     companion object {

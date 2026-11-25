@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -50,6 +51,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -58,6 +60,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Badge
@@ -101,6 +104,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.layout.ContentScale
@@ -126,11 +130,13 @@ import com.aryan.reader.data.AppDatabase
 import com.aryan.reader.data.AudiobookImporter
 import com.aryan.reader.audiobook.AudiobookController
 import com.aryan.reader.audiobook.ListenOverlayHost
+import com.aryan.reader.shared.ui.readerString
 import com.aryan.reader.shared.AnnotationExportFormat
 import com.aryan.reader.shared.CloudFolderSyncSelection
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.ui.AppIcon
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance
+import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities
 import com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerDestination
 import com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel
@@ -139,6 +145,7 @@ import com.aryan.reader.shared.ui.sharedAnnotationExportFormatOptions
 import com.aryan.reader.shared.ui.activeFilterCount
 import com.aryan.reader.shared.ui.matchesMobileUnifiedLibraryFilter
 import com.aryan.reader.shared.ui.mobileUnifiedContinueReadingBook
+import com.aryan.reader.shared.withPinnedFirst
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
@@ -201,6 +208,7 @@ fun UnifiedLibraryScreen(
         else -> null
     }
     var selectedShelfId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedTagId by rememberSaveable { mutableStateOf<String?>(null) }
     var filter by rememberSaveable { mutableStateOf(UnifiedLibraryFilter.ALL) }
     var query by rememberSaveable { mutableStateOf("") }
     // Filtering + sorting is O(n log n) on Main; debounce keystrokes so each
@@ -240,6 +248,18 @@ fun UnifiedLibraryScreen(
     var showRemoveSelectedFromShelfConfirmation by remember { mutableStateOf(false) }
     var shelfIdAddingBooks by remember { mutableStateOf<String?>(null) }
     var showCloseAllTabsDialog by remember { mutableStateOf(false) }
+    // The top-bar tab switcher replaces the Home tabs row and covers both readers, which that
+    // row never did. Keyed on the two projected lists so closing or switching a tab re-reads them.
+    val openTabs = remember(
+        uiState.textOpenTabs,
+        uiState.openTabs,
+        uiState.tabState,
+        uiState.usePdfFileNameAsDisplayName,
+    ) {
+        // Disabling multi-tab reading parks each reader on one tab; the button would then
+        // advertise a single "tab" and open an empty panel, so it follows the toggle.
+        if (uiState.isTabsEnabled) uiState.homeOpenTabs() else emptyList()
+    }
     val canUseCloudFolderSync = uiState.canUseCloudFolderSync()
     val canPullToSync = com.aryan.reader.shared.ui.canPullToSyncLibrary(
         cloudSyncEnabled = uiState.isSyncEnabled,
@@ -388,21 +408,31 @@ fun UnifiedLibraryScreen(
         uiState.rawLibraryFiles,
         uiState.libraryFilters,
         uiState.sortOrder,
+        uiState.pinnedLibraryBookIds,
         filter,
         debouncedQuery,
         uiState.libraryState.searchInsideFiles,
         uiState.libraryState.contentSearchResults,
     ) {
+        // One projection cache for the whole pass: filtering, the section filter and the sort all
+        // map the same books, so the cache builds each SharedBookItem once instead of 3-4 times.
+        val projectionCache = projectionCacheFor(uiState.rawLibraryFiles)
         filterUnifiedLibraryBooks(
-            applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters),
+            applyLibraryFilters(uiState.rawLibraryFiles, uiState.libraryFilters, projectionCache),
             filter,
             debouncedQuery,
             uiState.libraryState.searchInsideFiles,
             uiState.libraryState.contentSearchResults,
             uiState.sortOrder,
+            uiState.pinnedLibraryBookIds,
+            projectionCache,
         )
     }
     val section = UnifiedLibrarySection.fromPersisted(uiState.unifiedLibrarySection)
+    // Leaving Tags keeps the section list, not a stale tag detail, as the landing view.
+    LaunchedEffect(section) {
+        if (section != UnifiedLibrarySection.TAGS) selectedTagId = null
+    }
     // Keyed on the list identity: recomputes exactly when the library changes
     // (including position writes, which replace the item), but skips the O(n)
     // scan on unrelated recompositions (scroll, drawer, keystrokes).
@@ -412,10 +442,18 @@ fun UnifiedLibraryScreen(
     }
     val advancedFilterCount = uiState.libraryFilters.activeFilterCount()
     val selectedItems = uiState.contextualActionItems
+    // Selection actions are shelf-scoped while a shelf is open in the Shelves section: delete
+    // removes from that shelf instead of deleting the book.
+    val isViewingShelf = section == UnifiedLibrarySection.SHELVES && selectedShelfId != null
 
     fun navigateShelfUp() {
         val parentId = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } }?.parentShelfId
         selectedShelfId = parentId
+    }
+
+    val inTagDetail = section == UnifiedLibrarySection.TAGS && selectedTagId != null
+    val navigateBack = {
+        if (inTagDetail) selectedTagId = null else navigateShelfUp()
     }
 
     val focusManager = LocalFocusManager.current
@@ -432,14 +470,14 @@ fun UnifiedLibraryScreen(
         hasSelection = selectedItems.isNotEmpty(),
         isKeyboardOpen = isKeyboardOpen,
         isSearchActive = section == UnifiedLibrarySection.HOME && query.isNotBlank(),
-        inShelf = selectedShelfId != null,
+        inShelf = selectedShelfId != null || inTagDetail,
     )
     BackHandler(enabled = backAction != LibraryBackAction.NONE) {
         when (nextLibraryBackAction(
             hasSelection = selectedItems.isNotEmpty(),
             isKeyboardOpen = isKeyboardOpen,
             isSearchActive = section == UnifiedLibrarySection.HOME && query.isNotBlank(),
-            inShelf = selectedShelfId != null,
+            inShelf = selectedShelfId != null || inTagDetail,
         )) {
             LibraryBackAction.CLEAR_SELECTION -> viewModel.clearContextualAction()
             LibraryBackAction.HIDE_KEYBOARD -> focusManager.clearFocus()
@@ -447,7 +485,7 @@ fun UnifiedLibraryScreen(
                 query = ""
                 focusManager.clearFocus()
             }
-            LibraryBackAction.SHELF_UP -> navigateShelfUp()
+            LibraryBackAction.SHELF_UP -> navigateBack()
             LibraryBackAction.NONE -> Unit
         }
     }
@@ -508,13 +546,26 @@ fun UnifiedLibraryScreen(
             }
         ) {
             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-    ModalNavigationDrawer(
+    // Wide windows get a permanent rail; phones keep the modal drawer. Both render the same shell
+    // below, so navigation parity is structural rather than duplicated.
+    val showNavigationRail = widthSizeClass != WindowWidthSizeClass.Compact
+    val railModel = remember {
+        com.aryan.reader.shared.ui.mobileUnifiedLibraryDrawerModel(
+            com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerCapabilities(
+                catalogsAvailable = !BuildConfig.IS_OFFLINE,
+                aiSettingsAvailable = !BuildConfig.IS_OFFLINE,
+            ),
+        )
+    }
+    com.aryan.reader.shared.ui.SharedAdaptiveLibraryNavigation(
+        showRail = showNavigationRail,
         drawerState = drawerState,
         drawerContent = {
             UnifiedLibraryDrawer(
                 currentSection = section,
                 onSectionSelected = { destination ->
                     selectedShelfId = null
+                    selectedTagId = null
                     scope.launch {
                         drawerState.close()
                         viewModel.setUnifiedLibrarySection(destination.persistedValue)
@@ -535,9 +586,41 @@ fun UnifiedLibraryScreen(
                 onAiSettingsClick = {
                     scope.launch { drawerState.close() }
                     navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
-                }
+                },
+                currentUser = uiState.currentUser,
+                onAccountClick = {
+                    scope.launch {
+                        drawerState.close()
+                        accountDrawerState.open()
+                    }
+                },
             )
-        }
+        },
+        rail = {
+            com.aryan.reader.shared.ui.SharedLibraryNavigationRail(
+                destinations = railModel.destinations,
+                selectedSection = section,
+                appearance = railModel.appearance,
+                onDestinationSelected = { destination ->
+                    selectedShelfId = null
+                    selectedTagId = null
+                    viewModel.setUnifiedLibrarySection(destination.section.persistedValue)
+                },
+                onAppearanceSelected = { appearance ->
+                    // The rail is already on screen, so there is no drawer to close first.
+                    when (appearance) {
+                        com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance.THEME ->
+                            showThemeSheet = true
+                        com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance.SETTINGS ->
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.SETTINGS)
+                        com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance.FONTS ->
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.FONTS)
+                        com.aryan.reader.shared.ui.MobileUnifiedLibraryDrawerAppearance.AI ->
+                            navController.navigateIfReady(com.aryan.reader.shared.ui.SharedMobileAppDestination.AI_SETTINGS)
+                    }
+                },
+            )
+        },
     ) {
         com.aryan.reader.shared.ui.SharedAndroidUnifiedScaffold(
             section = section,
@@ -551,6 +634,7 @@ fun UnifiedLibraryScreen(
             canPullToSync = canPullToSync,
             isRefreshing = uiState.isRefreshing,
             onRefresh = viewModel::refreshLibrary,
+            reduceMotion = rememberReaderMotionPolicy().reduceMotion,
             bottomBar = {
                 val activeTtsBook = ttsPlayback.bookId
                     ?.takeIf { ttsPlayback.playbackSource == "AUDIOBOOK_TTS" }
@@ -636,25 +720,23 @@ fun UnifiedLibraryScreen(
                     }
                 }
             },
-            topBar = {
-                // Selection actions are shelf-scoped while a shelf is open in the Shelves
-                // section: delete removes from that shelf instead of deleting the book.
-                val isViewingShelf = section == UnifiedLibrarySection.SHELVES && selectedShelfId != null
-                if (selectedItems.isNotEmpty()) {
-                    ContextualTopAppBar(
-                        selectedItemCount = selectedItems.size,
-                        onNavIconClick = viewModel::clearContextualAction,
-                        onInfoClick = selectedItems.singleOrNull()?.let { item ->
+            selectionToolbar = if (selectedItems.isEmpty()) {
+                null
+            } else {
+                {
+                    com.aryan.reader.shared.ui.SharedSelectionToolbar(
+                        selectedCount = selectedItems.size,
+                        onSelectAll = viewModel::selectAllLibraryFiles,
+                        onPin = { viewModel.togglePinForContextualItems(isHome = false) },
+                        onAddToShelf = { viewModel.openAddSelectedToShelf(selectedItems.map { it.bookId }.toSet()) },
+                        onTag = { viewModel.openTagSelection(selectedItems.map { it.bookId }.toSet()) },
+                        onInfo = selectedItems.singleOrNull()?.let { item ->
                             {
                                 selectedBookForInfo = item
                                 showSelectedBookInfo = true
                             }
                         },
-                        onTagClick = { viewModel.openTagSelection(selectedItems.map { it.bookId }.toSet()) },
-                        onAddToShelfClick = { viewModel.openAddSelectedToShelf(selectedItems.map { it.bookId }.toSet()) },
-                        onPinClick = { viewModel.togglePinForContextualItems(isHome = false) },
-                        onSelectAllClick = viewModel::selectAllLibraryFiles,
-                        onSaveClick = selectedItems.singleOrNull()
+                        onSave = selectedItems.singleOrNull()
                             ?.takeIf { it.canExportOriginalFile() }
                             ?.let { item ->
                                 {
@@ -664,34 +746,58 @@ fun UnifiedLibraryScreen(
                                     ) { saveOriginalLauncher.launch(item.suggestedOriginalFileName()) }
                                 }
                             },
-                        onShareClick = selectedItems.singleOrNull()
+                        onShare = selectedItems.singleOrNull()
                             ?.takeIf { it.canExportOriginalFile() }
                             ?.let { item -> { shareOriginal(item) } },
-                        onExportAnnotationsClick = selectedItems.singleOrNull()
+                        onExportAnnotations = selectedItems.singleOrNull()
                             ?.let { item -> { showAnnotationExportFormatDialogFor = item } },
                         // Inside a shelf, "delete" means remove from that shelf; on the
                         // library surface it stays a destructive permanent delete.
-                        onDeleteClick = if (isViewingShelf) {
+                        onDelete = if (isViewingShelf) {
                             { showRemoveSelectedFromShelfConfirmation = true }
                         } else {
                             { showPermanentDeleteConfirmation = true }
                         },
-                        compactSelectionActions = true,
-                        overflowDeleteLabelRes = R.string.action_delete,
-                        onClearSelectionClick = viewModel::clearContextualAction
+                        onClear = viewModel::clearContextualAction,
+                    )
+                }
+            },
+            topBar = {
+                if (selectedItems.isNotEmpty()) {
+                    // The count and the way out stay up here; everything that acts on the
+                    // selection is within thumb reach at the bottom of the screen.
+                    com.aryan.reader.shared.ui.SharedSelectionTopBar(
+                        selectedCount = selectedItems.size,
+                        onClose = viewModel::clearContextualAction,
                     )
                 } else {
                     UnifiedLibraryTopBar(
                         section = section,
                         selectedShelf = selectedShelfId?.let { id -> uiState.shelves.find { it.id == id } },
-                        onMenuClick = { scope.launch { drawerState.open() } },
-                        onBackFromShelf = ::navigateShelfUp,
+                        onMenuClick = if (showNavigationRail) {
+                            null
+                        } else {
+                            { scope.launch { drawerState.open() } }
+                        },
+                        onBackFromShelf = navigateBack,
+                        titleOverride = if (section == UnifiedLibrarySection.TAGS) {
+                            selectedTagId?.let { id -> uiState.allTags.find { it.id == id }?.name }
+                        } else null,
                         uiState = uiState,
                         onAccountClick = { scope.launch { accountDrawerState.open() } },
                         searchQuery = if (section == UnifiedLibrarySection.HOME) query else null,
                         onSearchQueryChange = { query = it },
                         searchInsideFiles = uiState.libraryState.searchInsideFiles,
                         onSearchInsideFilesChange = viewModel::setSearchInsideFiles,
+                        openTabs = openTabs,
+                        onOpenTabSelected = viewModel::switchTab,
+                        onOpenTabClosed = viewModel::closeTabFromLibrary,
+                        onTabOrderCommitted = viewModel::reorderTabs,
+                        onCloseAllTabs = if (openTabs.size > 1) {
+                            { showCloseAllTabsDialog = true }
+                        } else {
+                            null
+                        },
                     )
                 }
             },
@@ -724,12 +830,14 @@ fun UnifiedLibraryScreen(
                     onContentHitClick = { item, hit, hitQuery ->
                         viewModel.openLibrarySearchHit(item, hit, hitQuery)
                     },
-                    openTabs = uiState.openTabs,
-                    tabsEnabled = uiState.isTabsEnabled,
-                    onCloseTab = { viewModel.closeTab(it.bookId) },
-                    onCloseAllTabs = { showCloseAllTabsDialog = true },
                     searchInsideFiles = uiState.libraryState.searchInsideFiles,
                     contentSearchResults = uiState.libraryState.contentSearchResults,
+                    isLoading = uiState.isLoading,
+                    clearFiltersLabel = stringResource(R.string.action_clear_filters),
+                    onClearFilters = {
+                        filter = UnifiedLibraryFilter.ALL
+                        query = ""
+                    },
                 )
                 UnifiedLibrarySection.AUDIOBOOKS -> AudiobooksLibrarySection(
                     modifier = Modifier.padding(padding),
@@ -820,6 +928,8 @@ fun UnifiedLibraryScreen(
                             usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
                             widthSizeClass = widthSizeClass,
                             sortOrder = uiState.sortOrder,
+                            useListView = uiState.unifiedShelfListView,
+                            onListViewChange = viewModel::setUnifiedShelfListView,
                             onShelfSelected = { selectedShelfId = it.id },
                             onBreadcrumbNavigate = { shelfId -> selectedShelfId = shelfId },
                             onSortOrderChange = viewModel::setSortOrder,
@@ -831,6 +941,23 @@ fun UnifiedLibraryScreen(
                             )
                     }
                 }
+                UnifiedLibrarySection.TAGS -> UnifiedTagsSection(
+                    modifier = Modifier.padding(padding),
+                    tags = uiState.allTags,
+                    books = uiState.rawLibraryFiles,
+                    selectedTagId = selectedTagId,
+                    selectedBookIds = uiState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
+                    downloadingBookIds = uiState.downloadingBookIds,
+                    usePdfFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                    useListView = uiState.unifiedShelfListView,
+                    widthSizeClass = widthSizeClass,
+                    sortOrder = uiState.sortOrder,
+                    onTagSelected = { selectedTagId = it },
+                    onListViewChange = viewModel::setUnifiedShelfListView,
+                    onSortOrderChange = viewModel::setSortOrder,
+                    onBookClick = viewModel::onRecentFileClicked,
+                    onBookLongClick = viewModel::onRecentItemLongPress,
+                )
                 UnifiedLibrarySection.FOLDERS -> UnifiedFoldersSection(
                     modifier = Modifier.padding(padding),
                     folders = uiState.syncedFolders,
@@ -1059,7 +1186,7 @@ fun UnifiedLibraryScreen(
     if (showCloseAllTabsDialog) {
         LibraryCloseAllTabsDialog(
             onConfirm = {
-                viewModel.closeAllTabs()
+                viewModel.closeAllTabs(kind = null)
                 showCloseAllTabsDialog = false
             },
             onDismiss = { showCloseAllTabsDialog = false }
@@ -1123,132 +1250,155 @@ private fun UnifiedLibraryDrawer(
     onSettingsClick: () -> Unit,
     onFontsClick: () -> Unit,
     onAiSettingsClick: () -> Unit,
+    currentUser: com.aryan.reader.shared.UserData?,
+    onAccountClick: () -> Unit,
 ) {
     ModalDrawerSheet(modifier = Modifier.fillMaxHeight()) {
-        Column(modifier = Modifier.fillMaxHeight()) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                shape = RoundedCornerShape(bottomEnd = 28.dp)
-            ) {
-                Row(
-                    modifier = Modifier.padding(start = 24.dp, end = 20.dp, top = 28.dp, bottom = 24.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    AppIcon(
-                        contentDescription = stringResource(R.string.content_desc_app_icon),
-                        size = 44.dp,
-                        shape = RoundedCornerShape(16.dp),
-                        plateColor = MaterialTheme.colorScheme.surface,
+        val appName = stringResource(R.string.app_name)
+        val destinationLabel = currentSection.drawerLabel()
+        // No account system in the open-source edition, so there is no one to be signed in as.
+        val isSignedIn = BuildConfig.FLAVOR != "oss" && currentUser != null
+        com.aryan.reader.shared.ui.SharedDrawerLayout(
+            header = {
+                com.aryan.reader.shared.ui.SharedDrawerHeader(
+                    title = appName,
+                    // The header reports the destination rather than repeating a tagline, so a
+                    // glance at the drawer tells the reader where they already are.
+                    subtitle = destinationLabel,
+                    leading = {
+                        AppIcon(
+                            contentDescription = stringResource(R.string.content_desc_app_icon),
+                            size = 44.dp,
+                            shape = RoundedCornerShape(14.dp),
+                            plateColor = MaterialTheme.colorScheme.secondaryContainer,
+                        )
+                    },
+                )
+            },
+            // The drawer is navigation, not a storefront: it shows who you are once you are
+            // signed in, and nothing at all when you are not. The edition without accounts never
+            // renders the row.
+            showFooterDivider = isSignedIn,
+            footer = {
+                if (isSignedIn) {
+                    com.aryan.reader.shared.ui.SharedDrawerAccountFooter(
+                        title = currentUser?.displayName
+                            ?: currentUser?.email
+                            ?: readerString("desktop_signed_in", "Signed in"),
+                        // Only repeat the address when it is not already the title.
+                        supporting = if (currentUser?.displayName != null) {
+                            currentUser?.email
+                        } else {
+                            readerString("account_and_sync", "Account & sync")
+                        },
+                        onClick = onAccountClick,
+                        leading = {
+                            AndroidAccountAvatar(
+                                user = currentUser!!,
+                                modifier = Modifier.size(36.dp),
+                                contentDescription = stringResource(R.string.content_desc_profile_picture),
+                            )
+                        },
                     )
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.app_name), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text(stringResource(R.string.unified_library_drawer_title), style = MaterialTheme.typography.bodySmall)
-                    }
                 }
-            }
-
-            Text(
-                stringResource(R.string.library_title),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(start = 28.dp, top = 20.dp, bottom = 8.dp)
-            )
+                com.aryan.reader.shared.ui.SharedDrawerVersionCaption(
+                    text = stringResource(R.string.about_version_name, BuildConfig.VERSION_NAME),
+                )
+            },
+        ) {
+            item { com.aryan.reader.shared.ui.SharedDrawerSectionLabel(stringResource(R.string.library_title)) }
             val drawerModel = mobileUnifiedLibraryDrawerModel(
                 MobileUnifiedLibraryDrawerCapabilities(
                     catalogsAvailable = !BuildConfig.IS_OFFLINE,
                     aiSettingsAvailable = !BuildConfig.IS_OFFLINE,
                 ),
             )
-            drawerModel.destinations.forEach { destination ->
-                when (destination) {
-                    MobileUnifiedLibraryDrawerDestination.HOME -> UnifiedLibraryDestination(
-                        stringResource(R.string.unified_library_home),
-                        currentSection == destination.section,
-                        { Icon(Icons.Default.Home, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> UnifiedLibraryDestination(
-                        stringResource(R.string.listen_title),
-                        currentSection == destination.section,
-                        { Icon(Icons.AutoMirrored.Filled.VolumeUp, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.SHELVES -> UnifiedLibraryDestination(
-                        stringResource(R.string.tab_shelves),
-                        currentSection == destination.section,
-                        { Icon(Icons.AutoMirrored.Filled.LibraryBooks, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.FOLDERS -> UnifiedLibraryDestination(
-                        stringResource(R.string.tab_folders),
-                        currentSection == destination.section,
-                        { Icon(Icons.Default.Folder, null) },
-                    ) { onSectionSelected(destination.section) }
-                    MobileUnifiedLibraryDrawerDestination.CATALOGS -> UnifiedLibraryDestination(
-                        stringResource(R.string.tab_catalogs),
-                        currentSection == destination.section,
-                        { Icon(painterResource(R.drawable.cloud), null) },
-                    ) { onSectionSelected(destination.section) }
-                }
+            items(drawerModel.destinations, key = { it.name }) { destination ->
+                com.aryan.reader.shared.ui.SharedDrawerItem(
+                    icon = { Icon(destination.drawerIcon(), contentDescription = null) },
+                    label = stringResource(destination.drawerLabelRes()),
+                    selected = currentSection == destination.section,
+                    // The pill is the selected signal; a heavier label on top of it was a second
+                    // emphasis for the same thing.
+                    onClick = { onSectionSelected(destination.section) },
+                )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp))
-            Text(stringResource(R.string.unified_library_appearance), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 28.dp, bottom = 8.dp))
-            drawerModel.appearance.forEach { appearance ->
-                when (appearance) {
-                    MobileUnifiedLibraryDrawerAppearance.THEME -> NavigationDrawerItem(
-                        icon = { Icon(Icons.Default.Palette, null) },
-                        label = { Text(stringResource(R.string.app_theme_title)) },
-                        selected = false,
-                        onClick = onThemeClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> NavigationDrawerItem(
-                        icon = { Icon(Icons.Default.Settings, null) },
-                        label = { Text(stringResource(R.string.settings)) },
-                        selected = false,
-                        onClick = onSettingsClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                    MobileUnifiedLibraryDrawerAppearance.FONTS -> NavigationDrawerItem(
-                        icon = { Icon(painterResource(R.drawable.fonts), null) },
-                        label = { Text(stringResource(R.string.drawer_custom_fonts)) },
-                        selected = false,
-                        onClick = onFontsClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                    MobileUnifiedLibraryDrawerAppearance.AI -> NavigationDrawerItem(
-                        icon = { Icon(painterResource(R.drawable.ai), null) },
-                        label = { Text(stringResource(R.string.ai_settings_title)) },
-                        selected = false,
-                        onClick = onAiSettingsClick,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
-                    )
-                }
+            item { com.aryan.reader.shared.ui.SharedDrawerGroupDivider() }
+            item {
+                com.aryan.reader.shared.ui.SharedDrawerSectionLabel(
+                    stringResource(R.string.unified_library_appearance),
+                )
             }
-
-            Spacer(modifier = Modifier.weight(1f))
+            items(drawerModel.appearance, key = { it.name }) { appearance ->
+                com.aryan.reader.shared.ui.SharedDrawerItem(
+                    icon = {
+                        val res = appearance.drawerIconRes()
+                        if (res != null) {
+                            Icon(painterResource(res), contentDescription = null)
+                        } else {
+                            Icon(appearance.drawerVector(), contentDescription = null)
+                        }
+                    },
+                    label = stringResource(appearance.drawerLabelRes()),
+                    onClick = when (appearance) {
+                        MobileUnifiedLibraryDrawerAppearance.THEME -> onThemeClick
+                        MobileUnifiedLibraryDrawerAppearance.SETTINGS -> onSettingsClick
+                        MobileUnifiedLibraryDrawerAppearance.FONTS -> onFontsClick
+                        MobileUnifiedLibraryDrawerAppearance.AI -> onAiSettingsClick
+                    },
+                )
+            }
         }
     }
 }
 
-@Composable
-private fun UnifiedLibraryDestination(
-    label: String,
-    selected: Boolean,
-    icon: @Composable () -> Unit,
-    onClick: () -> Unit,
-) {
-    NavigationDrawerItem(
-        icon = icon,
-        label = { Text(label, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal) },
-        selected = selected,
-        onClick = onClick,
-        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp)
-    )
+private fun MobileUnifiedLibraryDrawerDestination.drawerLabelRes(): Int = when (this) {
+    MobileUnifiedLibraryDrawerDestination.HOME -> R.string.unified_library_home
+    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> R.string.listen_title
+    MobileUnifiedLibraryDrawerDestination.SHELVES -> R.string.tab_shelves
+    MobileUnifiedLibraryDrawerDestination.TAGS -> R.string.section_tags
+    MobileUnifiedLibraryDrawerDestination.FOLDERS -> R.string.tab_folders
+    MobileUnifiedLibraryDrawerDestination.CATALOGS -> R.string.tab_catalogs
 }
 
+private fun MobileUnifiedLibraryDrawerDestination.drawerIcon(): ImageVector = when (this) {
+    MobileUnifiedLibraryDrawerDestination.HOME -> Icons.Default.Home
+    MobileUnifiedLibraryDrawerDestination.AUDIOBOOKS -> Icons.AutoMirrored.Filled.VolumeUp
+    MobileUnifiedLibraryDrawerDestination.SHELVES -> Icons.AutoMirrored.Filled.LibraryBooks
+    MobileUnifiedLibraryDrawerDestination.TAGS -> Icons.Default.Tag
+    MobileUnifiedLibraryDrawerDestination.FOLDERS -> Icons.Default.Folder
+    MobileUnifiedLibraryDrawerDestination.CATALOGS -> Icons.Default.Cloud
+}
 
+private fun MobileUnifiedLibraryDrawerAppearance.drawerLabelRes(): Int = when (this) {
+    MobileUnifiedLibraryDrawerAppearance.THEME -> R.string.app_theme_title
+    MobileUnifiedLibraryDrawerAppearance.SETTINGS -> R.string.settings
+    MobileUnifiedLibraryDrawerAppearance.FONTS -> R.string.drawer_custom_fonts
+    MobileUnifiedLibraryDrawerAppearance.AI -> R.string.ai_settings_title
+}
+
+/** Drawable-backed icons keep the brand marks the app already ships; the rest use Material glyphs. */
+private fun MobileUnifiedLibraryDrawerAppearance.drawerIconRes(): Int? = when (this) {
+    MobileUnifiedLibraryDrawerAppearance.FONTS -> R.drawable.fonts
+    MobileUnifiedLibraryDrawerAppearance.AI -> R.drawable.ai
+    else -> null
+}
+
+private fun MobileUnifiedLibraryDrawerAppearance.drawerVector(): ImageVector = when (this) {
+    MobileUnifiedLibraryDrawerAppearance.THEME -> Icons.Default.Palette
+    else -> Icons.Default.Settings
+}
+
+/** The drawer's own name for a section, matching the destinations it lists. */
+private fun UnifiedLibrarySection.drawerLabel(): String? = when (this) {
+    UnifiedLibrarySection.HOME -> null
+    UnifiedLibrarySection.AUDIOBOOKS -> "Listen"
+    UnifiedLibrarySection.SHELVES -> "Shelves"
+    UnifiedLibrarySection.TAGS -> "Tags"
+    UnifiedLibrarySection.FOLDERS -> "Folders"
+    UnifiedLibrarySection.CATALOGS -> "Catalogs"
+}
 
 internal val UnifiedLibraryFilter.labelRes: Int
     get() = when (this) {
@@ -1301,26 +1451,33 @@ internal fun filterUnifiedLibraryBooks(
     searchInsideFiles: Boolean = false,
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     sortOrder: SortOrder = SortOrder.RECENT,
+    pinnedBookIds: Set<String> = emptySet(),
+    mapper: SharedProjectionBookItemCache = projectionCacheFor(books),
 ): List<RecentFileItem> {
     if (books.isEmpty()) return emptyList()
     val normalizedQuery = query.trim()
     val byId = books.associateBy { it.bookId }
-    val sharedBooks = SharedProjectionBookItemCache(maxEntries = books.size).map(books)
+    val sharedBooks = mapper.map(books)
     val metadataBooks = sharedBooks
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
         .mapNotNull { byId[it.id] }
-    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
-        return sortFiles(metadataBooks, sortOrder)
+    val ordered = if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
+        sortFiles(metadataBooks, sortOrder, mapper, byId)
+    } else {
+        // Content-only books follow metadata hits but still respect the active
+        // status filter (blank query = filter check without text matching).
+        // Relevance wins inside this group: best content match first, otherwise a
+        // strong hit sits below a book the user merely opened last.
+        val metadataIds = metadataBooks.mapTo(HashSet()) { it.bookId }
+        val contentScores = contentSearchResults.associate { it.bookId to it.score }
+        val contentOnly = sharedBooks
+            .filter { it.id !in metadataIds && it.matchesMobileUnifiedLibraryFilter(filter, "") }
+            .sortedByDescending { contentScores[it.id] ?: Double.NEGATIVE_INFINITY }
+            .mapNotNull { byId[it.id] }
+        sortFiles(metadataBooks, sortOrder, mapper, byId) + contentOnly
     }
-    // Content-only books follow metadata hits but still respect the active
-    // status filter (blank query = filter check without text matching).
-    // Relevance wins inside this group: best content match first, otherwise a
-    // strong hit sits below a book the user merely opened last.
-    val metadataIds = metadataBooks.mapTo(HashSet()) { it.bookId }
-    val contentScores = contentSearchResults.associate { it.bookId to it.score }
-    val contentOnly = sharedBooks
-        .filter { it.id !in metadataIds && it.matchesMobileUnifiedLibraryFilter(filter, "") }
-        .sortedByDescending { contentScores[it.id] ?: Double.NEGATIVE_INFINITY }
-        .mapNotNull { byId[it.id] }
-    return sortFiles(metadataBooks, sortOrder) + contentOnly
+    // Android benchmark: pinned books lead the home/library list. Applied here
+    // because Library Beta re-derives the list from raw books instead of using
+    // the projector's already ordered `libraryBooks`.
+    return ordered.withPinnedFirst(pinnedBookIds) { it.bookId }
 }

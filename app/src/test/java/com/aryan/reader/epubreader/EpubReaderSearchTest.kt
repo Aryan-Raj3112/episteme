@@ -2,6 +2,8 @@ package com.aryan.reader.epubreader
 
 import androidx.compose.ui.text.buildAnnotatedString
 import com.aryan.reader.RenderMode
+import com.aryan.reader.shared.READER_SEARCH_BLOCK_BOUNDARY_TAGS
+import com.aryan.reader.shared.READER_SEARCH_SKIPPED_TAGS
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.epub.EpubBook
@@ -23,6 +25,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.jsoup.Jsoup
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
@@ -56,7 +59,7 @@ class EpubReaderSearchTest {
     }
 
     @Test
-    fun `search records chunk index after body children are chunked in groups of twenty`() = runTest {
+    fun `search records the chunk index the reader renders`() = runTest {
         val root = temp.newFolder("chunked")
         val paragraphs = (1..25).joinToString("") { index ->
             if (index == 22) "<p>late target appears here</p>" else "<p>filler $index</p>"
@@ -69,6 +72,74 @@ class EpubReaderSearchTest {
         assertEquals(1, result.chunkIndex)
         assertEquals(0, result.occurrenceIndexInLocation)
         assertEquals("Chunky", result.locationTitle)
+    }
+
+    @Test
+    fun `search chunk index follows the reader into a wrapped chapter`() = runTest {
+        val root = temp.newFolder("wrapped")
+        val paragraphs = (1..25).joinToString("") { index ->
+            if (index == 22) "<p>late target appears here</p>" else "<p>filler $index</p>"
+        }
+        // Standard Ebooks layout: the whole chapter is one passthrough container.
+        writeChapter(root, "chapter.xhtml", "<html><body><div class=\"chapter\">$paragraphs</div></body></html>")
+        val book = epubBook(root, listOf(chapter("ch1", "Wrapped", "chapter.xhtml")))
+
+        val result = createEpubSearcher(book)("target").single()
+
+        // The reader descends into the lone wrapper and renders several chunks, so
+        // "chunk 0 for every hit" was a lie that paged wrapped chapters to their
+        // first match.
+        val renderedChunks = splitBodyNodesIntoReaderChunks(
+            Jsoup.parse(java.io.File(root, "chapter.xhtml"), "UTF-8").body().childNodes().toList()
+        )
+        assertTrue(renderedChunks.size > 1)
+        assertEquals(1, result.chunkIndex)
+        assertTrue(renderedChunks[result.chunkIndex].html.contains("late target appears here"))
+    }
+
+    @Test
+    fun `footnote superscripts do not shift the ordinals of later hits`() = runTest {
+        val root = temp.newFolder("footnotes")
+        writeChapter(
+            root,
+            "chapter.xhtml",
+            """
+            <html><body>
+              <p>Alpha needle beta<a epub:type="noteref" href="#n1"><sup>1</sup></a> gamma.</p>
+              <p>Delta needle epsilon.</p>
+              <aside epub:type="footnote" id="n1"><p>1. A note that mentions needle once.</p></aside>
+            </body></html>
+            """.trimIndent()
+        )
+        val book = epubBook(root, listOf(chapter("ch1", "Notes", "chapter.xhtml")))
+
+        val results = createEpubSearcher(book)("needle")
+
+        // Note text is chapter text and stays searchable; what matters is that
+        // the superscript marker cannot move the ordinals the locator follows.
+        assertEquals(listOf(0, 1, 2), results.map { it.occurrenceIndexInLocation })
+        assertTrue(results.all { it.matchQuote.isNotBlank() })
+        assertTrue(results.map { it.matchQuote }.any { it.contains("Delta needle epsilon") })
+        assertTrue(results.map { it.matchQuote }.any { it.contains("mentions needle") })
+    }
+
+    @Test
+    fun `webview search matcher mirrors the shared text contract`() {
+        val script = java.io.File("src/main/assets/epub_reader.js").readText()
+        fun objectKeys(marker: String): Set<String> {
+            val body = script.substringAfter(marker).substringBefore("};")
+            return Regex("(\\w+)\\s*:\\s*1").findAll(body).map { it.groupValues[1] }.toSet()
+        }
+
+        // Both sides must flatten chapters identically or hit ordinals drift.
+        assertEquals(
+            READER_SEARCH_BLOCK_BOUNDARY_TAGS,
+            objectKeys("var READER_SEARCH_BLOCK_BOUNDARY_TAGS = {"),
+        )
+        assertEquals(
+            READER_SEARCH_SKIPPED_TAGS,
+            objectKeys("var READER_SEARCH_SKIPPED_TAGS = {"),
+        )
     }
 
     @Test
@@ -151,7 +222,12 @@ class EpubReaderSearchTest {
         )
 
         assertEquals(listOf(result), inPlaceScrolls)
-        verify { webView.evaluateJavascript("javascript:window.scrollToOccurrence(3);", null) }
+        verify {
+            webView.evaluateJavascript(
+                match { script -> script.contains("scrollToChunkOccurrence(2, 0)") },
+                null
+            )
+        }
     }
 
     @Test
@@ -206,6 +282,17 @@ class EpubReaderSearchTest {
     }
 
     @Test
+    fun `highlight script carries the hit quote so a drifted text still lands on it`() {
+        val quoted = searchResult(chapter = 1, chunk = 2, occurrence = 3, quote = "gamma needle delta")
+        val results = listOf(quoted, searchResult(chapter = 1, chunk = 2, occurrence = 4))
+
+        val script = epubSearchHighlightAndScrollScript(results, quoted)
+
+        assertTrue(script.contains("highlightAllOccurrences(window.CURRENT_SEARCH_QUERY)"))
+        assertTrue(script.contains("scrollToChunkOccurrence(2, 0, 'gamma needle delta')"))
+    }
+
+    @Test
     fun `navigation ignores out of bounds search result index`() {
         val searchState = SearchState(CoroutineScope(UnconfinedTestDispatcher())) { emptyList() }
         var called = false
@@ -255,14 +342,20 @@ class EpubReaderSearchTest {
             htmlContent = ""
         )
 
-    private fun searchResult(chapter: Int, chunk: Int, occurrence: Int): SearchResult =
+    private fun searchResult(
+        chapter: Int,
+        chunk: Int,
+        occurrence: Int,
+        quote: String = "",
+    ): SearchResult =
         SearchResult(
             locationInSource = chapter,
             locationTitle = "Chapter $chapter",
             snippet = buildAnnotatedString { append("snippet") },
             query = "needle",
             occurrenceIndexInLocation = occurrence,
-            chunkIndex = chunk
+            chunkIndex = chunk,
+            matchQuote = quote,
         )
 
     private class FakePaginator(private val pageForResult: Int) : IPaginator {

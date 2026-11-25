@@ -50,7 +50,6 @@ import androidx.compose.ui.graphics.ImageShader
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -80,6 +79,7 @@ import androidx.core.graphics.scale
 import com.aryan.reader.shared.pdf.PdfHighlightRect
 import com.aryan.reader.shared.pdf.pdfHighlightLinePath
 import com.aryan.reader.shared.pdf.pdfHighlightLines
+import com.aryan.reader.shared.pdf.pdfHighlightNoteBadgeBoundsForRects
 import com.aryan.reader.shared.pdf.pdfHighlightStrokeStyle
 import com.aryan.reader.shared.pdf.pdfHighlightWavePath
 import com.aryan.reader.isCanvasSafeBitmap
@@ -88,9 +88,10 @@ import com.aryan.reader.pdf.data.PdfAnnotation
 import com.aryan.reader.pdf.data.PdfTextBox
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ui.SharedSelectionMenuRect
+import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
 import com.aryan.reader.shared.ui.SharedSelectionMenuSize
 import com.aryan.reader.shared.ui.SharedSelectionMenuViewport
-import com.aryan.reader.shared.ui.SharedPdfRichTextLayer
+import com.aryan.reader.shared.ui.drawHighlightNoteBadge
 import com.aryan.reader.shared.ui.sharedSelectionMenuPlacement
 import com.aryan.reader.shared.ui.SharedMobilePdfOcrProcessingIndicator
 import com.aryan.reader.shared.pdf.PdfReverseColorMode
@@ -770,6 +771,31 @@ internal fun PdfHighlightsLayer(
                     screenRects = screenRects,
                     isVisible = ::isVisible,
                 )
+                // The note mark is part of the highlight, not a second layer: it is right-aligned
+                // with the highlight's end and straddles the last line's top edge, so it needs no
+                // room of its own and covers no word the highlight itself does not already own.
+                if (!highlight.note.isNullOrBlank()) {
+                    pdfHighlightNoteBadgeBoundsForRects(
+                        screenRects.map { rect ->
+                            PdfHighlightRect.from(
+                                rect.left.toFloat(),
+                                rect.top.toFloat(),
+                                rect.right.toFloat(),
+                                rect.bottom.toFloat()
+                            )
+                        }
+                    )?.let { badge ->
+                        val badgeRect = Rect(
+                            badge.left.toInt(),
+                            badge.top.toInt(),
+                            badge.right.toInt(),
+                            badge.bottom.toInt()
+                        )
+                        if (isVisible(badgeRect)) {
+                            drawHighlightNoteBadge(badge)
+                        }
+                    }
+                }
             }
         }
     }
@@ -880,10 +906,14 @@ internal fun PdfAnnotationLayer(
             fun drawData(data: AnnotationRenderData) {
                 when (data) {
                     is AnnotationRenderData.Standard -> {
+                        // The spec is immutable and comes pre-built with the render data: building
+                        // it here allocated one Stroke per annotation per frame
+                        // (docs/crashlytics-triage.md#163).
                         drawPath(
-                            path = data.path, color = data.color, style = Stroke(
-                                width = data.strokeWidth, cap = data.cap, join = StrokeJoin.Round
-                            ), blendMode = data.blendMode
+                            path = data.path,
+                            color = data.color,
+                            style = data.stroke,
+                            blendMode = data.blendMode
                         )
                     }
 

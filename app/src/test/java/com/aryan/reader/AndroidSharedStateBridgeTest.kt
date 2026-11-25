@@ -8,6 +8,8 @@ import com.aryan.reader.shared.AppFontPreference as SharedAppFontPreference
 import com.aryan.reader.shared.AppThemeMode as SharedAppThemeMode
 import com.aryan.reader.shared.LibraryAction as SharedLibraryAction
 import com.aryan.reader.shared.AppReaderSessionPhase
+import com.aryan.reader.shared.AppTabGroup
+import com.aryan.reader.shared.ReaderTabKind
 import com.aryan.reader.shared.reduce
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -94,7 +96,7 @@ class AndroidLibraryProjectionAdapterTest {
     fun `setTabsEnabled disables shared tabs but preserves Android active reader session`() {
         val result = setTabsEnabled(
             current = ReaderScreenState(
-                tabState = AppTabState(true, listOf("one", "two"), "two")
+                tabState = AppTabState.ofFixedLayout(true, listOf("one", "two"), "two")
             ),
             enabled = false
         )
@@ -108,9 +110,10 @@ class AndroidLibraryProjectionAdapterTest {
     fun `openBookTab delegates tab ordering and activation to shared reducer`() {
         val result = openBookTab(
             current = ReaderScreenState(
-                tabState = AppTabState(false, listOf("old"), "old")
+                tabState = AppTabState.ofFixedLayout(false, listOf("old"), "old")
             ),
             availableBookIds = setOf("old", "new"),
+            kind = ReaderTabKind.FIXED_LAYOUT,
             bookId = "new"
         )
 
@@ -125,9 +128,10 @@ class AndroidLibraryProjectionAdapterTest {
 
         val result = openBookTab(
             current = ReaderScreenState(
-                tabState = AppTabState(true, staleIds, staleIds.last())
+                tabState = AppTabState.ofFixedLayout(true, staleIds, staleIds.last())
             ),
             availableBookIds = setOf("new"),
+            kind = ReaderTabKind.FIXED_LAYOUT,
             bookId = "new"
         )
 
@@ -140,9 +144,10 @@ class AndroidLibraryProjectionAdapterTest {
     fun `closeBookTab selects the previous tab when the active tab closes`() {
         val result = closeBookTab(
             current = ReaderScreenState(
-                tabState = AppTabState(true, listOf("one", "two", "three"), "three")
+                tabState = AppTabState.ofFixedLayout(true, listOf("one", "two", "three"), "three")
             ),
             availableBookIds = setOf("one", "two", "three"),
+            kind = ReaderTabKind.FIXED_LAYOUT,
             bookId = "three"
         )
 
@@ -152,10 +157,58 @@ class AndroidLibraryProjectionAdapterTest {
     }
 
     @Test
+    fun `text tabs are tracked in their own set and leave the PDF set untouched`() {
+        val seeded = ReaderScreenState(
+            tabState = AppTabState.ofFixedLayout(isEnabled = true, openBookIds = listOf("pdf"), activeBookId = "pdf")
+        )
+
+        val withText = openBookTab(
+            current = seeded,
+            availableBookIds = setOf("pdf", "epub"),
+            kind = ReaderTabKind.TEXT,
+            bookId = "epub"
+        )
+
+        assertEquals(listOf("pdf"), withText.openTabIds)
+        assertEquals("pdf", withText.activeTabBookId)
+        assertEquals(listOf("epub"), withText.textOpenTabIds)
+        assertEquals("epub", withText.activeTextTabBookId)
+
+        val closedText = closeBookTab(
+            current = withText,
+            availableBookIds = setOf("pdf", "epub"),
+            kind = ReaderTabKind.TEXT,
+            bookId = "epub"
+        )
+
+        assertEquals(listOf("pdf"), closedText.openTabIds)
+        assertTrue(closedText.textOpenTabIds.isEmpty())
+        assertEquals(null, closedText.activeTextTabBookId)
+    }
+
+    @Test
+    fun `disabling tabs parks both sets on their active tab`() {
+        val result = setTabsEnabled(
+            current = ReaderScreenState(
+                tabState = AppTabState(
+                    isEnabled = true,
+                    fixedLayout = AppTabGroup(openBookIds = listOf("pdf", "pdf2"), activeBookId = "pdf2"),
+                    text = AppTabGroup(openBookIds = listOf("epub"), activeBookId = "epub"),
+                )
+            ),
+            enabled = false
+        )
+
+        assertEquals(false, result.isTabsEnabled)
+        assertEquals(listOf("pdf2"), result.openTabIds)
+        assertEquals(listOf("epub"), result.textOpenTabIds)
+    }
+
+    @Test
     fun `closeAllTabs clears Android tab ids through shared reducer`() {
         val result = closeAllTabs(
             current = ReaderScreenState(
-                tabState = AppTabState(true, listOf("one", "two"), "two")
+                tabState = AppTabState.ofFixedLayout(true, listOf("one", "two"), "two")
             )
         )
 

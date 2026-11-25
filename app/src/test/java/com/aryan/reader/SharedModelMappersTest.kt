@@ -110,7 +110,7 @@ class SharedModelMappersTest {
             selectedShelfIds = setOf("manual"),
             shelves = listOf(sharedShelf),
             openTabs = listOf(sharedBook),
-            tabs = AppTabState(openBookIds = listOf("book"), activeBookId = "book"),
+            tabs = AppTabState.ofFixedLayout(openBookIds = listOf("book"), activeBookId = "book"),
             booksAvailableForAdding = listOf(sharedBook),
             tags = listOf(tag.toSharedTag())
         )

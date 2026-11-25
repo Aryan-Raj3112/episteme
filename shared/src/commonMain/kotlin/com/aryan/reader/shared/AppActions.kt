@@ -17,7 +17,6 @@ sealed interface LibraryAction {
     data class ShelfSelectionToggled(val shelfId: String) : LibraryAction
     data object ShelfSelectionCleared : LibraryAction
     data class LibraryPageChanged(val page: Int) : LibraryAction
-    data class RecentLimitChanged(val limit: Int) : LibraryAction
 }
 
 sealed interface ReaderAction {
@@ -85,9 +84,21 @@ sealed interface AppAction {
     data class SyncEnabledChanged(val enabled: Boolean) : AppAction
     data class FolderSyncEnabledChanged(val enabled: Boolean) : AppAction
     data class TabsEnabledChanged(val enabled: Boolean) : AppAction
-    data class BookTabOpened(val bookId: String) : AppAction
-    data class BookTabClosed(val bookId: String) : AppAction
-    data object AllTabsClosed : AppAction
+    data class BookTabOpened(val kind: ReaderTabKind, val bookId: String) : AppAction
+    data class BookTabClosed(val kind: ReaderTabKind, val bookId: String) : AppAction
+    data class BookTabsClosed(val kind: ReaderTabKind) : AppAction
+
+    /**
+     * Replaces one reader's tab order with [orderedBookIds], the list a finished drag produced.
+     * The order is shared tab state, so both readers' own tab strips list the same sequence.
+     *
+     * Ids that are not open in [kind] are ignored and open tabs missing from the list keep their
+     * order at the end, so a stale list can never drop a tab.
+     */
+    data class BookTabsReordered(
+        val kind: ReaderTabKind,
+        val orderedBookIds: List<String>,
+    ) : AppAction
     data class HomePinToggled(val bookId: String) : AppAction
     data class LibraryPinToggled(val bookId: String) : AppAction
     data class ReaderDefaultSettingsChanged(val settings: ReaderSettings) : AppAction

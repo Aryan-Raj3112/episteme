@@ -29,7 +29,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
@@ -153,7 +153,7 @@ fun SharedAndroidFolderSyncScreen(
                         modifier = Modifier.weight(1f),
                         shape = MaterialTheme.shapes.small,
                     ) {
-                        if (isLoading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        if (isLoading) SharedLoadingIndicator(Modifier.size(18.dp))
                         else Icon(Icons.Default.Search, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
                         Text(if (isLoading) strings.scanning else strings.scanAll)
@@ -261,14 +261,17 @@ private fun SharedAndroidFolderCard(
     onOpenIncomingCloudFolder: ((String) -> Unit)?,
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    ElevatedCard(
+    Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        border = sharedCardBorder(),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.FolderSpecial, null, tint = MaterialTheme.colorScheme.primary)
+                    SharedTonalIconBadge(icon = Icons.Default.FolderSpecial)
                     Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(folder.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -415,14 +418,13 @@ private fun SharedAndroidFolderFiltersDialog(
                             onClick = { selectedTypes = if (selected) selectedTypes - type else selectedTypes + type },
                             label = { Text(type.name, style = MaterialTheme.typography.labelLarge) },
                             leadingIcon = if (selected) ({ Icon(Icons.Default.Check, null, Modifier.size(16.dp)) }) else null,
-                            shape = MaterialTheme.shapes.medium,
                         )
                     }
                 }
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(selectedTypes) }, enabled = selectedTypes.isNotEmpty(), shape = MaterialTheme.shapes.medium) { Text(strings.save) }
+            Button(onClick = { onConfirm(selectedTypes) }, enabled = selectedTypes.isNotEmpty()) { Text(strings.save) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text(strings.cancel) } },
     )

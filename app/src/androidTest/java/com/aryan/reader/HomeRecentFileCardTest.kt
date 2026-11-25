@@ -1,10 +1,18 @@
 package com.aryan.reader
 
 import android.content.Context
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toPixelMap
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -15,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.aryan.reader.data.RecentFileItem
+import com.aryan.reader.shared.ui.SharedAndroidHomeRecentCard
 import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
 import org.junit.Test
@@ -115,6 +124,44 @@ class HomeRecentFileCardTest {
         assertThat(availableHeight).isWithin(1f).of(unavailableHeight)
     }
 
+    /**
+     * Selection used to paint a 20% primary wash over the cover and drop a 48dp check on top of it,
+     * which hid the artwork of the very book you had just picked. The card now moves its own
+     * container and grows a corner check instead, so the cover pixels must be untouched.
+     *
+     * Both cards are rendered in one tree because a `ComposeTestRule` only accepts one `setContent`.
+     */
+    @Test
+    fun selectingACardLeavesTheArtworkUntouched() {
+        val coverColor = Color(0xFF3F51B5)
+        val plain = recentBook("card_plain", "Plain", "A", 30f)
+        val selected = recentBook("card_selected", "Chosen", "A", 30f)
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                Row(modifier = androidx.compose.ui.Modifier.width(420.dp)) {
+                    SharedCardForTest(plain, isSelected = false, coverColor = coverColor, modifier = androidx.compose.ui.Modifier.weight(1f))
+                    SharedCardForTest(selected, isSelected = true, coverColor = coverColor, modifier = androidx.compose.ui.Modifier.weight(1f))
+                }
+            }
+        }
+
+        val plainCover = coverCenterPixel("HomeRecentFileCardCover_card_plain")
+        val selectedCover = coverCenterPixel("HomeRecentFileCardCover_card_selected")
+
+        assertThat(selectedCover.red).isWithin(0.02f).of(plainCover.red)
+        assertThat(selectedCover.green).isWithin(0.02f).of(plainCover.green)
+        assertThat(selectedCover.blue).isWithin(0.02f).of(plainCover.blue)
+    }
+
+    private fun coverCenterPixel(tag: String): Color {
+        val pixels = composeTestRule
+            .onNodeWithTag(tag, useUnmergedTree = true)
+            .captureToImage()
+            .toPixelMap()
+        return pixels[pixels.width / 2, pixels.height / 2]
+    }
+
     private fun setRecentFileCard(
         item: RecentFileItem,
         isSelected: Boolean = false,
@@ -135,6 +182,40 @@ class HomeRecentFileCardTest {
                 )
             }
         }
+    }
+
+    @Composable
+    private fun SharedCardForTest(
+        item: RecentFileItem,
+        isSelected: Boolean,
+        coverColor: Color,
+        modifier: Modifier = Modifier,
+    ) {
+        SharedAndroidHomeRecentCard(
+            bookId = item.bookId,
+            title = item.cardTitle(),
+            author = item.cardAuthor(),
+            progressPercent = item.progressPercentValue(),
+            isAvailable = item.isAvailable,
+            isDownloading = false,
+            isSelected = isSelected,
+            hasCustomCover = false,
+            showStatusBadges = false,
+            unavailableDescription = text(R.string.not_available_locally),
+            selectedDescription = text(R.string.content_desc_selected),
+            onClick = {},
+            onLongClick = {},
+            cover = { coverModifier ->
+                Box(
+                    coverModifier
+                        .testTag("HomeRecentFileCardCover_${item.bookId}")
+                        .background(coverColor)
+                )
+            },
+            statusBadges = {},
+            fileTypeBadge = { },
+            modifier = modifier,
+        )
     }
 
     private fun recentBook(

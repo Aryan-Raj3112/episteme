@@ -29,7 +29,6 @@ data class LibraryFeatureState(
     val syncedFolders: List<SyncedFolder> = emptyList(),
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
-    val recentLimit: Int = 0,
     val tabs: AppTabState = AppTabState(),
     val viewingShelfId: String? = null,
     val isAddingBooksToShelf: Boolean = false,
@@ -42,6 +41,8 @@ data class LibraryFeatureState(
     val rawBooks: List<BookItem> = emptyList(),
     val shelves: List<Shelf> = emptyList(),
     val openTabs: List<BookItem> = emptyList(),
+    /** Text-reader tabs, projected alongside the fixed-layout set so neither is dropped. */
+    val textOpenTabs: List<BookItem> = emptyList(),
     val booksAvailableForAdding: List<BookItem> = emptyList(),
     val tags: List<Tag> = emptyList(),
 )
@@ -93,16 +94,16 @@ class SharedLibraryStateProjector(
         }
         val filtered = applyLibraryFilters(queried, current.filters)
         val sortedLibraryBooks = sortBooks(filtered, current.sortOrder)
-            .withPinnedFirst(current.pinnedLibraryBookIds)
+            .withPinnedFirst(current.pinnedLibraryBookIds) { it.id }
         val visibleRecentBooks = sortBooks(
             allLibraryBooks.filter { it.isRecent },
             SortOrder.RECENT
         )
-            .withPinnedFirst(current.pinnedHomeBookIds)
-            .take(if (current.recentLimit > 0) current.recentLimit else Int.MAX_VALUE)
+            .withPinnedFirst(current.pinnedHomeBookIds) { it.id }
         val booksById = allLibraryBooks.associateBy { it.id }
         val tabState = current.tabs.reconcileAvailableBooks(booksById.keys)
-        val openTabs = tabState.openBookIds.mapNotNull(booksById::get)
+        val openTabs = tabState.fixedLayout.openBookIds.mapNotNull(booksById::get)
+        val textOpenTabs = tabState.text.openBookIds.mapNotNull(booksById::get)
         val shelfProjection = buildShelves(
             allLibraryBooks = allLibraryBooks,
             shelfRecords = input.shelfRecords,
@@ -132,14 +133,28 @@ class SharedLibraryStateProjector(
             viewingShelfId = viewingShelfId,
             isAddingBooksToShelf = current.isAddingBooksToShelf && viewingShelfId != null,
             selectedShelfIds = selectedShelfIds,
-            selectedBookIds = current.selectedBookIds.filterTo(mutableSetOf()) { selectedId ->
-                allLibraryBooks.any { it.id == selectedId }
+            // Membership test against the id index that is already built above. This used to be
+            // `allLibraryBooks.any { it.id == selectedId }`, i.e. O(selected x books): a "select
+            // all" on a large library cost tens of millions of string comparisons on every
+            // projection, and the result set's backing array was the allocation that OOMed under
+            // fragmentation (docs/crashlytics-triage.md#133). Pre-sized so a large selection
+            // allocates its table once instead of through the whole resize chain.
+            selectedBookIds = if (current.selectedBookIds.isEmpty()) {
+                emptySet()
+            } else {
+                current.selectedBookIds.filterTo(LinkedHashSet(current.selectedBookIds.size)) {
+                    it in booksById
+                }
             },
             shelves = shelfProjection.shelves,
             openTabs = openTabs,
+            textOpenTabs = textOpenTabs,
             tabs = tabState,
             booksAvailableForAdding = booksAvailableForAdding,
-            tags = input.tags,
+            // Tag order is user-visible in the Tags section, filter sheet and pickers.
+            // Natural (case-insensitive) order is the Android benchmark now that both
+            // platforms share one policy.
+            tags = LibraryTagPolicy.sortTags(input.tags),
             syncedFolders = syncedFolders
         )
     }
@@ -492,11 +507,18 @@ fun SharedReaderScreenState.withImportedFiles(
     )
 }
 
-private fun List<BookItem>.withPinnedFirst(pinnedBookIds: Set<String>): List<BookItem> {
+/**
+ * Pinned entries lead the list; both groups keep the caller's existing order.
+ *
+ * Shared by every mobile surface that re-derives a list from raw books
+ * (Android's unified library, iOS's library projection, and the shared
+ * unified model) so a pin looks the same wherever it is toggled.
+ */
+fun <T> List<T>.withPinnedFirst(pinnedBookIds: Set<String>, idOf: (T) -> String): List<T> {
     if (pinnedBookIds.isEmpty()) return this
     return withIndex()
         .sortedWith(
-            compareByDescending<IndexedValue<BookItem>> { it.value.id in pinnedBookIds }
+            compareByDescending<IndexedValue<T>> { idOf(it.value) in pinnedBookIds }
                 .thenBy { it.index }
         )
         .map { it.value }

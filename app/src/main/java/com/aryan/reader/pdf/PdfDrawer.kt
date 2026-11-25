@@ -74,6 +74,7 @@ import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.isSpecified
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalContext
@@ -103,6 +104,8 @@ import com.aryan.reader.shared.pdf.pdfThumbnailNeedsBakedPreserve
 import com.aryan.reader.shared.pdf.PdfDrawerCapabilities
 import com.aryan.reader.shared.pdf.PdfDrawerSection
 import com.aryan.reader.shared.pdf.pdfDrawerSections
+import com.aryan.reader.shared.ui.SharedDrawerTabRow
+import com.aryan.reader.shared.ui.SharedDrawerTabsHeader
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -303,39 +306,12 @@ private fun PdfTabsDrawerPage(
     usePdfFileNameAsDisplayName: Boolean
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, top = 10.dp, end = 8.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = stringResource(R.string.active_tabs),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.weight(1f)
-            )
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-            ) {
-                Text(
-                    text = openTabs.size.toString(),
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                )
-            }
-            IconButton(
-                onClick = onNewTabClick,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = stringResource(R.string.content_desc_new_tab)
-                )
-            }
-        }
+        SharedDrawerTabsHeader(
+            title = stringResource(R.string.active_tabs),
+            openTabCount = openTabs.size,
+            newTabContentDescription = stringResource(R.string.content_desc_new_tab),
+            onNewTab = onNewTabClick,
+        )
 
         HorizontalDivider()
 
@@ -405,28 +381,6 @@ private fun PdfDrawerTabItem(
     onTabClosed: (String) -> Unit,
     usePdfFileNameAsDisplayName: Boolean
 ) {
-    val shape = RoundedCornerShape(8.dp)
-    val containerColor by animateColorAsState(
-        targetValue = if (isSelected) {
-            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
-        } else {
-            MaterialTheme.colorScheme.surface
-        },
-        label = "PdfDrawerTabContainer"
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (isSelected) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-        } else {
-            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-        },
-        label = "PdfDrawerTabBorder"
-    )
-    val contentColor = if (isSelected) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
     val progressPercent = remember(isSelected, currentPage, totalPages, tab.progressPercentage) {
         when {
             isSelected && totalPages > 0 -> (((currentPage + 1).toFloat() / totalPages.toFloat()) * 100f)
@@ -451,88 +405,17 @@ private fun PdfDrawerTabItem(
             .joinToString(" - ")
     }
 
-    Column(
-        modifier = Modifier
-            .padding(horizontal = 12.dp, vertical = 4.dp)
-            .clip(shape)
-            .background(containerColor)
-            .border(1.dp, borderColor, shape)
-            .clickable { onTabSelected(tab.bookId) }
-            .testTag("PdfDrawerTab_${tab.bookId}")
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 68.dp)
-                .padding(start = 12.dp, end = 6.dp, top = 10.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        if (isSelected) {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-                        }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Description,
-                    contentDescription = null,
-                    tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = tab.cardTitle(usePdfFileNameAsDisplayName),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                    color = contentColor,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                if (supportingText.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = supportingText,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = contentColor.copy(alpha = 0.72f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-
-            IconButton(
-                onClick = { onTabClosed(tab.bookId) },
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = stringResource(R.string.close_tab),
-                    tint = contentColor.copy(alpha = 0.8f)
-                )
-            }
-        }
-
-        progressPercent
-            ?.takeIf { it > 0 }
-            ?.let { percent ->
-                LinearProgressIndicator(
-                    progress = { percent / 100f },
-                    modifier = Modifier.fillMaxWidth().height(3.dp),
-                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary,
-                    trackColor = Color.Transparent
-                )
-            }
-    }
+    SharedDrawerTabRow(
+        title = tab.cardTitle(usePdfFileNameAsDisplayName),
+        supportingText = supportingText,
+        isSelected = isSelected,
+        progress = progressPercent?.takeIf { it > 0 }?.let { (it / 100f).coerceIn(0f, 1f) },
+        onSelect = { onTabSelected(tab.bookId) },
+        onClose = { onTabClosed(tab.bookId) },
+        closeContentDescription = stringResource(R.string.close_tab),
+        testTag = "PdfDrawerTab_${tab.bookId}",
+        closeTestTag = "PdfDrawerTabClose_${tab.bookId}",
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -905,6 +788,8 @@ internal fun PdfNavigationDrawerContent(
                             empty = stringResource(R.string.no_highlights_yet),
                             allFilter = stringResource(R.string.read_status_all),
                             withNotesFilter = stringResource(R.string.filter_with_notes),
+                            noMatchingFilters = stringResource(R.string.no_annotations_match_filters),
+                            clearFilters = stringResource(R.string.action_clear_filters),
                             defaultHighlight = stringResource(R.string.msg_highlighted_section_default),
                             optionsDescription = stringResource(R.string.content_desc_options),
                             addNoteAction = stringResource(R.string.menu_add_note),
@@ -922,6 +807,7 @@ internal fun PdfNavigationDrawerContent(
                             context.resources.getString(R.string.pdf_page_short, highlight.pageIndex + 1)
                         },
                         color = { highlight -> highlight.resolvedColor(customHighlightColors) },
+                        colorArgb = { highlight -> highlight.resolvedColor(customHighlightColors).toArgb() },
                         onNavigateToHighlight = { highlight ->
                             onCloseDrawer()
                             onPageSelected(highlight.pageIndex)

@@ -3,11 +3,13 @@ package com.aryan.reader.shared.ui
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 
 /** The min margin above and below the menu, relative to the screen. */
 internal val SharedDropdownMenuVerticalMargin = SharedDropdownMenuMetrics.VerticalMargin
@@ -83,8 +85,11 @@ internal fun sharedDropdownMenuPlacement(
     contentOffset: DpOffset,
     density: Density,
     layoutDirection: LayoutDirection,
+    /** Keeps a window-edge candidate inset instead of flush with the screen edge. */
+    horizontalMargin: Dp = 0.dp,
 ): SharedDropdownMenuPlacement {
     val verticalMargin = with(density) { SharedDropdownMenuVerticalMargin.roundToPx() }
+    val horizontalMarginPx = with(density) { horizontalMargin.roundToPx() }
     val contentOffsetX = with(density) {
         contentOffset.x.roundToPx() * if (layoutDirection == LayoutDirection.Ltr) 1 else -1
     }
@@ -92,8 +97,8 @@ internal fun sharedDropdownMenuPlacement(
 
     val leftToAnchorLeft = anchorBounds.left + contentOffsetX
     val rightToAnchorRight = anchorBounds.right - menuSize.width + contentOffsetX
-    val rightToWindowRight = windowSize.width - menuSize.width
-    val leftToWindowLeft = 0
+    val rightToWindowRight = windowSize.width - menuSize.width - horizontalMarginPx
+    val leftToWindowLeft = horizontalMarginPx
     val x = if (layoutDirection == LayoutDirection.Ltr) {
         sequenceOf(
             leftToAnchorLeft,
@@ -109,7 +114,9 @@ internal fun sharedDropdownMenuPlacement(
             if (anchorBounds.right <= windowSize.width) leftToWindowLeft else rightToWindowRight,
         )
     }
-        .firstOrNull { it >= 0 && it + menuSize.width <= windowSize.width }
+        .firstOrNull {
+            it >= horizontalMarginPx && it + menuSize.width <= windowSize.width - horizontalMarginPx
+        }
         ?: rightToAnchorRight
 
     val topToAnchorBottom = maxOf(anchorBounds.bottom + contentOffsetY, verticalMargin)

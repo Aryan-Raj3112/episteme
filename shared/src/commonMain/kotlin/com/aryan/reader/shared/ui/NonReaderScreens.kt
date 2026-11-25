@@ -40,7 +40,6 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.Folder
-import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
@@ -155,7 +154,6 @@ fun SharedHomeScreen(
     onOpenTab: (BookItem) -> Unit = onOpenBook,
     onCloseTab: (BookItem) -> Unit = {},
     onCloseAllTabs: () -> Unit = {},
-    onRecentLimitChange: (Int) -> Unit = {},
     onTogglePinned: (BookItem) -> Unit = {},
     onOpenSettings: () -> Unit = {},
     platform: ReaderPlatform = ReaderPlatform.ANDROID,
@@ -195,10 +193,6 @@ fun SharedHomeScreen(
                     Spacer(Modifier.width(8.dp))
                     Text(readerString("settings", "Settings"))
                 }
-                RecentLimitMenu(
-                    currentLimit = state.recentFilesLimit,
-                    onRecentLimitChange = onRecentLimitChange
-                )
                 OutlinedButton(onClick = onImportFolder) {
                     Icon(Icons.Default.CreateNewFolder, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
@@ -241,7 +235,7 @@ fun SharedHomeScreen(
                 )
             } else {
                 SharedEmptyState(
-                    icon = { Icon(Icons.AutoMirrored.Filled.LibraryBooks, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                    icon = Icons.AutoMirrored.Filled.LibraryBooks,
                     title = readerString("no_recent_files", "No recent files"),
                     body = "Open books from the library and they will appear here.",
                     actionLabel = "Import files",
@@ -860,38 +854,6 @@ private fun ActiveTabStrip(
 }
 
 @Composable
-private fun RecentLimitMenu(
-    currentLimit: Int,
-    onRecentLimitChange: (Int) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val normalizedLimit = currentLimit.coerceAtLeast(0)
-    Box {
-        OutlinedButton(onClick = { expanded = true }) {
-            Icon(Icons.Default.FormatListNumbered, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(if (normalizedLimit == 0) "No limit" else "$normalizedLimit")
-        }
-        SharedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            listOf(0, 10, 20, 50, 100).forEach { limit ->
-                DropdownMenuItem(
-                    text = { Text(if (limit == 0) "No limit" else "$limit files") },
-                    onClick = {
-                        expanded = false
-                        onRecentLimitChange(limit)
-                    },
-                    trailingIcon = if (normalizedLimit == limit) {
-                        { Icon(Icons.Default.Check, contentDescription = readerString("content_desc_selected", "Selected")) }
-                    } else {
-                        null
-                    }
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun LibraryOrganizationSidebar(
     organization: NonReaderLibraryOrganizationModel,
     selectedTab: NonReaderLibraryTab,
@@ -1355,7 +1317,7 @@ private fun LibraryContent(
                         )
                     } else {
                         SharedEmptyState(
-                            icon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(56.dp)) },
+                            icon = Icons.Default.Search,
                             title = if (state.rawLibraryBooks.isEmpty()) "Your library is empty" else "No books match",
                             body = if (state.rawLibraryBooks.isEmpty()) "Import files into app storage or add a folder from the toolbar." else "Adjust search, sort, or filters to see more books.",
                             actionLabel = if (state.rawLibraryBooks.isEmpty()) "Import files" else "Clear filters",

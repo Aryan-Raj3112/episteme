@@ -70,7 +70,7 @@ class SharedLibraryProjectorTest {
     }
 
     @Test
-    fun `LibraryProjector home limits sorted recent books and keeps selected books`() {
+    fun `LibraryProjector home sorts recent books and keeps selected books`() {
         val model = LibraryProjector().home(
             LibraryState(
                 books = listOf(
@@ -79,12 +79,11 @@ class SharedLibraryProjectorTest {
                     book("archived", timestamp = 2L, isRecent = false)
                 ),
                 selectedBookIds = setOf("old", "archived"),
-                recentLimit = 1,
                 sortOrder = SortOrder.TITLE_ASC
             )
         )
 
-        assertEquals(listOf("new"), model.recentBooks.ids())
+        assertEquals(listOf("new", "old"), model.recentBooks.ids())
         assertEquals(listOf("old", "archived"), model.selectedBooks.ids())
         assertFalse(model.isEmpty)
     }
@@ -126,7 +125,7 @@ class SharedLibraryProjectorTest {
             SharedLibraryProjectionInput(
                 state = LibraryFeatureState(
                     selectedBookIds = setOf("existing", "missing"),
-                    tabs = AppTabState(openBookIds = listOf("missing", "existing"), activeBookId = "missing"),
+                    tabs = AppTabState.ofFixedLayout(openBookIds = listOf("missing", "existing"), activeBookId = "missing"),
                     viewingShelfId = "missing_shelf",
                     isAddingBooksToShelf = true,
                     selectedShelfIds = setOf("missing_shelf")
@@ -194,8 +193,8 @@ class SharedLibraryProjectorTest {
     @Test
     fun `shared app actions manage tabs and pins`() {
         val opened = SharedReaderScreenState()
-            .reduce(AppAction.BookTabOpened("one"))
-            .reduce(AppAction.BookTabOpened("two"))
+            .reduce(AppAction.BookTabOpened(ReaderTabKind.FIXED_LAYOUT, "one"))
+            .reduce(AppAction.BookTabOpened(ReaderTabKind.FIXED_LAYOUT, "two"))
             .reduce(AppAction.HomePinToggled("one"))
             .reduce(AppAction.LibraryPinToggled("two"))
 
@@ -205,27 +204,31 @@ class SharedLibraryProjectorTest {
         assertEquals(setOf("one"), opened.pinnedHomeBookIds)
         assertEquals(setOf("two"), opened.pinnedLibraryBookIds)
 
-        val reactivated = opened.reduce(AppAction.BookTabOpened("one"))
+        val reactivated = opened.reduce(AppAction.BookTabOpened(ReaderTabKind.FIXED_LAYOUT, "one"))
 
         assertEquals(listOf("one", "two"), reactivated.openTabIds)
         assertEquals("one", reactivated.activeTabBookId)
 
-        val closedActive = opened.reduce(AppAction.BookTabClosed("two"))
+        val closedActive = opened.reduce(AppAction.BookTabClosed(ReaderTabKind.FIXED_LAYOUT, "two"))
 
         assertEquals(listOf("one"), closedActive.openTabIds)
         assertEquals("one", closedActive.activeTabBookId)
-        assertTrue(closedActive.reduce(AppAction.TabsEnabledChanged(false)).openTabIds.isEmpty())
+        // Disabling parks the set on its active tab instead of forgetting it.
+        assertEquals(
+            listOf("one"),
+            closedActive.reduce(AppAction.TabsEnabledChanged(false)).openTabIds,
+        )
     }
 
     @Test
     fun `projected tabs keep only twenty distinct available books`() {
-        val pdfs = (1..(MAX_OPEN_PDF_TABS + 2)).map { index ->
+        val pdfs = (1..(MAX_OPEN_TABS_PER_KIND + 2)).map { index ->
             book("pdf-$index").copy(type = FileType.PDF)
         }
         val result = SharedLibraryStateProjector().project(
             SharedLibraryProjectionInput(
                 state = LibraryFeatureState(
-                    tabs = AppTabState(
+                    tabs = AppTabState.ofFixedLayout(
                         openBookIds = pdfs.map { it.id } + pdfs.first().id,
                         activeBookId = pdfs.last().id,
                     ),
@@ -237,7 +240,7 @@ class SharedLibraryProjectorTest {
             )
         )
 
-        assertEquals(pdfs.take(MAX_OPEN_PDF_TABS).map { it.id }, result.tabs.openBookIds)
+        assertEquals(pdfs.take(MAX_OPEN_TABS_PER_KIND).map { it.id }, result.tabs.openBookIds)
         assertNull(result.tabs.activeBookId)
         assertEquals(result.tabs.openBookIds, result.openTabs.map { it.id })
     }

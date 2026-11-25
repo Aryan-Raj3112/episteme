@@ -115,29 +115,65 @@ data class PaginatedSelection(
     val textPerBlock: Map<String, String> = emptyMap()
 )
 
+/** The CFI and locator a highlight created from a [PaginatedSelection] is stored with. */
+internal data class HighlightPlacement(
+    val cfi: String,
+    val locator: SharedReaderLocator
+)
+
+/**
+ * The CFI and locator this selection should be stored with.
+ *
+ * Both are positions in the chapter, and only [chapterTextIndex] can produce them, because a page
+ * reports offsets inside what it is holding. For a paragraph the paginator split across pages that is
+ * the page's slice of the paragraph; the block's own coordinates start earlier by however much of the
+ * paragraph came before it on previous pages. Writing the page's offsets as though they were the
+ * block's put every highlight made on a continued paragraph its slice's width away from the words, in
+ * whichever surface resolved that CFI next.
+ *
+ * The CFI is block-local and the locator's range is chapter-absolute, which is what each of them means:
+ * a CFI names `/<element path>:<offset in that element>`, exactly what the WebView resolves against the
+ * DOM, and the locator's `startOffset`/`endOffset` are laid out across the whole chapter for the
+ * paginator and the vertical flow. When the chapter has not been indexed yet there is no way to convert,
+ * so the page's own offsets are stored unchanged — they are still a usable position, and the resolver can
+ * also place the highlight from its words.
+ */
+internal fun PaginatedSelection.toHighlightPlacement(
+    chapterIndex: Int?,
+    chapterTextIndex: EpubChapterTextIndex?
+): HighlightPlacement {
+    val anchor = chapterTextIndex?.anchorForSelection(
+        startBlockIndex = startBlockIndex,
+        startBlockCfi = startBaseCfi,
+        startFragmentSourceStart = startBlockCharOffset,
+        startLocal = startOffset,
+        endBlockIndex = endBlockIndex,
+        endBlockCfi = endBaseCfi,
+        endFragmentSourceStart = endBlockCharOffset,
+        endLocal = endOffset
+    )
+    val cfi = anchor?.let { chapterTextIndex.cfiFor(it) }
+        ?: "${startBaseCfi}:${startOffset}|${endBaseCfi}:${endOffset}"
+    return HighlightPlacement(cfi, toSharedHighlightLocator(chapterIndex, cfi, anchor))
+}
+
 /**
  * The locator to store for a highlight created from this selection.
  *
- * It records what the selection genuinely knows — which chapter, which block, which words, and the DOM
- * position it came from — and nothing else.
+ * [anchor] is the selection already converted into chapter coordinates by
+ * [EpubChapterTextIndex.anchorForSelection]; its absolute range and block index are stored as they are.
+ * Without it the locator records only what the page itself knows — the chapter, the block, the words,
+ * and the DOM position — and no chapter range, because a page offset is not a chapter offset.
  *
- * In particular it does not compute `startBlockCharOffset + startOffset` as a chapter offset. That sum
- * was never a chapter position: [PaginatedSelection.startBlockCharOffset] carries
- * `startCharOffsetInSource`, which the parser computes per HTML element, so it restarts at every
- * paragraph and describes nothing outside its own element. Adding a character offset within the block to
- * it produces a number that looks like a chapter offset and is not one, and it was stored as though it
- * were. The result was a highlight whose persisted range pointed at unrelated text, which is what let a
- * 118-character selection be painted across most of a page.
- *
- * Leaving the chapter range unset is not a gap to be filled in later by guessing. Placement resolves a
- * highlight from its own words through [EpubChapterTextIndex.anchorFor], which works whether or not a
- * range was stored, and the reader-wide reconciliation writes a correct range in as soon as the
- * chapter's blocks can be read. So the stored locator becomes a record of a position rather than the
- * means of finding one, and a highlight is placeable from the moment it is created.
+ * The sum `startBlockCharOffset + startOffset` is not a chapter offset either. [PaginatedSelection.startBlockCharOffset]
+ * carries `startCharOffsetInSource`, which the parser computes per HTML element, so it restarts at every
+ * paragraph and describes nothing outside its own element. Storing that sum as a chapter range is what
+ * let a 118-character selection be painted across most of a page.
  */
 internal fun PaginatedSelection.toSharedHighlightLocator(
     chapterIndex: Int?,
-    cfi: String
+    cfi: String,
+    anchor: HighlightAnchor? = null
 ): SharedReaderLocator {
     // Note: pageIndex is a volatile pagination hint (shifts with font/margin settings).
     // Render scoping intentionally ignores it and uses the structural scope below, so stored page
@@ -150,10 +186,10 @@ internal fun PaginatedSelection.toSharedHighlightLocator(
     return SharedReaderLocator(
         chapterIndex = chapterIndex,
         pageIndex = startPageIndex,
-        startOffset = null,
-        endOffset = null,
-        blockIndex = startBlockIndex.takeIf { it >= 0 },
-        charOffset = null,
+        startOffset = anchor?.absoluteStart,
+        endOffset = anchor?.absoluteEnd,
+        blockIndex = anchor?.segments?.firstOrNull()?.blockIndex ?: startBlockIndex.takeIf { it >= 0 },
+        charOffset = anchor?.absoluteStart,
         textQuote = text,
         cfi = cfi
     )
@@ -795,7 +831,27 @@ class ReactiveBlockMap(
     var tick by mutableIntStateOf(0)
 
     override fun put(key: String, value: Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>): Triple<TextLayoutResult, LayoutCoordinates, TextContentBlock>? {
+        // `onGloballyPositioned` fires on every layout pass, with the same `TextLayoutResult` /
+        // `LayoutCoordinates` / `TextContentBlock` instances when nothing actually changed, and the
+        // block is re-registered on every pass. Writing the map in that case is pure cost: the
+        // snapshot write invalidates every reader, and the map's put path compares the incoming
+        // value with the stored one, which reaches the deep `equals` of `TextLayoutResult` /
+        // `ParagraphBlock` (AnnotatedString spans etc.) - measured as an ANR inside
+        // SnapshotStateMap.put (docs/crashlytics-triage.md#131).
+        //
+        // Skipping the write is safe: `tick` still advances, so layer-phase consumers re-read the
+        // live (mutable) `LayoutCoordinates` exactly as before, and the stored triple still holds
+        // those same instances. Only a genuinely different layout/coordinates/block is written.
         tick++
+        val previous = delegate[key]
+        if (
+            previous != null &&
+            previous.first === value.first &&
+            previous.second === value.second &&
+            previous.third === value.third
+        ) {
+            return previous
+        }
         return delegate.put(key, value)
     }
 

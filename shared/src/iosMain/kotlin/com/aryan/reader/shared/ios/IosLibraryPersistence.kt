@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ios
 
+import com.aryan.reader.shared.LibraryTagPolicy
 import com.aryan.reader.shared.SharedLibrarySnapshot
 import com.aryan.reader.shared.SharedLibrarySnapshotJson
 import com.aryan.reader.shared.SharedReaderScreenState
@@ -14,6 +15,7 @@ import platform.Foundation.NSUserDefaults
 
 private const val IosReaderPreferencesDefaultsKey = "reader_ios_reader_preferences_v1"
 private const val IosLibrarySnapshotDefaultsKey = "reader_ios_library_snapshot_v1"
+private const val IosDefaultTagsSeededDefaultsKey = "reader_ios_default_tags_seeded_v1"
 
 /** Debounce window for snapshot persistence; rapid state churn coalesces. */
 private const val IosLibrarySnapshotPersistDelayMs = 500L
@@ -76,6 +78,37 @@ internal fun loadIosLibrarySnapshot(): SharedLibrarySnapshot {
     return (recovered ?: SharedLibrarySnapshot(pdfReaderDefaultSettings = DefaultIosPdfReaderSettings))
         .withResolvedIosBookPaths()
         .withResolvedIosAudiobookPaths()
+}
+
+/**
+ * Loads the snapshot and seeds Android's five default tags exactly once.
+ *
+ * `MainViewModel.seedTagsIfEmpty` seeds only an empty tag table and remembers that
+ * it ran, so deleting every tag later does not bring the defaults back. Mirror both
+ * halves: the marker covers that case (an empty list is otherwise indistinguishable
+ * from a fresh install), and an existing snapshot that already has tags also gets
+ * the marker.
+ */
+internal fun loadIosLibrarySnapshotWithDefaultTags(): SharedLibrarySnapshot {
+    val snapshot = loadIosLibrarySnapshot()
+    val defaults = NSUserDefaults.standardUserDefaults
+    if (snapshot.tags.isNotEmpty()) {
+        defaults.setBool(true, forKey = IosDefaultTagsSeededDefaultsKey)
+        return snapshot
+    }
+    if (defaults.boolForKey(IosDefaultTagsSeededDefaultsKey)) return snapshot
+    val seeded = snapshot.copy(tags = LibraryTagPolicy.seedDefaultTagsIfEmpty(snapshot.tags))
+    defaults.setBool(true, forKey = IosDefaultTagsSeededDefaultsKey)
+    defaults.setObject(
+        SharedLibrarySnapshotJson.encode(
+            seeded
+                .withStableIosBookPaths()
+                .withStableIosAudiobookPaths()
+        ),
+        forKey = IosLibrarySnapshotDefaultsKey,
+    )
+    IosLibrarySnapshotFileStore.write(encodeStableIosSnapshot(seeded))
+    return seeded
 }
 
 internal fun encodeStableIosSnapshot(snapshot: SharedLibrarySnapshot): String {

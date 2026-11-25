@@ -9,6 +9,7 @@ import com.aryan.reader.shared.booksAvailableForShelfAddition
 import com.aryan.reader.shared.BookItem as SharedBookItem
 import com.aryan.reader.shared.LibraryFeatureState
 import com.aryan.reader.shared.Shelf as SharedShelf
+import com.aryan.reader.shared.compareByNatural
 import java.util.LinkedHashMap
 
 internal fun ReaderScreenState.toSharedLibraryFeatureState(
@@ -26,7 +27,6 @@ internal fun ReaderScreenState.toSharedLibraryFeatureState(
         syncedFolders = syncedFolders,
         pinnedHomeBookIds = pinnedHomeBookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds,
-        recentLimit = recentFilesLimit,
         tabs = tabState,
         viewingShelfId = viewingShelfId,
         isAddingBooksToShelf = isAddingBooksToShelf,
@@ -38,6 +38,7 @@ internal fun ReaderScreenState.toSharedLibraryFeatureState(
         libraryBooks = allRecentFiles.map { it.toFeatureBook() },
         rawBooks = rawBooks.map { it.toFeatureBook() },
         openTabs = openTabs.map { it.toFeatureBook() },
+        textOpenTabs = textOpenTabs.map { it.toFeatureBook() },
     )
 }
 
@@ -46,8 +47,16 @@ fun List<RecentFileItem>.withResolvedTags(
     tagRefs: List<BookTagCrossRef>,
 ): List<RecentFileItem> {
     val tagsById = dbTags.associateBy { it.id }
+    // Cross-ref rows have no ordering guarantee. Book chips follow the same natural
+    // order as the Tags section on both platforms (Android benchmark: shared policy).
+    val tagOrderById = dbTags
+        .sortedWith(compareByNatural { it.name })
+        .mapIndexed { index, tag -> tag.id to index }
+        .toMap()
     val bookTagsMap = tagRefs.groupBy { it.bookId }.mapValues { entry ->
-        entry.value.mapNotNull { tagsById[it.tagId] }
+        entry.value
+            .mapNotNull { tagsById[it.tagId] }
+            .sortedBy { tagOrderById[it.id] ?: Int.MAX_VALUE }
     }
     return map { item ->
         val resolvedTags = bookTagsMap[item.bookId].orEmpty()
@@ -78,7 +87,6 @@ internal fun LibraryFeatureState.applyToAndroidLibraryState(
             filters = filters,
             selectedBookIds = selectedBookIds,
             selectedShelfIds = selectedShelfIds,
-            recentLimit = recentLimit,
         ),
         shelfState = base.shelfState.copy(
             viewingShelfId = viewingShelfId,
@@ -90,6 +98,7 @@ internal fun LibraryFeatureState.applyToAndroidLibraryState(
         contextualActionItems = selectedBookIds.mapNotNullTo(mutableSetOf(), ::bookById),
         shelves = shelves.map { shelf -> shelf.toAndroidShelf { it.toAndroidBook() } },
         openTabs = openTabs.map { it.toAndroidBook() },
+        textOpenTabs = textOpenTabs.map { it.toAndroidBook() },
         tabState = tabs,
         pinState = AppPinState(pinnedHomeBookIds, pinnedLibraryBookIds),
         booksAvailableForAdding = booksAvailableForAdding.map { it.toAndroidBook() },

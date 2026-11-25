@@ -65,6 +65,8 @@ import com.aryan.reader.paginatedreader.SemanticTextBlock
 import com.aryan.reader.paginatedreader.isVerticalWriting
 import com.aryan.reader.paginatedreader.lineHeightWithRubyReserve
 import com.aryan.reader.paginatedreader.resolveReaderBlockFontFamily
+import com.aryan.reader.paginatedreader.flexMainAxisGap
+import com.aryan.reader.paginatedreader.isVisuallyHidden
 import com.aryan.reader.paginatedreader.resolveReaderBlockFontWeight
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.reader.ReaderPage
@@ -323,7 +325,12 @@ internal fun SemanticTextBlock.toAnnotatedString(
                         }
                     }
                 addStyle(
-                    spanStyle,
+                    // Inline `visibility:hidden` keeps its space but paints nothing.
+                    if (span.style.blockStyle.isVisuallyHidden()) {
+                        spanStyle.copy(color = Color.Transparent)
+                    } else {
+                        spanStyle
+                    },
                     start,
                     end
                 )
@@ -404,9 +411,7 @@ internal fun CssStyle.sharedNativeHyphens(): Hyphens {
     return if (hyphens == "auto") Hyphens.Auto else Hyphens.None
 }
 
-internal fun BlockStyle.isSharedNativeVisibilityHidden(): Boolean {
-    return visibility == "hidden"
-}
+internal fun BlockStyle.isSharedNativeVisibilityHidden(): Boolean = isVisuallyHidden()
 
 internal fun Modifier.sharedNativeVisibility(blockStyle: BlockStyle): Modifier {
     return if (blockStyle.isSharedNativeVisibilityHidden()) {
@@ -746,10 +751,10 @@ internal fun Color.sharedNativeSafeLuminance(): Float {
 }
 
 internal fun BlockStyle.sharedNativeFlexHorizontalArrangement(): Arrangement.Horizontal =
-    nativeFlexRowHorizontalArrangement(justifyContent)
+    nativeFlexRowHorizontalArrangement(justifyContent, flexMainAxisGap)
 
 internal fun BlockStyle.sharedNativeFlexVerticalArrangement(): Arrangement.Vertical =
-    nativeFlexColumnVerticalArrangement(justifyContent)
+    nativeFlexColumnVerticalArrangement(justifyContent, flexMainAxisGap)
 
 internal fun BlockStyle.sharedNativeFlexVerticalAlignment(): Alignment.Vertical =
     nativeFlexRowVerticalAlignment(alignItems)

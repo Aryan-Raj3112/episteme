@@ -67,8 +67,8 @@ class AndroidSettingsHubModelsTest {
         assertTrue(SharedSettingsAction.SUPPORT in actions)
         assertEquals(SharedFeaturePolicy.OssOnline, input.featurePolicy)
         assertEquals(
-            "TTS & AI",
-            model.rootCategories.single { it.destination == SharedSettingsDestination.TTS_AI }.title
+            "Speech & AI",
+            model.rootCategories.single { it.destination == SharedSettingsDestination.TTS_AI }.title.fallback
         )
     }
 
@@ -89,8 +89,8 @@ class AndroidSettingsHubModelsTest {
         assertTrue(SharedSettingsAction.CLOUD_SYNC in actions)
         assertFalse(SharedSettingsAction.SUPPORT in actions)
         assertEquals(
-            "TTS & AI",
-            model.rootCategories.single { it.destination == SharedSettingsDestination.TTS_AI }.title
+            "Speech & AI",
+            model.rootCategories.single { it.destination == SharedSettingsDestination.TTS_AI }.title.fallback
         )
     }
 
@@ -141,7 +141,7 @@ class AndroidSettingsHubModelsTest {
     }
 
     @Test
-    fun `android extra settings expose home overflow actions without settings duplicate`() {
+    fun `android home overflow actions keep their rearranged homes`() {
         val model = sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = ReaderScreenState(),
@@ -150,22 +150,27 @@ class AndroidSettingsHubModelsTest {
                 isDebugBuild = true
             )
         )
-        val extraActions = model.page(SharedSettingsDestination.EXTRA).items.map { it.action }
+        val libraryActions = model.page(SharedSettingsDestination.APP_LIBRARY).items.map { it.action }
+        val storageActions = model.page(SharedSettingsDestination.STORAGE_PRIVACY).items.map { it.action }
+        val helpActions = model.page(SharedSettingsDestination.HELP_ABOUT).items.map { it.action }
 
-        assertTrue(SharedSettingsAction.TABS_TOGGLE in extraActions)
-        assertTrue(SharedSettingsAction.LANGUAGE in extraActions)
-        assertTrue(SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR in extraActions)
-        assertTrue(SharedSettingsAction.STRICT_FILE_FILTER in extraActions)
-        assertTrue(SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME in extraActions)
-        assertTrue(SharedSettingsAction.CLEAR_BOOK_CACHE in extraActions)
-        assertTrue(SharedSettingsAction.CLEAR_REFLOW_CACHE in extraActions)
-        assertTrue(SharedSettingsAction.TEST_PANEL_DETECTION in extraActions)
-        assertTrue(SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION in extraActions)
-        assertTrue(SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA in extraActions)
+        // App behaviour and file handling live with the library.
+        assertTrue(SharedSettingsAction.TABS_TOGGLE in libraryActions)
+        assertTrue(SharedSettingsAction.LANGUAGE in libraryActions)
+        assertTrue(SharedSettingsAction.EXTERNAL_FILE_BEHAVIOR in libraryActions)
+        assertTrue(SharedSettingsAction.STRICT_FILE_FILTER in libraryActions)
+        assertTrue(SharedSettingsAction.PDF_FILENAME_DISPLAY_NAME in libraryActions)
+        // Cache maintenance belongs to storage, not to a generic overflow page.
+        assertTrue(SharedSettingsAction.CLEAR_BOOK_CACHE in storageActions)
+        assertTrue(SharedSettingsAction.CLEAR_REFLOW_CACHE in storageActions)
+        assertTrue(SharedSettingsAction.CLEAR_CLOUD_LOCAL_DATA in storageActions)
+        // Debug diagnostics are grouped under Developer in Help & About.
+        assertTrue(SharedSettingsAction.TEST_PANEL_DETECTION in helpActions)
+        assertTrue(SharedSettingsAction.TEST_SPEECH_BUBBLE_DETECTION in helpActions)
     }
 
     @Test
-    fun `android never exposes account deletion while account and sync stay separate`() {
+    fun `android never exposes account deletion while account and sync share one page`() {
         val model = sharedSettingsHubModel(
             androidSettingsHubInput(
                 uiState = ReaderScreenState(
@@ -184,14 +189,9 @@ class AndroidSettingsHubModelsTest {
         )
 
         assertFalse(SharedSettingsAction.DELETE_ACCOUNT in model.visibleNestedActions())
-        assertTrue(
-            SharedSettingsAction.SIGN_OUT in
-                model.page(SharedSettingsDestination.ACCOUNTS).items.map { it.action }
-        )
-        assertTrue(
-            SharedSettingsAction.CLOUD_SYNC in
-                model.page(SharedSettingsDestination.SYNC_ACCOUNTS).items.map { it.action }
-        )
+        val syncAccountActions = model.page(SharedSettingsDestination.SYNC_ACCOUNT).items.map { it.action }
+        assertTrue(SharedSettingsAction.SIGN_OUT in syncAccountActions)
+        assertTrue(SharedSettingsAction.CLOUD_SYNC in syncAccountActions)
     }
 
     @Test
@@ -214,7 +214,7 @@ class AndroidSettingsHubModelsTest {
         ).visibleNestedItems().single { it.action == SharedSettingsAction.CLOUD_SYNC }
 
         assertTrue(freeSync.enabled)
-        assertTrue(freeSync.summary.contains("Pro"))
+        assertTrue(freeSync.summary.fallback.contains("Pro"))
         assertTrue(proSync.enabled)
     }
 }

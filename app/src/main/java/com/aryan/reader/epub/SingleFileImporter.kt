@@ -35,6 +35,7 @@ import kotlinx.serialization.json.Json
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import org.jsoup.safety.Cleaner
 import timber.log.Timber
 import java.io.BufferedReader
 import java.io.File
@@ -1238,12 +1239,22 @@ class SingleFileImporter(private val context: Context) {
         ).find(metaTag)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
     }
 
-    private fun sanitizeHtmlFragment(html: String, leadingTitleToDrop: String? = null): String {
-        val body = Jsoup.parseBodyFragment(html).body()
+    /**
+     * Parses [html] once, applies the import safelist on that same DOM, and serialises the result.
+     *
+     * Memory matters here: a streamed chapter can be millions of characters, so every extra copy of
+     * the fragment is megabytes. The previous implementation serialised the parsed body to a String
+     * (`body.html()`), re-parsed that String through `Jsoup.clean(...)`, and serialised again — three
+     * full-size copies of the chapter plus a second DOM for the same output, which is what made this
+     * step OOM on a 256 MB heap (docs/crashlytics-triage.md#141). The two productEzoic probes are
+     * logged only, so they read the input String instead of materialising `body.html()`/`body.text()`.
+     */
+    internal fun sanitizeHtmlFragment(html: String, leadingTitleToDrop: String? = null): String {
+        val dirtyDocument = Jsoup.parseBodyFragment(html)
+        val body = dirtyDocument.body()
         removeLeadingDuplicateTitleText(body, leadingTitleToDrop)
         val blockedNodes = body.select("script, style, noscript, template")
-        val hasProductEzoicBefore = body.html().contains("productEzoicAds", ignoreCase = true) ||
-            body.text().contains("productEzoicAds", ignoreCase = true)
+        val hasProductEzoicBefore = html.contains("productEzoicAds", ignoreCase = true)
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
             "sanitize_fragment_before inputChars=${html.length} blockedNodes=${blockedNodes.size} " +
                 "productEzoic=$hasProductEzoicBefore"
@@ -1251,7 +1262,11 @@ class SingleFileImporter(private val context: Context) {
         blockedNodes.remove()
         retainTextAlignAttributes(body)
         val leakedScriptTextNodesRemoved = removeLeakedScriptTextNodes(body)
-        val cleaned = Jsoup.clean(body.html(), "", htmlSafelist, htmlOutputSettings)
+        // `Jsoup.clean(body.html(), …)` would parse the body a second time; the Cleaner copies from
+        // the document's body, so running it here is the same safelist pass on one DOM.
+        val cleanedDocument = Cleaner(htmlSafelist).clean(dirtyDocument)
+        cleanedDocument.outputSettings(htmlOutputSettings)
+        val cleaned = cleanedDocument.body().html()
         val hasProductEzoicAfter = cleaned.contains("productEzoicAds", ignoreCase = true)
         Timber.tag(HTML_IMPORT_DEBUG_TAG).d(
             "sanitize_fragment_after outputChars=${cleaned.length} blockedTextNodesRemoved=$leakedScriptTextNodesRemoved " +

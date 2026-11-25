@@ -68,6 +68,61 @@ class RecentFileDaoMetadataExtractionTest {
     }
 
     @Test
+    fun `comic book row is a text metadata candidate until parsed`() = runTest {
+        dao.insertOrUpdateFile(
+            recentFileEntity(
+                type = FileType.CBZ,
+                folderTextMetadataParsed = false,
+                folderCoverMetadataParsed = true
+            )
+        )
+
+        assertEquals(1, dao.countFolderBooksNeedingTextMetadata("content://folder"))
+
+        dao.updateExtractedMetadata(
+            bookId = "book-1",
+            coverImagePath = null,
+            title = "Court of Owls",
+            author = "Scott Snyder",
+            seriesName = "Batman",
+            seriesIndex = 5.0,
+            description = "Owls everywhere.",
+            fileSize = 0L,
+            fileContentModifiedTimestamp = 0L,
+            textMetadataParsed = true,
+            coverMetadataParsed = false
+        )
+
+        val saved = dao.getFileByBookId("book-1")!!
+        assertEquals("Court of Owls", saved.title)
+        assertEquals("Scott Snyder", saved.author)
+        assertEquals("Batman", saved.seriesName)
+        assertEquals(5.0, saved.seriesIndex)
+        assertTrue(saved.folderTextMetadataParsed)
+        assertEquals(0, dao.countFolderBooksNeedingTextMetadata("content://folder"))
+    }
+
+    @Test
+    fun `every comic archive type is a text metadata candidate`() = runTest {
+        val comicTypes = listOf(FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT)
+        comicTypes.forEachIndexed { index, type ->
+            dao.insertOrUpdateFile(
+                recentFileEntity(
+                    bookId = "comic-$index",
+                    type = type,
+                    folderCoverMetadataParsed = true
+                )
+            )
+        }
+
+        assertEquals(comicTypes.size, dao.countFolderBooksNeedingTextMetadata("content://folder"))
+        assertEquals(
+            comicTypes.size,
+            dao.getFolderBooksNeedingTextMetadata("content://folder", limit = 10).size
+        )
+    }
+
+    @Test
     fun `metadata candidate query respects batch limit`() = runTest {
         dao.insertOrUpdateFile(recentFileEntity(bookId = "book-1", timestamp = 1_000L))
         dao.insertOrUpdateFile(recentFileEntity(bookId = "book-2", timestamp = 2_000L))

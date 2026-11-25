@@ -171,7 +171,8 @@ class SuspendingAndroidBlockMeasurementProvider(
     private suspend fun splitVerticalContentList(
         children: List<ContentBlock>,
         availableContentHeight: Int,
-        contentConstraints: Constraints
+        contentConstraints: Constraints,
+        itemSpacingPx: Int = 0
     ): Pair<List<ContentBlock>, List<ContentBlock>>? {
         coroutineContext.ensureActive()
         if (children.isEmpty() || availableContentHeight <= 0) return null
@@ -185,7 +186,9 @@ class SuspendingAndroidBlockMeasurementProvider(
             val gap = with(density) {
                 collapsedVerticalMarginPxForPagination(previousBottomMarginPx, child.style.margin.top.toPx())
             }
-            collapsedGaps += gap
+            // A flex `gap` is not a margin, so it has to be added to the space the
+            // child needs on top of whatever the margins already collapsed to.
+            collapsedGaps += if (contentHeights.size > 1) gap + itemSpacingPx else gap
             trailingBottomMargins += with(density) { child.style.margin.bottom.toPx().coerceAtLeast(0f).roundToInt() }
             previousBottomMarginPx = with(density) { child.style.margin.bottom.toPx() }
         }
@@ -746,7 +749,7 @@ class SuspendingAndroidBlockMeasurementProvider(
             return block.copy(children = block.children.take(splitIndex)) to
                 block.copy(children = block.children.drop(splitIndex))
         }
-        if (block.style.flexDirection == "row") return null
+        if (block.style.isFlexRow) return null
 
         val boxMetrics = computeBlockBoxMetrics(block, contentConstraints, density)
         val decorationTop = with(density) {
@@ -765,10 +768,14 @@ class SuspendingAndroidBlockMeasurementProvider(
         // a split at child index 0 (a box whose first paragraph alone exceeds the page).
         // Children must be measured and split at the container's CONTENT width so fragment
         // heights match how they render inside the box.
+        val flexGapPx = with(density) {
+            block.style.flexMainAxisGap.takeIf { it.isSpecified }?.toPx()?.roundToInt() ?: 0
+        }
         val (headChildren, tailChildren) = splitVerticalContentList(
             children = block.childrenForFlexPaginationMeasurement(),
             availableContentHeight = availableContentHeight,
-            contentConstraints = boxMetrics.contentConstraints
+            contentConstraints = boxMetrics.contentConstraints,
+            itemSpacingPx = flexGapPx
         ) ?: return null
 
         val part1 = block.copy(
@@ -1063,7 +1070,7 @@ private suspend fun measureBlockHeight(
             height
         }
         is FlexContainerBlock -> {
-            val isRow = block.style.flexDirection == "row"
+            val isRow = block.style.isFlexRow
             val childrenForMeasure = block.childrenForFlexPaginationMeasurement()
             val height = if (block.style.display == "reader-chant-flow") {
                 var totalHeight = 0
@@ -1087,9 +1094,16 @@ private suspend fun measureBlockHeight(
                     measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier, hideImages)
                 } ?: 0
             } else {
-                childrenForMeasure.sumOf { child ->
+                val childrenHeight = childrenForMeasure.sumOf { child ->
                     measureBlockHeight(child, textMeasurer, adjustedConstraints, defaultStyle, headerStyle, density, imageSizeMultiplier, hideImages)
                 }
+                val gap = block.style.flexMainAxisGap
+                val gapTotal = if (gap.isSpecified && childrenForMeasure.size > 1) {
+                    with(density) { gap.toPx().roundToInt() } * (childrenForMeasure.size - 1)
+                } else {
+                    0
+                }
+                childrenHeight + gapTotal
             }
             height
         }

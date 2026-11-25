@@ -1,10 +1,12 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
@@ -23,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.testTag
@@ -67,6 +70,8 @@ fun SharedAndroidLibraryScaffold(
     filterChips: @Composable () -> Unit,
     pageContent: @Composable (page: Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** Floats over the pages, bottom centre: selection actions live here, not in the top bar. */
+    contextualToolbar: (@Composable () -> Unit)? = null,
 ) {
     val focusRequester = remember { FocusRequester() }
     var fieldValue by remember(isSearchActive) { mutableStateOf(TextFieldValue(searchQuery, TextRange(searchQuery.length))) }
@@ -131,6 +136,7 @@ fun SharedAndroidLibraryScaffold(
             }
         },
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
         HorizontalPager(
             state = pagerState,
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -138,5 +144,14 @@ fun SharedAndroidLibraryScaffold(
             beyondViewportPageCount = 0,
             key = { it },
         ) { page -> pageContent(page) }
+        contextualToolbar?.let { toolbar ->
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 16.dp),
+            ) { toolbar() }
+        }
+        }
     }
 }

@@ -38,13 +38,13 @@ import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.ScreenRotation
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Translate
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -385,8 +385,21 @@ class SharedToolbarDragDropState(
         val startY = currentItem.offset + dragOffset.y
         val center = startY + currentItem.size / 2f
 
+        // The row under the finger takes the place. A row pushed out of the window altogether still
+        // takes the first or last one in view: otherwise a push that scrolls the list would stall
+        // until the finger came back over a row, and the order would stop following the scroll.
+        val info = lazyListState.layoutInfo
+        val currentIndex = currentItem.index
         val targetItem = visibleItems.find {
             it.key != draggedId && center >= it.offset && center <= (it.offset + it.size)
+        } ?: when {
+            // Only rows on the far side of the lifted one count, so a push out of the window never
+            // sends it back over the rows it has already passed.
+            center > info.viewportEndOffset ->
+                visibleItems.lastOrNull { it.key != draggedId && it.index > currentIndex }
+            center < info.viewportStartOffset ->
+                visibleItems.firstOrNull { it.key != draggedId && it.index < currentIndex }
+            else -> null
         }
 
         if (targetItem != null) {
@@ -569,7 +582,7 @@ fun SharedPdfToolbarDragIcon(tool: PdfReaderTool) {
     val icon: ImageVector = when (tool) {
         PdfReaderTool.DICTIONARY -> Icons.Default.Translate
         PdfReaderTool.THEME -> Icons.Default.Palette
-        PdfReaderTool.BRIGHTNESS -> Icons.Default.Tune
+        PdfReaderTool.BRIGHTNESS -> SharedReaderIcons.Contrast
         PdfReaderTool.LOCK_PANNING -> Icons.Default.LockOpen
         PdfReaderTool.SLIDER -> Icons.Default.Settings
         PdfReaderTool.TOC -> Icons.Default.Menu
@@ -592,18 +605,20 @@ fun SharedPdfToolbarDragIcon(tool: PdfReaderTool) {
 @Composable
 fun SharedEpubToolbarDragIcon(tool: ReaderTool) {
     val icon: ImageVector = when (tool) {
-        ReaderTool.DICTIONARY -> Icons.Default.Translate
-        ReaderTool.THEME -> Icons.Default.Palette
-        ReaderTool.BRIGHTNESS -> Icons.Default.Tune
-        ReaderTool.SLIDER -> Icons.Default.Settings
+        ReaderTool.DICTIONARY -> SharedReaderIcons.ExternalApps
+        ReaderTool.THEME -> SharedReaderIcons.Palette
+        // Same contrast glyph the bar shows for brightness; the generic "tune" sliders read as settings.
+        ReaderTool.BRIGHTNESS -> SharedReaderIcons.Contrast
+        ReaderTool.SLIDER -> SharedReaderIcons.Slider
         ReaderTool.TOC -> Icons.Default.Menu
-        ReaderTool.FORMAT -> Icons.Default.TextFields
+        ReaderTool.FORMAT -> SharedReaderIcons.FormatSize
         ReaderTool.SEARCH -> Icons.Default.Search
         ReaderTool.AI_FEATURES -> Icons.Default.Ai
-        ReaderTool.TTS_CONTROLS -> Icons.Default.GraphicEq
+        ReaderTool.TTS_CONTROLS -> SharedReaderIcons.TextToSpeech
         ReaderTool.BOOK_REPLACEMENTS -> Icons.Default.TextFields
         ReaderTool.FILE_INFO -> Icons.Default.Info
-        ReaderTool.SCREEN_ORIENTATION -> Icons.Default.ScreenRotation
+        ReaderTool.SCREEN_ORIENTATION -> SharedReaderIcons.ScreenRotation
+        ReaderTool.PERCEPTION_LINES -> SharedReaderIcons.PerceptionLines
         ReaderTool.BOOKMARK -> Icons.Default.Bookmark
         else -> Icons.Default.MoreVert
     }

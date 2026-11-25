@@ -403,6 +403,8 @@ internal fun EpubReaderRenderSurfaces(
     onTranslateLookupFn: (String)->Unit,
     onDictionaryLookupFn: (String)->Unit,
     onUpdateHighlightPaletteFn: (Int, Int) -> Unit,
+    onHighlightColorChangeFn: (UserHighlight, Int) -> Unit,
+    onHighlightStyleChangeFn: (UserHighlight, HighlightStyle) -> Unit,
     runRecapFn: (Int, Int) -> Unit,
     onBookmarksUserEdited: () -> Unit = {},
 ) {
@@ -501,6 +503,34 @@ internal fun EpubReaderRenderSurfaces(
             Timber.tag("HighlightDiag").d(
                 "repair_applied highlights=${userHighlights.size}"
             )
+        }
+    }
+
+    /**
+     * Recolours/restyles a highlight that already exists, by id, for the native surfaces.
+     *
+     * A selection made inside an existing highlight is that highlight, so a colour tap there is an
+     * edit: the WebView surface has always sent it to `updateHighlightStyle`. The native surfaces
+     * used to add a second annotation over the same words instead, which changed nothing visible and
+     * still grew the annotation list, so the tap looked broken.
+     *
+     * The write itself goes through the reader's own colour/style handlers so there is one rule for
+     * how a highlight's colour is stored — including the named colour that consumers of [UserHighlight]
+     * still read, and the WebView bridge update when that surface happens to be the visible one.
+     */
+    val onHighlightRecolored: (String, Int, HighlightStyle) -> Unit = { highlightId, colorArgb, style ->
+        val existing = userHighlights.firstOrNull { it.id == highlightId }
+        if (existing == null) {
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).w(
+                "recolor_miss highlightId=$highlightId colorArgb=$colorArgb totalCount=${userHighlights.size}"
+            )
+        } else {
+            Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                "recolor_applied highlightId=$highlightId colorArgb=$colorArgb style=${style.id} " +
+                    "totalCount=${userHighlights.size} cfi=${existing.cfi}"
+            )
+            onHighlightColorChangeFn(existing, colorArgb)
+            if (existing.style != style) onHighlightStyleChangeFn(existing, style)
         }
     }
 
@@ -681,6 +711,7 @@ internal fun EpubReaderRenderSurfaces(
                                             navigation.highlightToNoteCfi = finalCfi
                                         }
                                     },
+                                    onHighlightRecolored = onHighlightRecolored,
                                     onNoteRequested = { cfi ->
                                         if (cfi != null) {
                                             navigation.highlightToNoteCfi = cfi
@@ -921,15 +952,14 @@ internal fun EpubReaderRenderSurfaces(
                                                 delay(200)
                                                 val webView = webViewRefForTts
                                                 if (webView != null) {
-                                                    val escapedQuery = escapeJsString(target.query)
-                                                    val targetChunk = target.chunkIndex
-
-                                                    val relativeIdx = searchState.searchResults
-                                                        .filter { it.locationInSource == target.locationInSource && it.chunkIndex == targetChunk }
-                                                        .indexOf(target)
-                                                        .coerceAtLeast(0)
-
-                                                    val js = "javascript:window.CURRENT_SEARCH_QUERY = '${escapedQuery}'; window.highlightAllOccurrences('${escapedQuery}'); window.scrollToChunkOccurrence($targetChunk, $relativeIdx);"
+                                                    // Chunk-scoped paint + quote-anchored scroll: the
+                                                    // ordinal only survives while the searched and the
+                                                    // painted text are identical, so the hit's context is
+                                                    // what actually finds the occurrence.
+                                                    val js = epubSearchHighlightAndScrollScript(
+                                                        searchState.searchResults,
+                                                        target
+                                                    )
                                                     Timber.tag("NavDiag").d("Executing search highlight/scroll JS: $js")
                                                     webView.evaluateJavascript(js) { result ->
                                                         Timber.tag("NavDiag").d("JS highlight/scroll result: $result")
@@ -2019,6 +2049,7 @@ internal fun EpubReaderRenderSurfaces(
                                         navigation.highlightToNoteCfi = finalCfi
                                     }
                                 },
+                                onHighlightRecolored = onHighlightRecolored,
                                 onNoteRequested = { cfi ->
                                     if (cfi != null) {
                                         navigation.highlightToNoteCfi = cfi

@@ -76,6 +76,10 @@ interface RecentFileDao {
     @Query("SELECT * FROM recent_files WHERE lastModifiedTimestamp > :sinceTimestamp")
     suspend fun getModifiedSince(sinceTimestamp: Long): List<RecentFileEntity>
 
+    /** Paths the UI may still display; the cover cache pruner must never delete these. */
+    @Query("SELECT coverImagePath FROM recent_files WHERE coverImagePath IS NOT NULL AND coverImagePath != ''")
+    suspend fun getReferencedCoverPaths(): List<String>
+
     @Query("SELECT COUNT(*) FROM recent_files")
     suspend fun count(): Int
 
@@ -138,11 +142,16 @@ interface RecentFileDao {
     @Query("DELETE FROM recent_files")
     suspend fun clearAll()
 
+    /**
+     * Returns the number of updated rows (1 when the book exists, 0 otherwise) so callers can report
+     * the outcome without a follow-up `SELECT *` — see [com.aryan.reader.data.RecentFilesRepository].
+     */
     @Query("UPDATE recent_files SET lastPositionCfi = :cfi, lastChapterIndex = :chapterIndex, locatorBlockIndex = :blockIndex, locatorCharOffset = :charOffset, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
-    suspend fun updateEpubReadingPosition(bookId: String, cfi: String?, chapterIndex: Int, blockIndex: Int, charOffset: Int, progress: Float, timestamp: Long)
+    suspend fun updateEpubReadingPosition(bookId: String, cfi: String?, chapterIndex: Int, blockIndex: Int, charOffset: Int, progress: Float, timestamp: Long): Int
 
+    /** Returns the number of updated rows; see [updateEpubReadingPosition]. */
     @Query("UPDATE recent_files SET lastPage = :page, progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
-    suspend fun updatePdfReadingPosition(bookId: String, page: Int, progress: Float, timestamp: Long)
+    suspend fun updatePdfReadingPosition(bookId: String, page: Int, progress: Float, timestamp: Long): Int
 
     @Query("UPDATE recent_files SET progressPercentage = :progress, timestamp = :timestamp, lastModifiedTimestamp = :timestamp, readingPositionModifiedTimestamp = :timestamp WHERE bookId = :bookId")
     suspend fun updateAudiobookPosition(bookId: String, progress: Float, timestamp: Long)
@@ -170,7 +179,7 @@ interface RecentFileDao {
         WHERE sourceFolderUri IS NOT NULL
         AND isDeleted = 0
         AND (
-            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX', 'CBZ', 'CBR', 'CB7', 'CBT') AND folderTextMetadataParsed = 0)
             OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
         ORDER BY timestamp DESC
@@ -183,7 +192,7 @@ interface RecentFileDao {
         WHERE sourceFolderUri = :sourceFolderUri
         AND isDeleted = 0
         AND (
-            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX', 'CBZ', 'CBR', 'CB7', 'CBT') AND folderTextMetadataParsed = 0)
             OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
         ORDER BY timestamp DESC
@@ -196,7 +205,7 @@ interface RecentFileDao {
         WHERE sourceFolderUri IS NOT NULL
         AND isDeleted = 0
         AND (
-            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX', 'CBZ', 'CBR', 'CB7', 'CBT') AND folderTextMetadataParsed = 0)
             OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
     """)
@@ -207,7 +216,7 @@ interface RecentFileDao {
         WHERE sourceFolderUri = :sourceFolderUri
         AND isDeleted = 0
         AND (
-            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX') AND folderTextMetadataParsed = 0)
+            (type IN ('PDF', 'EPUB', 'MOBI', 'FB2', 'ODT', 'FODT', 'DOCX', 'CBZ', 'CBR', 'CB7', 'CBT') AND folderTextMetadataParsed = 0)
             OR (type IN ('PDF', 'EPUB', 'TXT', 'MD', 'HTML', 'MOBI', 'FB2', 'CBZ', 'CBR', 'CB7', 'CBT', 'DOCX', 'DOC', 'ODT', 'FODT', 'PPTX') AND folderCoverMetadataParsed = 0 AND (coverImagePath IS NULL OR coverImagePath = ''))
         )
     """)

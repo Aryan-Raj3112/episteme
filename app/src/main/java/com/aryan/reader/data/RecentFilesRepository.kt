@@ -70,6 +70,16 @@ import androidx.room.withTransaction
 private const val COVER_CACHE_DIR = "cover_cache"
 private const val DIRECT_EMBEDDED_COVER_MAX_BYTES = 8L * 1024L * 1024L
 private const val EMBEDDED_COVER_MAX_DIMENSION = 1200
+
+/**
+ * Generated thumbnails render at <=72dp in every list/grid, so 600px covers even the densest
+ * phones at ~3x. The previous 800px PNG pass produced covers 10x larger than needed.
+ */
+private const val GENERATED_COVER_MAX_DIMENSION = 600
+private const val GENERATED_COVER_JPEG_QUALITY = 85
+
+/** A just-written cover is briefly unreferenced: the file lands before its row is updated. */
+private const val COVER_CACHE_ORPHAN_GRACE_MILLIS = 60L * 60L * 1000L
 private val EMBEDDED_COVER_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp")
 
 class RecentFilesRepository(
@@ -777,42 +787,49 @@ class RecentFilesRepository(
         }
     }
 
-    override suspend fun updateEpubReadingPosition(uriString: String, locator: Locator, cfiForWebView: String?, progress: Float) = withContext(Dispatchers.IO) {
-        val item = recentFileDao.getFileByUri(uriString)
-        if (item != null) {
-            val currentTime = System.currentTimeMillis()
-            val operation = com.aryan.reader.cloudFolderOperationId("reader-position", item.bookId, currentTime)
-            val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", item.bookId, currentTime)
-            cloudFolderLogD(
-                "event=room_position_write_start operation=$operation correlation=$correlation " +
-                    "book=${cloudFolderSafeId(item.bookId)} kind=epub " +
-                    "beforeReadTs=${item.toRecentFileItem().effectiveReadingPositionModifiedTimestamp()} " +
-                    "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} " +
-                    "progress=$progress",
-            )
-            recentFileDao.updateEpubReadingPosition(
-                bookId = item.bookId,
-                cfi = cfiForWebView,
-                chapterIndex = locator.chapterIndex,
-                blockIndex = locator.blockIndex,
-                charOffset = locator.charOffset,
-                progress = progress,
-                timestamp = currentTime
-            )
-            val updated = recentFileDao.getFileByBookId(item.bookId)
-            cloudFolderLogD(
-                "event=room_position_write_end operation=$operation correlation=$correlation " +
-                    "book=${cloudFolderSafeId(item.bookId)} kind=epub result=${if (updated != null) "success" else "missing"} " +
-                    "afterReadTs=${updated?.toRecentFileItem()?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
-                    "afterChapter=${updated?.lastChapterIndex ?: "none"} afterBlock=${updated?.locatorBlockIndex ?: "none"} " +
-                    "afterChar=${updated?.locatorCharOffset ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
-            )
-            Timber.d("Updated EPUB reading position for ${item.bookId} to Locator: $locator, Progress: $progress%")
+    override suspend fun updateEpubReadingPosition(
+        bookId: String,
+        locator: Locator,
+        cfiForWebView: String?,
+        progress: Float,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val currentTime = System.currentTimeMillis()
+        val operation = com.aryan.reader.cloudFolderOperationId("reader-position", bookId, currentTime)
+        val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", bookId, currentTime)
+        cloudFolderLogD(
+            "event=room_position_write_start operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} kind=epub " +
+                "chapter=${locator.chapterIndex} block=${locator.blockIndex} char=${locator.charOffset} " +
+                "progress=$progress",
+        )
+        // Address the row by its primary key: the caller already holds the Room row, so resolving it
+        // again by URI would only add a full-row read to a per-page-turn write.
+        val updatedRows = recentFileDao.updateEpubReadingPosition(
+            bookId = bookId,
+            cfi = cfiForWebView,
+            chapterIndex = locator.chapterIndex,
+            blockIndex = locator.blockIndex,
+            charOffset = locator.charOffset,
+            progress = progress,
+            timestamp = currentTime
+        )
+        // The affected-row count is the write's own report; the old read-back here existed only to
+        // log what had just been written (see CRASHLYTICS note in docs/crashlytics-triage.md #177).
+        cloudFolderLogD(
+            "event=room_position_write_end operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} kind=epub rows=$updatedRows " +
+                "afterReadTs=$currentTime afterChapter=${locator.chapterIndex} " +
+                "afterBlock=${locator.blockIndex} afterChar=${locator.charOffset} afterProgress=$progress",
+        )
+        if (updatedRows > 0) {
+            Timber.d("Updated EPUB reading position for $bookId to Locator: $locator, Progress: $progress%")
+            true
         } else {
             cloudFolderLogW(
-                "event=room_position_write_end book=${cloudFolderSafeId(uriString)} kind=epub " +
+                "event=room_position_write_end book=${cloudFolderSafeId(bookId)} kind=epub " +
                     "result=skipped reason=book_not_found",
             )
+            false
         }
     }
 
@@ -910,36 +927,40 @@ class RecentFilesRepository(
         Timber.d("Updated bookmarks for $bookId")
     }
 
-    override suspend fun updatePdfReadingPosition(uriString: String, page: Int, progress: Float) = withContext(Dispatchers.IO) {
-        val item = recentFileDao.getFileByUri(uriString)
-        if (item != null) {
-            val currentTime = System.currentTimeMillis()
-            val operation = com.aryan.reader.cloudFolderOperationId("reader-position", item.bookId, currentTime)
-            val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", item.bookId, currentTime)
-            cloudFolderLogD(
-                "event=room_position_write_start operation=$operation correlation=$correlation " +
-                    "book=${cloudFolderSafeId(item.bookId)} kind=pdf " +
-                    "beforeReadTs=${item.toRecentFileItem().effectiveReadingPositionModifiedTimestamp()} " +
-                    "page=$page progress=$progress",
-            )
-            recentFileDao.updatePdfReadingPosition(item.bookId, page, progress, currentTime)
-            val updated = recentFileDao.getFileByBookId(item.bookId)
-            cloudFolderLogD(
-                "event=room_position_write_end operation=$operation correlation=$correlation " +
-                    "book=${cloudFolderSafeId(item.bookId)} kind=pdf result=${if (updated != null) "success" else "missing"} " +
-                    "afterReadTs=${updated?.toRecentFileItem()?.effectiveReadingPositionModifiedTimestamp() ?: 0L} " +
-                    "afterPage=${updated?.lastPage ?: "none"} afterProgress=${updated?.progressPercentage ?: "none"}",
-            )
-            Timber.tag("PdfPositionDebug").i("Repository: Executed DB update for ${item.bookId} to Page $page, Progress $progress% at TS: $currentTime")
+    override suspend fun updatePdfReadingPosition(
+        bookId: String,
+        page: Int,
+        progress: Float,
+    ): Boolean = withContext(Dispatchers.IO) {
+        val currentTime = System.currentTimeMillis()
+        val operation = com.aryan.reader.cloudFolderOperationId("reader-position", bookId, currentTime)
+        val correlation = com.aryan.reader.cloudFolderSyncCorrelationId("reader-position", bookId, currentTime)
+        cloudFolderLogD(
+            "event=room_position_write_start operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} kind=pdf " +
+                "page=$page progress=$progress",
+        )
+        // Primary-key write: the caller already resolved this row, so no lookup (and no read-back)
+        // belongs on a per-page-turn path. See docs/crashlytics-triage.md #177.
+        val updatedRows = recentFileDao.updatePdfReadingPosition(bookId, page, progress, currentTime)
+        cloudFolderLogD(
+            "event=room_position_write_end operation=$operation correlation=$correlation " +
+                "book=${cloudFolderSafeId(bookId)} kind=pdf rows=$updatedRows " +
+                "afterReadTs=$currentTime afterPage=$page afterProgress=$progress",
+        )
+        if (updatedRows > 0) {
+            Timber.tag("PdfPositionDebug").i("Repository: Executed DB update for $bookId to Page $page, Progress $progress% at TS: $currentTime")
             logCloudSyncTrace {
-                "android.repository.pdf_position_update book=${item.bookId} page=$page progress=$progress ts=$currentTime"
+                "android.repository.pdf_position_update book=$bookId page=$page progress=$progress ts=$currentTime"
             }
+            true
         } else {
             cloudFolderLogW(
-                "event=room_position_write_end book=${cloudFolderSafeId(uriString)} kind=pdf " +
+                "event=room_position_write_end book=${cloudFolderSafeId(bookId)} kind=pdf " +
                     "result=skipped reason=book_not_found",
             )
-            Timber.tag("PdfPositionDebug").e("Repository: DB Update Failed! No recent file found matching URI: $uriString")
+            Timber.tag("PdfPositionDebug").e("Repository: DB Update Failed! No recent file found for bookId: $bookId")
+            false
         }
     }
 
@@ -1127,23 +1148,31 @@ class RecentFilesRepository(
         return coverCacheDir
     }
 
-    override suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri): String? = withContext(Dispatchers.IO) {
+    /**
+     * Writes a generated thumbnail and returns its path.
+     *
+     * Every save produces a new path (the file name carries a version suffix) because Coil keys its
+     * memory cache by path: reusing a path keeps serving the stale bitmap after a cover changes.
+     * [previousPath], the path the row currently points at, is deleted once the new file is safely
+     * written, which keeps the cache from accumulating duplicates without listing the directory.
+     */
+    override suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri, previousPath: String?): String? = withContext(Dispatchers.IO) {
         val cacheDir = getCoverCacheDirInternal()
-        val filename = "cover_${uri.toString().hashCode()}_${System.currentTimeMillis()}.png"
-        val file = File(cacheDir, filename)
+        val file = File(cacheDir, coverFileName(uri, "jpg"))
         var fos: FileOutputStream? = null
         var scaledCopy: Bitmap? = null
         try {
-            deleteCoverCacheVariants(uri)
             val bitmapToSave = bitmap.scaledToCanvasLimit(
-                maxBytes = 8L * 1024L * 1024L,
-                maxDimension = EMBEDDED_COVER_MAX_DIMENSION
+                maxBytes = 2L * 1024L * 1024L,
+                maxDimension = GENERATED_COVER_MAX_DIMENSION
             ).also {
                 if (it !== bitmap) scaledCopy = it
             }
             fos = FileOutputStream(file)
-            bitmapToSave.compress(Bitmap.CompressFormat.PNG, 90, fos)
+            bitmapToSave.compress(Bitmap.CompressFormat.JPEG, GENERATED_COVER_JPEG_QUALITY, fos)
+            fos.flush()
             Timber.d("Saved cover image to: ${file.absolutePath}")
+            deleteCoverCacheEntry(previousPath)
             return@withContext file.absolutePath
         } catch (e: Exception) {
             Timber.e(e, "Failed to save cover image to cache for $uri")
@@ -1155,7 +1184,7 @@ class RecentFilesRepository(
         }
     }
 
-    override suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri, extension: String): String? = withContext(Dispatchers.IO) {
+    override suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri, extension: String, previousPath: String?): String? = withContext(Dispatchers.IO) {
         if (bytes.isEmpty()) return@withContext null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -1167,7 +1196,7 @@ class RecentFilesRepository(
             bounds.outWidth <= EMBEDDED_COVER_MAX_DIMENSION &&
             bounds.outHeight <= EMBEDDED_COVER_MAX_DIMENSION
         ) {
-            return@withContext saveEmbeddedCoverBytesToCache(bytes, uri, safeExtension)
+            return@withContext saveEmbeddedCoverBytesToCache(bytes, uri, safeExtension, previousPath)
         }
 
         var sampleSize = 1
@@ -1186,20 +1215,24 @@ class RecentFilesRepository(
         ) ?: return@withContext null
 
         try {
-            return@withContext saveCoverToCache(decoded, uri)
+            return@withContext saveCoverToCache(decoded, uri, previousPath)
         } finally {
             decoded.recycle()
         }
     }
 
-    private fun saveEmbeddedCoverBytesToCache(bytes: ByteArray, uri: Uri, extension: String): String? {
+    private fun saveEmbeddedCoverBytesToCache(
+        bytes: ByteArray,
+        uri: Uri,
+        extension: String,
+        previousPath: String?,
+    ): String? {
         val cacheDir = getCoverCacheDirInternal()
-        val filename = "cover_${uri.toString().hashCode()}_${System.currentTimeMillis()}.$extension"
-        val file = File(cacheDir, filename)
+        val file = File(cacheDir, coverFileName(uri, extension))
         return try {
-            deleteCoverCacheVariants(uri)
             FileOutputStream(file).use { output -> output.write(bytes) }
             Timber.d("Saved embedded cover image to: ${file.absolutePath}")
+            deleteCoverCacheEntry(previousPath)
             file.absolutePath
         } catch (e: Exception) {
             Timber.e(e, "Failed to save embedded cover image to cache for $uri")
@@ -1208,12 +1241,39 @@ class RecentFilesRepository(
         }
     }
 
-    private fun deleteCoverCacheVariants(uri: Uri) {
-        val exactPrefix = "cover_${uri.toString().hashCode()}."
-        val versionedPrefix = "cover_${uri.toString().hashCode()}_"
-        getCoverCacheDirInternal().listFiles()
-            ?.filter { it.isFile && (it.name.startsWith(exactPrefix) || it.name.startsWith(versionedPrefix)) }
-            ?.forEach { runCatching { it.delete() } }
+    private fun coverFileName(uri: Uri, extension: String): String =
+        "cover_${uri.toString().hashCode()}_${System.currentTimeMillis()}_${System.nanoTime() % 1000}.$extension"
+
+    /** Deletes one superseded cover file; paths outside the cover cache are never touched. */
+    private fun deleteCoverCacheEntry(path: String?) {
+        if (path.isNullOrBlank()) return
+        val file = File(path)
+        val parent = runCatching { file.parentFile?.canonicalPath }.getOrNull() ?: return
+        val cachePath = runCatching { getCoverCacheDirInternal().canonicalPath }.getOrNull() ?: return
+        if (parent != cachePath || !file.isFile) return
+        runCatching { file.delete() }
+    }
+
+    /**
+     * Deletes cover files no row references any more.
+     *
+     * Saving a cover deletes exactly the file it replaces, so this walk is only needed for files
+     * orphaned by failed writes, imports that never committed, or pre-existing caches. It is a
+     * maintenance job (run from the startup sweeper), never part of the save path.
+     */
+    override suspend fun pruneCoverCache(): Int = withContext(Dispatchers.IO) {
+        val cacheDir = getCoverCacheDirInternal()
+        val referenced = recentFileDao.getReferencedCoverPaths().toHashSet()
+        val cutoff = System.currentTimeMillis() - COVER_CACHE_ORPHAN_GRACE_MILLIS
+        var deleted = 0
+        cacheDir.listFiles()?.forEach { file ->
+            if (!file.isFile || file.absolutePath in referenced || file.lastModified() > cutoff) {
+                return@forEach
+            }
+            if (runCatching { file.delete() }.getOrDefault(false)) deleted++
+        }
+        if (deleted > 0) Timber.i("Pruned $deleted orphaned cover files")
+        deleted
     }
 
     private fun deleteCachedCover(filePath: String): Boolean {

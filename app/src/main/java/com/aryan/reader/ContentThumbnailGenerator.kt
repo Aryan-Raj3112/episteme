@@ -2,6 +2,7 @@ package com.aryan.reader
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -21,6 +22,7 @@ import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import org.xmlpull.v1.XmlPullParser
 import timber.log.Timber
+import java.io.BufferedInputStream
 import java.io.File
 import java.io.InputStream
 import java.net.URI
@@ -32,7 +34,11 @@ import kotlin.math.ceil
 internal class ContentThumbnailGenerator(context: Context) {
     private val appContext = context.applicationContext
 
-    suspend fun generate(item: RecentFileItem, targetHeight: Int = 800): Bitmap? = withContext(Dispatchers.IO) {
+    /**
+     * Renders a library thumbnail. [targetHeight] is 600px: list/grid cells max out at ~72dp, so
+     * this stays ~3x on the densest phones while cutting decode/render work and cache size.
+     */
+    suspend fun generate(item: RecentFileItem, targetHeight: Int = DEFAULT_COVER_HEIGHT): Bitmap? = withContext(Dispatchers.IO) {
         val uri = item.uriString?.let(Uri::parse) ?: return@withContext null
         when (item.type) {
             FileType.PDF -> PdfCoverGenerator(appContext).generateCover(uri, targetHeight)
@@ -77,15 +83,27 @@ internal class ContentThumbnailGenerator(context: Context) {
     }
 
     private suspend fun generateMobiThumbnail(uri: Uri, item: RecentFileItem, targetHeight: Int): Bitmap? {
+        val cover = runCatching {
+            openInputStream(uri)?.use { input ->
+                MobiParser(appContext).createMobiBook(
+                    inputStream = input,
+                    bookId = item.bookId,
+                    originalBookNameHint = item.displayName,
+                    parseContent = false
+                )?.coverImage
+            }
+        }.onFailure { Timber.w(it, "Failed to extract MOBI cover") }.getOrNull()
+        if (cover != null) return cover
+
+        // Only a coverless MOBI needs the chapter pass, so the full parse is a fallback, not the norm.
         return runCatching {
             openInputStream(uri)?.use { input ->
-                val book = MobiParser(appContext).createMobiBook(
+                MobiParser(appContext).createMobiBook(
                     inputStream = input,
                     bookId = item.bookId,
                     originalBookNameHint = item.displayName,
                     parseContent = true
-                )
-                book?.coverImage ?: book?.chapters
+                )?.chapters
                     ?.firstOrNull { it.plainTextContent.isNotBlank() }
                     ?.plainTextContent
                     ?.let { renderTextPage(it, targetHeight) }
@@ -94,6 +112,12 @@ internal class ContentThumbnailGenerator(context: Context) {
     }
 
     private suspend fun generateComicCover(uri: Uri, type: FileType, targetHeight: Int): Bitmap? {
+        // CBZ is a plain zip: the first image entry can be decoded straight from the stream, which
+        // avoids copying an entire (possibly multi-GB) archive into cache just to render page one.
+        if (type == FileType.CBZ) {
+            decodeFirstZipImage(uri, targetHeight)?.let { return it }
+        }
+
         var cacheFile: File? = null
         return try {
             cacheFile = File(appContext.cacheDir, "temp_archive_cover_${UUID.randomUUID()}.${type.name.lowercase()}")
@@ -127,6 +151,47 @@ internal class ContentThumbnailGenerator(context: Context) {
         }
     }
 
+    private fun decodeFirstZipImage(uri: Uri, targetHeight: Int): Bitmap? = runCatching {
+        val bytes = openInputStream(uri)?.use { input ->
+            ZipInputStream(BufferedInputStream(input)).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: return@use null
+                    if (entry.isDirectory) continue
+                    val name = entry.name.lowercase()
+                    if (COMIC_IMAGE_EXTENSIONS.none { name.endsWith(it) }) continue
+                    if (entry.size > MAX_COMIC_COVER_BYTES) return@use null
+                    return@use zip.readBytesLimited(MAX_COMIC_COVER_BYTES)
+                }
+                @Suppress("UNREACHABLE_CODE")
+                null
+            }
+        } ?: return null
+        decodeCoverBitmap(bytes, targetHeight)
+    }.onFailure { Timber.w(it, "Failed to decode first comic page from $uri") }.getOrNull()
+
+    private fun decodeCoverBitmap(bytes: ByteArray, targetHeight: Int): Bitmap? {
+        if (bytes.isEmpty()) return null
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sampleSize = 1
+        while (bounds.outHeight / (sampleSize * 2) >= targetHeight) sampleSize *= 2
+        val decoded = BitmapFactory.decodeByteArray(
+            bytes,
+            0,
+            bytes.size,
+            BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        ) ?: return null
+
+        val scale = targetHeight.toFloat() / decoded.height
+        if (scale >= 1f) return decoded
+        val scaledWidth = (decoded.width * scale).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(decoded, scaledWidth, targetHeight, true)
+        if (scaled !== decoded) decoded.recycle()
+        return scaled
+    }
+
     private fun openInputStream(uri: Uri): InputStream? {
         return if (uri.scheme.equals("file", ignoreCase = true)) {
             fileFromUri(uri)?.inputStream()
@@ -147,7 +212,7 @@ internal class ContentThumbnailGenerator(context: Context) {
         return File(URLDecoder.decode(normalizedPath, Charsets.UTF_8.name()))
     }
 
-    private fun generateTextPreview(uri: Uri, type: FileType, targetHeight: Int = 800): Bitmap? {
+    private fun generateTextPreview(uri: Uri, type: FileType, targetHeight: Int = DEFAULT_COVER_HEIGHT): Bitmap? {
         val text = openInputStream(uri)?.use { input ->
             when (type) {
                 FileType.FB2 -> extractXmlText(input, textTags = FB2_TEXT_TAGS, rootTag = "body")
@@ -346,6 +411,11 @@ internal class ContentThumbnailGenerator(context: Context) {
     private fun StringBuilder.endsWith(char: Char): Boolean = isNotEmpty() && this[length - 1] == char
 
     companion object {
+        /** Upper bound for the single archived image decoded for a comic cover. */
+        private const val MAX_COMIC_COVER_BYTES = 24 * 1024 * 1024
+        private const val DEFAULT_COVER_HEIGHT = 600
+        private val COMIC_IMAGE_EXTENSIONS =
+            listOf(".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".avif", ".jxl")
         private const val MAX_TEXT_SOURCE_BYTES = 256_000
         private const val MAX_PREVIEW_TEXT_CHARS = 8_000
         /** Mirror of the DOC import cap: larger files skip preview text. */

@@ -24,7 +24,7 @@ class FolderSyncAnnotationMergeTest {
                 preferMappedOverExplicit = false,
                 appliedJson = null,
                 existingJson = local,
-                mappedJson = null,
+                mappedJson = { null },
             ),
         )
     }
@@ -40,7 +40,7 @@ class FolderSyncAnnotationMergeTest {
                     preferMappedOverExplicit = false,
                     appliedJson = empty,
                     existingJson = local,
-                    mappedJson = null,
+                    mappedJson = { null },
                 ),
             )
         }
@@ -56,7 +56,7 @@ class FolderSyncAnnotationMergeTest {
                 preferMappedOverExplicit = false,
                 appliedJson = remote,
                 existingJson = local,
-                mappedJson = null,
+                mappedJson = { null },
             ),
         )
     }
@@ -71,7 +71,7 @@ class FolderSyncAnnotationMergeTest {
                 preferMappedOverExplicit = false,
                 appliedJson = remote,
                 existingJson = local,
-                mappedJson = mapped,
+                mappedJson = { mapped },
             ),
         )
     }
@@ -86,7 +86,7 @@ class FolderSyncAnnotationMergeTest {
                 preferMappedOverExplicit = true,
                 appliedJson = remote,
                 existingJson = local,
-                mappedJson = mapped,
+                mappedJson = { mapped },
             ),
         )
         // Explicit but empty highlights still lose to the non-empty mapped set.
@@ -98,7 +98,7 @@ class FolderSyncAnnotationMergeTest {
                 preferMappedOverExplicit = true,
                 appliedJson = "[]",
                 existingJson = local,
-                mappedJson = mapped,
+                mappedJson = { mapped },
             ),
         )
     }
@@ -113,7 +113,7 @@ class FolderSyncAnnotationMergeTest {
                 preferMappedOverExplicit = false,
                 appliedJson = remote,
                 existingJson = local,
-                mappedJson = mapped,
+                mappedJson = { mapped },
             ),
         )
     }
@@ -127,7 +127,7 @@ class FolderSyncAnnotationMergeTest {
                 preferMappedOverExplicit = false,
                 appliedJson = null,
                 existingJson = null,
-                mappedJson = null,
+                mappedJson = { null },
             ),
         )
     }

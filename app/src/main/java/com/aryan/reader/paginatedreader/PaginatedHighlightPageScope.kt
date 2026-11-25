@@ -32,7 +32,18 @@ internal data class PaginatedPageHighlights(
      * Per-highlight block-local ranges, keyed by block index. A highlight can legitimately own more
      * than one entry when it spans consecutive blocks that both landed on this page.
      */
-    val rangesByHighlight: Map<String, Map<Int, List<IntRange>>>
+    val rangesByHighlight: Map<String, Map<Int, List<IntRange>>>,
+    /**
+     * Where each highlight's *last* character sits, as (block index, exclusive end offset in that
+     * block's own coordinates).
+     *
+     * Only the note mark needs this. Every block a highlight touches paints its own slice, so a mark
+     * derived from "the end of the range in this block" would also appear at the end of a paragraph
+     * the highlight merely passes through. The anchor resolver is the only thing that knows which
+     * segment is the highlight's last one, and it is not reachable from a text renderer, so it is
+     * recorded here once and looked up per block.
+     */
+    val noteEndsByHighlight: Map<String, Pair<Int, Int>> = emptyMap()
 ) {
     /**
      * Per-highlight ranges restricted to one block, which is the shape a text renderer needs.
@@ -47,6 +58,38 @@ internal data class PaginatedPageHighlights(
         for ((highlightId, perBlock) in rangesByHighlight) {
             val ranges = perBlock[blockIndex]
             if (!ranges.isNullOrEmpty()) result[highlightId] = ranges
+        }
+        return result
+    }
+
+    /**
+     * The highlight that already covers the block-local range [start]..[end), if one does.
+     *
+     * The selection menu asks this to show the state of the text under the selection: a word that is
+     * already highlighted has a colour and a style, and the row has to show *those* rather than a
+     * colour nobody picked. A selection that merely starts inside a longer highlight still counts —
+     * that is the same question the WebView surface answers with `isExistingHighlight`, and there a
+     * colour tap edits that highlight instead of stacking another one on top of it.
+     */
+    fun highlightCovering(blockIndex: Int, start: Int, end: Int): UserHighlight? {
+        if (end <= start) return null
+        val coveringId = rangesForBlock(blockIndex).entries.firstOrNull { (_, ranges) ->
+            ranges.any { start >= it.first && end - 1 <= it.last }
+        }?.key ?: return null
+        return highlights.firstOrNull { it.id == coveringId }
+    }
+
+    /**
+     * The exclusive end offset of each highlight that *ends* in [blockIndex], keyed by highlight id.
+     *
+     * Empty when no highlight finishes in that block, and empty for a highlight that only starts or
+     * continues there, which is what keeps a note mark off a paragraph's interior.
+     */
+    fun noteBadgeEndsForBlock(blockIndex: Int): Map<String, Int> {
+        if (noteEndsByHighlight.isEmpty()) return emptyMap()
+        val result = LinkedHashMap<String, Int>()
+        for ((highlightId, end) in noteEndsByHighlight) {
+            if (end.first == blockIndex) result[highlightId] = end.second
         }
         return result
     }
@@ -91,14 +134,23 @@ internal fun resolvePaginatedPageHighlights(
     if (inChapter.isEmpty()) return PaginatedPageHighlights(emptyList(), emptyMap())
 
     val ranges = LinkedHashMap<String, Map<Int, List<IntRange>>>()
+    val noteEnds = LinkedHashMap<String, Pair<Int, Int>>()
     val visible = mutableListOf<UserHighlight>()
     for (highlight in inChapter) {
-        val resolved = resolvePaginatedHighlightOnPage(highlight, scope, chapterTextIndex) ?: continue
-        ranges[highlight.id] = resolved
+        val placement = resolvePaginatedHighlightOnPage(highlight, scope, chapterTextIndex) ?: continue
+        ranges[highlight.id] = placement.rangesByBlock
+        placement.noteEnd?.let { noteEnds[highlight.id] = it }
         visible += highlight
     }
-    return PaginatedPageHighlights(visible, ranges)
+    return PaginatedPageHighlights(visible, ranges, noteEnds)
 }
+
+/** One highlight's placement on one page: the ranges to paint, and where its last character is. */
+private data class PaginatedHighlightPlacement(
+    val rangesByBlock: Map<Int, List<IntRange>>,
+    /** (block index, exclusive end offset) of the highlight's last character, when this page holds it. */
+    val noteEnd: Pair<Int, Int>?
+)
 
 /**
  * The block-local ranges [highlight] occupies on this page, or null when it is not on this page.
@@ -128,7 +180,7 @@ private fun resolvePaginatedHighlightOnPage(
     highlight: UserHighlight,
     scope: PaginatedPageScope,
     chapterTextIndex: EpubChapterTextIndex?
-): Map<Int, List<IntRange>>? {
+): PaginatedHighlightPlacement? {
     val pageBlocks = scope.textBlocks
     val locator = highlight.locator
     val quote = locator.textQuote?.takeIf { it.isNotBlank() } ?: highlight.text
@@ -206,7 +258,42 @@ private fun resolvePaginatedHighlightOnPage(
                 }}"
         )
     }
-    return perBlock.ifEmpty { null }
+    if (perBlock.isEmpty()) return null
+    return PaginatedHighlightPlacement(perBlock, noteEndFor(highlight, anchor.segments, pageBlocks, perBlock))
+}
+
+/**
+ * Where the highlight's last character landed on this page, if it landed here at all.
+ *
+ * The last segment is the highlight's end. It only counts when the page fragment that owns that
+ * block really holds that character: a paragraph split across pages gives the first page a clipped
+ * slice, and a mark drawn at the end of that slice would sit in the middle of the highlight.
+ */
+private fun noteEndFor(
+    highlight: UserHighlight,
+    segments: List<HighlightBlockSegment>,
+    pageBlocks: List<TextContentBlock>,
+    perBlock: Map<Int, List<IntRange>>
+): Pair<Int, Int>? {
+    val last = segments.lastOrNull() ?: return null
+    if (perBlock[last.blockIndex].isNullOrEmpty()) return null
+    val block = pageBlocks.firstOrNull { candidate ->
+        candidate.blockIndex == last.blockIndex &&
+            (last.blockCfi == null || candidate.cfi == null || last.blockCfi == candidate.cfi)
+    } ?: return null
+    val shift = block.startCharOffsetInSource - last.blockSourceStart
+    val endInFragment = last.localEnd - shift
+    val clipped = last.rangeInFragment(block.startCharOffsetInSource, block.content.text.length)
+        ?: return null
+    if (clipped.last + 1 != endInFragment) {
+        logHighlightTrace(
+            "note_end_skip id=${highlight.id} block=${last.blockIndex} " +
+                "reason=fragment_clips_end clipped=${clipped.first}..${clipped.last} " +
+                "endInFragment=$endInFragment"
+        )
+        return null
+    }
+    return last.blockIndex to endInFragment
 }
 
 /**

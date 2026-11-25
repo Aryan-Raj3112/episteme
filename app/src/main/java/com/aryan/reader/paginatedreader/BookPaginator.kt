@@ -526,50 +526,60 @@ class BookPaginator(
         }.getOrDefault(0L)
     }
 
-    private suspend fun loadCachedPagesForChapter(chapter: EpubChapter, chapterIndex: Int): List<Page>? {
-        val cachedPages = bookCacheDao.getPageCache(bookId, currentConfigHash, chapterIndex) ?: run {
-            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                "page_cache_lookup result=miss chapter=$chapterIndex configHash=$currentConfigHash"
-            )
-            return null
-        }
-        val expectedContentVersion = chapterContentVersion(chapter)
-        val isCompatible = cachedPages.processingVersion == LATEST_PROCESSING_VERSION &&
-            cachedPages.pageCacheVersion == LATEST_PAGE_CACHE_VERSION &&
-            cachedPages.contentVersion == expectedContentVersion
-
-        if (!isCompatible) {
-            Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                "page_cache_lookup result=stale chapter=$chapterIndex " +
-                    "cachedProcessing=${cachedPages.processingVersion} expectedProcessing=$LATEST_PROCESSING_VERSION " +
-                    "cachedPageCache=${cachedPages.pageCacheVersion} expectedPageCache=$LATEST_PAGE_CACHE_VERSION " +
-                    "cachedContent=${cachedPages.contentVersion} expectedContent=$expectedContentVersion"
-            )
-            Timber.d("Page cache stale for chapter $chapterIndex. Ignoring cached pages.")
-            return null
-        }
-
-        return try {
-            val pages = proto.decodeFromByteArray<List<Page>>(cachedPages.pagesProto)
-            if (pages.size != cachedPages.pageCount) {
-                Timber.w("Page cache count mismatch for chapter $chapterIndex. Ignoring cached pages.")
-                null
-            } else {
-                applyPageRuntimeIndexes(chapterIndex, pages)
-                updatePageCountsOnMain(chapterIndex, pages.size)
-                pageCache.put(chapterIndex, pages)
+    /**
+     * Loads a chapter's measured pages from the persistent cache, pinned off the caller's dispatcher.
+     *
+     * Decoding the cached [Page] list is whole-chapter work (protobuf + [applyPageRuntimeIndexes]),
+     * and [chapterContentVersion] CRCs the chapter's backing file first, so this must never run on the
+     * caller's dispatcher: `BookPaginator`'s init coroutine inherits the reader's
+     * `rememberCoroutineScope()` and therefore resumes on `AndroidUiDispatcher.Main`
+     * (docs/crashlytics-triage.md#139). Same reasoning as [ensureChapterPaginated] in #97.
+     */
+    private suspend fun loadCachedPagesForChapter(chapter: EpubChapter, chapterIndex: Int): List<Page>? =
+        withContext(Dispatchers.IO) {
+            val cachedPages = bookCacheDao.getPageCache(bookId, currentConfigHash, chapterIndex) ?: run {
                 Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
-                    "page_cache_lookup result=hit chapter=$chapterIndex configHash=$currentConfigHash " +
-                        pages.readerPagesLinkDiagSummary()
+                    "page_cache_lookup result=miss chapter=$chapterIndex configHash=$currentConfigHash"
                 )
-                Timber.i("Page cache HIT for chapter $chapterIndex. Loaded ${pages.size} measured pages.")
-                pages
+                return@withContext null
             }
-        } catch (e: Exception) {
-            Timber.e(e, "Failed to deserialize page cache for chapter $chapterIndex")
-            null
+            val expectedContentVersion = chapterContentVersion(chapter)
+            val isCompatible = cachedPages.processingVersion == LATEST_PROCESSING_VERSION &&
+                cachedPages.pageCacheVersion == LATEST_PAGE_CACHE_VERSION &&
+                cachedPages.contentVersion == expectedContentVersion
+
+            if (!isCompatible) {
+                Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                    "page_cache_lookup result=stale chapter=$chapterIndex " +
+                        "cachedProcessing=${cachedPages.processingVersion} expectedProcessing=$LATEST_PROCESSING_VERSION " +
+                        "cachedPageCache=${cachedPages.pageCacheVersion} expectedPageCache=$LATEST_PAGE_CACHE_VERSION " +
+                        "cachedContent=${cachedPages.contentVersion} expectedContent=$expectedContentVersion"
+                )
+                Timber.d("Page cache stale for chapter $chapterIndex. Ignoring cached pages.")
+                return@withContext null
+            }
+
+            try {
+                val pages = proto.decodeFromByteArray<List<Page>>(cachedPages.pagesProto)
+                if (pages.size != cachedPages.pageCount) {
+                    Timber.w("Page cache count mismatch for chapter $chapterIndex. Ignoring cached pages.")
+                    null
+                } else {
+                    applyPageRuntimeIndexes(chapterIndex, pages)
+                    updatePageCountsOnMain(chapterIndex, pages.size)
+                    pageCache.put(chapterIndex, pages)
+                    Timber.tag(TAG_PAGINATED_LINK_DIAG).d(
+                        "page_cache_lookup result=hit chapter=$chapterIndex configHash=$currentConfigHash " +
+                            pages.readerPagesLinkDiagSummary()
+                    )
+                    Timber.i("Page cache HIT for chapter $chapterIndex. Loaded ${pages.size} measured pages.")
+                    pages
+                }
+            } catch (e: Exception) {
+                Timber.e(e, "Failed to deserialize page cache for chapter $chapterIndex")
+                null
+            }
         }
-    }
 
     private suspend fun savePageCache(chapter: EpubChapter, chapterIndex: Int, pages: List<Page>) {
         // Once accurate pages exist, finish their atomic persistence even if the reader closes.
@@ -1818,6 +1828,15 @@ class BookPaginator(
         findStableLocatorForAnchor(targetChapterIndex, anchor)
     }
 
+    /**
+     * Page for a search hit.
+     *
+     * The locator path already resolves the hit in the paginator's own text
+     * (word-start ordinal, then the hit's quote when the texts drifted), so the
+     * old block-by-block re-count is gone: it used raw substring matching, only
+     * looked at four block types, and silently fell back to the chapter's first
+     * page — which is what made footnote/endnote hits page backwards.
+     */
     suspend fun findStablePageForSearchResult(result: SearchResult): Int? = withContext(Dispatchers.IO) {
         val targetChapterIndex = result.locationInSource
         Timber.i("Finding page for search result: '${result.query}' in chapter $targetChapterIndex")
@@ -1829,46 +1848,10 @@ class BookPaginator(
             }
         }
 
-        val chapterPages = ensureChapterPaginated(targetChapterIndex)
+        // Last resort: land inside the hit's chapter instead of claiming a page.
         val chapterStartPage = ensureStableStartPageForChapter(targetChapterIndex)
-
-        if (chapterPages == null || chapterStartPage == null) {
-            Timber.e("Search result navigation failed: Could not stabilize target chapter $targetChapterIndex.")
-            return@withContext null
-        }
-
-        var targetPageInChapter = 0
-        var occurrenceCount = 0
-
-        pageLoop@ for ((pageIndex, page) in chapterPages.withIndex()) {
-            for (block in page.content) {
-                val textToSearch = when (block) {
-                    is ParagraphBlock -> block.content.text
-                    is HeaderBlock -> block.content.text
-                    is QuoteBlock -> block.content.text
-                    is ListItemBlock -> block.content.text
-                    else -> null
-                }
-
-                if (textToSearch != null) {
-                    var lastIndex = -1
-                    while (true) {
-                        lastIndex = textToSearch.indexOf(result.query, startIndex = lastIndex + 1, ignoreCase = true)
-                        if (lastIndex == -1) break
-
-                        if (occurrenceCount == result.occurrenceIndexInLocation) {
-                            targetPageInChapter = pageIndex
-                            Timber.i("Found search result '${result.query}' at occurrence ${result.occurrenceIndexInLocation} on page $pageIndex of chapter $targetChapterIndex")
-                            break@pageLoop
-                        }
-                        occurrenceCount++
-                    }
-                }
-            }
-        }
-        val finalPageIndex = chapterStartPage + targetPageInChapter
-        Timber.i("Search result found. Final page index: $finalPageIndex")
-        finalPageIndex
+        Timber.w("Search result '${result.query}' unresolved in chapter $targetChapterIndex; landing at chapter start $chapterStartPage")
+        chapterStartPage
     }
 
     suspend fun findStableLocatorForSearchResult(result: SearchResult): Locator? = withContext(Dispatchers.IO) {

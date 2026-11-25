@@ -1,5 +1,7 @@
 package com.aryan.reader.shared.ui
 
+import com.aryan.reader.shared.READER_SEARCH_BLOCK_BOUNDARY_TAGS
+import com.aryan.reader.shared.READER_SEARCH_SKIPPED_TAGS
 import com.aryan.reader.shared.ReaderLocator
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import kotlin.test.Test
@@ -51,6 +53,34 @@ class SharedMobileEpubNavigationPayloadTest {
 
         assertTrue(script.contains("requestChunk(7)"))
         assertTrue(script.contains("setInterval"))
+    }
+
+    @Test
+    fun `search navigation script mirrors the shared matcher tables`() {
+        val result = SharedMobileEpubSearchResult(
+            chapterIndex = 0,
+            chapterTitle = "Chapter",
+            chunkIndex = 3,
+            occurrenceIndex = 1,
+            snippet = "needle",
+            matchQuote = "beta needle again",
+            locator = ReaderLocator(chapterIndex = 0, startOffset = 0),
+        )
+        val script = sharedMobileEpubSearchNavigationScript(result, "needle", "<p>needle</p>")
+
+        // The script carries its own copy of the boundary/skipped tag tables
+        // (no Kotlin objects inside a JS string), so a member added on only one
+        // side would silently desynchronise the occurrence ordinals.
+        READER_SEARCH_BLOCK_BOUNDARY_TAGS.forEach { tag ->
+            assertTrue(script.contains("$tag:1,") || script.contains("$tag:1}"), "missing boundary tag $tag")
+        }
+        READER_SEARCH_SKIPPED_TAGS.forEach { tag ->
+            assertTrue(script.contains("$tag:1,") || script.contains("$tag:1}"), "missing skipped tag $tag")
+        }
+        // Word-start matching, quote-anchored occurrence and a single mark class.
+        assertTrue(script.contains("wordChar"))
+        assertTrue(script.contains("compactQuote"))
+        assertTrue(script.contains("reader-ios-search-hit"))
     }
 
     @Test

@@ -104,7 +104,6 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -113,6 +112,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationDrawerItem
@@ -149,8 +149,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -384,6 +382,8 @@ fun SharedMobilePdfReaderScreen(
     onClosePdfTab: (BookItem) -> Unit = {},
     onBookInfoChange: (BookItem) -> Unit = {},
     knownTags: List<Tag> = emptyList(),
+    /** Opens the same tag editor the library uses; null keeps the info dialog read-only. */
+    onOpenTags: ((BookItem) -> Unit)? = null,
     pdfToolbarPreferences: PdfToolbarPreferences = PdfToolbarPreferences(),
     onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
     ocrLanguage: SharedPdfOcrLanguage = SharedPdfOcrLanguage.LATIN,
@@ -484,6 +484,7 @@ fun SharedMobilePdfReaderScreen(
         onClosePdfTab = onClosePdfTab,
         onBookInfoChange = onBookInfoChange,
         knownTags = knownTags,
+        onOpenTags = onOpenTags,
         pdfToolbarPreferences = pdfToolbarPreferences,
         onPdfToolbarPreferencesChange = onPdfToolbarPreferencesChange,
         initialShowTopToolbar = initialShowTopToolbar,
@@ -589,6 +590,8 @@ fun SharedMobilePdfReaderHost(
     onClosePdfTab: (BookItem) -> Unit = {},
     onBookInfoChange: (BookItem) -> Unit = {},
     knownTags: List<Tag> = emptyList(),
+    /** Opens the same tag editor the library uses; null keeps the info dialog read-only. */
+    onOpenTags: ((BookItem) -> Unit)? = null,
     pdfToolbarPreferences: PdfToolbarPreferences = PdfToolbarPreferences(),
     onPdfToolbarPreferencesChange: (PdfToolbarPreferences) -> Unit = {},
     ocrLanguage: SharedPdfOcrLanguage = SharedPdfOcrLanguage.LATIN,
@@ -5060,6 +5063,18 @@ fun SharedMobilePdfReaderHost(
             canEditEmbeddedMetadata = false,
             canRenameDisplayName = true,
             canRestoreEmbeddedMetadata = false,
+            // Android benchmark: the reader's book info shows tag chips and opens
+            // the tri-state tag sheet instead of a comma-separated text field.
+            editLibraryTags = false,
+            tagChipsContent = book.tags.takeIf { it.isNotEmpty() }?.let { tags ->
+                { SharedMobileBookTagChipsRow(tags = tags) }
+            },
+            onOpenTags = onOpenTags?.let { open ->
+                {
+                    showFileInformation = false
+                    open(book)
+                }
+            },
             onDismiss = { showFileInformation = false },
             onSave = { updated ->
                 onBookInfoChange(updated)
@@ -5376,47 +5391,30 @@ fun SharedMobilePdfReaderHost(
     if (showNewPdfTabSheet) {
         ModalBottomSheet(onDismissRequest = { showNewPdfTabSheet = false }) {
             val openIds = openPdfTabs.mapTo(mutableSetOf()) { it.id }
-            val candidates = availablePdfTabBooks
-                .filter { it.type == FileType.PDF && it.id !in openIds }
-                .sortedByDescending { it.timestamp }
-            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp)) {
-                Text(
-                    readerString("title_add_pdf_to_tab", "Add PDF to tab"),
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(16.dp),
-                )
-                if (candidates.isEmpty()) {
-                    Text(
-                        readerString("msg_no_other_pdfs_found", "No other PDFs found"),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
-                } else {
-                    LazyColumn(modifier = Modifier.fillMaxWidth()) {
-                        items(candidates, key = { "new_pdf_tab_${it.id}" }) { candidate ->
-                            ListItem(
-                                headlineContent = {
-                                    Text(
-                                        candidate.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                },
-                                supportingContent = candidate.author?.let { author ->
-                                    { Text(author, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                                },
-                                modifier = Modifier.clickable {
-                                    showNewPdfTabSheet = false
-                                    onOpenPdfTab(candidate)
-                                },
-                            )
-                            HorizontalDivider()
-                        }
+            val displayNameMode = LocalUsePdfFileNameAsDisplayName.current
+            val candidates = remember(availablePdfTabBooks, openIds, displayNameMode) {
+                availablePdfTabBooks
+                    .filter { it.type == FileType.PDF && it.id !in openIds }
+                    .sortedByDescending { it.timestamp }
+                    .map { book ->
+                        SharedReaderNewTabCandidate(
+                            bookId = book.id,
+                            title = book.cardTitle(displayNameMode),
+                            subtitle = book.author,
+                        )
                     }
-                }
             }
+            SharedReaderNewTabSheetContent(
+                title = readerString("title_add_pdf_to_tab", "Add PDF to tab"),
+                emptyMessage = readerString("msg_no_other_pdfs_found", "No other PDFs found"),
+                candidates = candidates,
+                onPick = { bookId ->
+                    showNewPdfTabSheet = false
+                    availablePdfTabBooks.firstOrNull { it.id == bookId }?.let(onOpenPdfTab)
+                },
+            )
         }
-        }
+    }
     }
 }
 
@@ -5428,61 +5426,23 @@ private fun SharedMobilePdfReaderTabStrip(
     onCloseTab: (BookItem) -> Unit,
     onNewTab: () -> Unit,
 ) {
-    LazyRow(
-        modifier = Modifier.fillMaxWidth().height(48.dp)
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
-        contentPadding = WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal).asPaddingValues(),
-        verticalAlignment = Alignment.Bottom,
-    ) {
-        items(tabs, key = { "pdf_reader_tab_${it.id}" }) { tab ->
-            val selected = tab.id == activeBookId
-            val contentColor = if (selected) {
-                MaterialTheme.colorScheme.onSurface
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant
-            }
-            Row(
-                modifier = Modifier
-                    .height(if (selected) 48.dp else 36.dp)
-                    .clip(RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-                    .background(if (selected) MaterialTheme.colorScheme.surface else Color.Transparent)
-                    .clickable { onOpenTab(tab) }
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 140.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = contentColor,
-                )
-                Spacer(Modifier.width(8.dp))
-                IconButton(onClick = { onCloseTab(tab) }, modifier = Modifier.size(20.dp)) {
-                    Icon(
-                        Icons.Default.Close,
-                        contentDescription = readerString("close_tab", "Close tab"),
-                        modifier = Modifier.size(16.dp),
-                        tint = contentColor,
-                    )
-                }
-            }
-        }
-        item {
-            IconButton(
-                onClick = onNewTab,
-                modifier = Modifier.padding(start = 8.dp, bottom = 4.dp).size(36.dp),
-            ) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = readerString("content_desc_new_tab", "New tab"),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-    }
+    val useFileName = LocalUsePdfFileNameAsDisplayName.current
+    SharedReaderTabStrip(
+        tabs = remember(tabs, useFileName) {
+            tabs.map { tab -> SharedReaderTab(tab.id, tab.cardTitle(useFileName)) }
+        },
+        activeBookId = activeBookId,
+        onSelect = { bookId -> tabs.firstOrNull { it.id == bookId }?.let(onOpenTab) },
+        onClose = { bookId -> tabs.firstOrNull { it.id == bookId }?.let(onCloseTab) },
+        onNewTab = onNewTab,
+        newTabContentDescription = readerString("content_desc_new_tab", "New tab"),
+        closeTabContentDescription = readerString("close_tab", "Close tab"),
+        modifier = Modifier.windowInsetsPadding(
+            WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
+        ),
+    )
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -5555,33 +5515,31 @@ private fun SharedMobilePdfReaderTopBar(
             searchFocusRequester.requestFocus()
         }
     }
-    var showMoreMenu by remember { mutableStateOf(false) }
-    var showHiddenToolsExpanded by remember { mutableStateOf(false) }
-    var showReadingModeExpanded by remember { mutableStateOf(false) }
-    var showTtsSettingsExpanded by remember { mutableStateOf(false) }
-    var showFileActionsExpanded by remember { mutableStateOf(false) }
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 4.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(
-                    if (applySystemBarInsets) {
-                        Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
-                    } else {
-                        Modifier
-                    }
-                )
-                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                .height(64.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
+    // The state object the Android PDF bar also uses: one menu, one set of nested sections and one
+    // sheet host instead of two menus that merely look alike.
+    val overflowMenuState = rememberSharedReaderOverflowMenuState()
+    var showMoreMenu by overflowMenuState.menuExpanded
+    var showHiddenToolsExpanded by overflowMenuState.hiddenToolsExpanded
+    var showReadingModeExpanded by overflowMenuState.readingModeExpanded
+    var showTtsSettingsExpanded by overflowMenuState.ttsSettingsExpanded
+    var showFileActionsExpanded by overflowMenuState.fileActionsExpanded
+    // The same surface and top row the Android PDF bar draws.
+    SharedReaderToolbarSurface(edge = SharedReaderBarEdge.TOP) {
+        SharedPdfTopToolbarRow(
+            topInset = if (applySystemBarInsets) {
+                WindowInsets.safeDrawing
+                    .only(WindowInsetsSides.Top)
+                    .asPaddingValues()
+                    .calculateTopPadding()
+            } else {
+                0.dp
+            },
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = readerString("tooltip_back", "Back"))
+            SharedReaderToolButton(
+                label = readerString("tooltip_back", "Back"),
+                onClick = onBack,
+            ) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
             }
             if (isSearchActive) {
                 OutlinedTextField(
@@ -5643,7 +5601,7 @@ private fun SharedMobilePdfReaderTopBar(
                     ) {
                         topTools.forEach { tool ->
                             when (tool) {
-                                PdfReaderTool.DICTIONARY -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) }) { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }
+                                PdfReaderTool.DICTIONARY -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) }) { Icon(SharedReaderIcons.ExternalApps, contentDescription = null) }
                                 PdfReaderTool.SPLIT_VIEW -> if (onOpenSplit != null) SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onOpenSplit) { Icon(Icons.Default.OpenInNew, contentDescription = null) }
                                 PdfReaderTool.THEME -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onTheme) { Icon(Icons.Default.Palette, contentDescription = null) }
                                 PdfReaderTool.BRIGHTNESS -> SharedMobilePdfTopToolButton(sharedPdfReaderToolLabel(tool), onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = null) }
@@ -5675,19 +5633,19 @@ private fun SharedMobilePdfReaderTopBar(
                     }
                 }
             }
-            Box {
-                IconButton(onClick = {
-                    showHiddenToolsExpanded = false
-                    showReadingModeExpanded = false
-                    showFileActionsExpanded = false
-                    showMoreMenu = true
-                }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = readerString("tooltip_more_options", "PDF options"))
-                }
-                SharedDropdownMenu(
-                    expanded = showMoreMenu,
-                    onDismissRequest = { showMoreMenu = false }
-                ) {
+            SharedReaderToolButton(
+                label = readerString("tooltip_more_options", "PDF options"),
+                onClick = overflowMenuState::open,
+                active = showMoreMenu,
+            ) {
+                Icon(Icons.Default.MoreVert, contentDescription = null)
+            }
+            // A sheet rather than a popup menu: the tool list is a destination, and this is the
+            // host the EPUB bar and the Android PDF bar open.
+            SharedReaderOverflowMenu(
+                state = overflowMenuState,
+                title = readerString("tooltip_more_options", "PDF options"),
+            ) {
                 SharedMobilePdfOverflowItem(
                     readerString("title_customize_toolbar", "Customize Toolbar"),
                     leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
@@ -5703,6 +5661,7 @@ private fun SharedMobilePdfReaderTopBar(
                 }
                 if (hiddenToolbarTools.isNotEmpty()) SharedMobilePdfOverflowItem(
                     readerString("toolbar_hidden_tools_menu", "Hidden tools"),
+                    leadingIcon = { Icon(SharedReaderIcons.Handyman, contentDescription = null) },
                     trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
                     onClick = { showHiddenToolsExpanded = !showHiddenToolsExpanded }
                 )
@@ -5714,7 +5673,7 @@ private fun SharedMobilePdfReaderTopBar(
                             action()
                         }
                         when (tool) {
-                            PdfReaderTool.DICTIONARY -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(SharedReaderIcons.Dictionary, contentDescription = null) }, onClick = { closeMenuAndRun { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) } })
+                            PdfReaderTool.DICTIONARY -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(SharedReaderIcons.ExternalApps, contentDescription = null) }, onClick = { closeMenuAndRun { onNativeAction(SharedMobilePdfNativeAction.DICTIONARY_SETTINGS) } })
                             PdfReaderTool.SPLIT_VIEW -> if (onOpenSplit != null) SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(Icons.Default.OpenInNew, contentDescription = null) }, onClick = { closeMenuAndRun(onOpenSplit) })
                             PdfReaderTool.THEME -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), onClick = { closeMenuAndRun(onTheme) })
                             PdfReaderTool.BRIGHTNESS -> SharedMobilePdfOverflowItem(sharedPdfReaderToolLabel(tool), leadingIcon = { Icon(SharedReaderIcons.Contrast, contentDescription = null) }, onClick = { closeMenuAndRun(onBrightness) })
@@ -5755,6 +5714,7 @@ private fun SharedMobilePdfReaderTopBar(
                 )
                 if (toolbarPreferences.isVisible(PdfReaderTool.OCR_LANGUAGE)) SharedMobilePdfOverflowItem(
                     "${readerString("menu_ocr_language", "OCR Language")}: ${ocrLanguage.displayName}",
+                    leadingIcon = { Icon(SharedReaderIcons.Translate, contentDescription = null) },
                     onClick = { showMoreMenu = false; onOcrLanguage() }
                 )
                 if (toolbarPreferences.isVisible(PdfReaderTool.VISUAL_OPTIONS)) SharedMobilePdfOverflowItem(
@@ -5767,6 +5727,7 @@ private fun SharedMobilePdfReaderTopBar(
                 )
                 if (toolbarPreferences.isVisible(PdfReaderTool.READING_MODE)) SharedMobilePdfOverflowItem(
                     readerString("menu_change_reading_mode", "Change Reading Mode"),
+                    leadingIcon = { Icon(SharedReaderIcons.MenuBook, contentDescription = null) },
                     trailingIcon = { Icon(Icons.Default.KeyboardArrowDown, contentDescription = null) },
                     onClick = { showReadingModeExpanded = !showReadingModeExpanded }
                 )
@@ -5807,6 +5768,7 @@ private fun SharedMobilePdfReaderTopBar(
                 }
                 if (toolbarPreferences.isVisible(PdfReaderTool.TAP_TO_TURN)) SharedMobilePdfOverflowItem(
                     readerString("menu_tap_to_turn_pages", "Tap to Turn Pages"),
+                    leadingIcon = { Icon(SharedReaderIcons.TouchApp, contentDescription = null) },
                     enabled = displayMode == PdfDisplayMode.PAGINATION,
                     trailingIcon = { if (tapToTurnPages) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_enabled", "Enabled")) },
                     onClick = {
@@ -5816,6 +5778,7 @@ private fun SharedMobilePdfReaderTopBar(
                 )
                 if (toolbarPreferences.isVisible(PdfReaderTool.PAGE_TURN_ANIM)) SharedMobilePdfOverflowItem(
                     readerString("menu_realistic_page_turns", "Realistic Page Turns"),
+                    leadingIcon = { Icon(SharedReaderIcons.PageTurn, contentDescription = null) },
                     enabled = displayMode == PdfDisplayMode.PAGINATION,
                     trailingIcon = { if (pageTurnAnimationEnabled) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_enabled", "Enabled")) },
                     onClick = {
@@ -5825,6 +5788,7 @@ private fun SharedMobilePdfReaderTopBar(
                 )
                 if (toolbarPreferences.isVisible(PdfReaderTool.KEEP_SCREEN_ON)) SharedMobilePdfOverflowItem(
                     readerString("menu_keep_screen_on", "Keep Screen On"),
+                    leadingIcon = { Icon(SharedReaderIcons.KeepScreenOn, contentDescription = null) },
                     trailingIcon = { if (keepScreenOn) Icon(Icons.Default.Check, contentDescription = readerString("content_desc_enabled", "Enabled")) },
                     onClick = {
                         showMoreMenu = false
@@ -5833,6 +5797,7 @@ private fun SharedMobilePdfReaderTopBar(
                 )
                 if (toolbarPreferences.isVisible(PdfReaderTool.AUTO_SCROLL)) SharedMobilePdfOverflowItem(
                     readerString("menu_auto_scroll", "Auto Scroll"),
+                    leadingIcon = { Icon(SharedReaderIcons.AutoScroll, contentDescription = null) },
                     enabled = !isTtsPlayingOrLoading && displayMode == PdfDisplayMode.VERTICAL_SCROLL,
                     onClick = {
                         showMoreMenu = false
@@ -5935,7 +5900,6 @@ private fun SharedMobilePdfReaderTopBar(
                         }
                     )
                 }
-                }
             }
         }
     }
@@ -6001,23 +5965,14 @@ private fun SharedMobilePdfTopToolButton(
     isLoading: Boolean = false,
     icon: @Composable () -> Unit
 ) {
-    IconButton(
+    SharedReaderToolButton(
+        label = label,
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier
-            .size(48.dp)
-            .semantics { contentDescription = label },
-    ) {
-        if (isLoading) {
-            CircularProgressIndicator(Modifier.size(20.dp))
-        } else {
-            CompositionLocalProvider(
-                LocalContentColor provides if (isActive) MaterialTheme.colorScheme.primary else LocalContentColor.current
-            ) {
-                icon()
-            }
-        }
-    }
+        active = isActive,
+        loading = isLoading,
+        content = icon,
+    )
 }
 
 private val SharedMobilePdfAvailableTools = setOf(
@@ -6188,36 +6143,30 @@ private fun SharedMobilePdfOverflowItem(
     trailingIcon: (@Composable () -> Unit)? = null,
     onClick: () -> Unit = {}
 ) {
-    Row(
-        modifier = Modifier
-            .width(300.dp)
-            .height(56.dp)
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-            leadingIcon?.invoke()
-        }
-        Text(
-            text = text,
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-            color = if (!enabled) {
-                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-            } else if (isError) {
-                MaterialTheme.colorScheme.error
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-            modifier = Modifier.weight(1f)
-        )
-        Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
-            trailingIcon?.invoke()
-        }
-    }
-    HorizontalDivider()
+    // The sheet's row language (tonal badge, 56dp target, error colour) instead of a hand-rolled
+    // menu row, so a PDF row and an EPUB row are the same object.
+    SharedReaderToolSheetRowItem(
+        text = {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+        },
+        onClick = onClick,
+        leadingIcon = leadingIcon,
+        trailingIcon = trailingIcon,
+        enabled = enabled,
+        colors = if (isError) {
+            MenuDefaults.itemColors(
+                textColor = MaterialTheme.colorScheme.error,
+                leadingIconColor = MaterialTheme.colorScheme.error,
+                trailingIconColor = MaterialTheme.colorScheme.error,
+            )
+        } else {
+            MenuDefaults.itemColors()
+        },
+    )
 }
 
 private enum class SharedMobilePdfSystemUiMode(val label: String) {
@@ -6319,7 +6268,7 @@ private fun SharedMobilePdfReaderBottomBar(
                                 ),
                             )
                         }
-                        PdfReaderTool.DICTIONARY -> SharedMobilePdfBottomToolButton(onClick = onDictionary) { Icon(SharedReaderIcons.Dictionary, contentDescription = sharedPdfReaderToolTitle(tool)) }
+                        PdfReaderTool.DICTIONARY -> SharedMobilePdfBottomToolButton(onClick = onDictionary) { Icon(SharedReaderIcons.ExternalApps, contentDescription = sharedPdfReaderToolTitle(tool)) }
                         PdfReaderTool.THEME -> SharedMobilePdfBottomToolButton(onClick = onTheme) { Icon(Icons.Default.Palette, contentDescription = sharedPdfReaderToolTitle(tool)) }
                         PdfReaderTool.BRIGHTNESS -> SharedMobilePdfBottomToolButton(onClick = onBrightness) { Icon(SharedReaderIcons.Contrast, contentDescription = sharedPdfReaderToolTitle(tool)) }
                         PdfReaderTool.LOCK_PANNING -> SharedMobilePdfBottomToolButton(onClick = onToggleScrollLock) { Icon(if (state.isScrollLocked) Icons.Default.Lock else Icons.Default.LockOpen, contentDescription = sharedPdfReaderToolLabel(tool, isScrollLocked = state.isScrollLocked)) }
@@ -6491,16 +6440,11 @@ private fun SharedMobilePdfTabsDrawerPage(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier) {
-        ListItem(
-            headlineContent = { Text(readerString("tabs", "Tabs")) },
-            supportingContent = { Text("${tabs.size}") },
-            trailingContent = {
-                TextButton(onClick = onNewTab) {
-                    Icon(Icons.Default.Add, contentDescription = null)
-                    Spacer(Modifier.width(4.dp))
-                    Text(readerString("content_desc_new_tab", "New tab"))
-                }
-            },
+        SharedDrawerTabsHeader(
+            title = readerString("active_tabs", "Active Tabs"),
+            openTabCount = tabs.size,
+            newTabContentDescription = readerString("content_desc_new_tab", "New tab"),
+            onNewTab = onNewTab,
         )
         ListItem(
             headlineContent = { Text(readerString("pdf_show_top_tab_strip", "Show top tab strip")) },
@@ -6515,32 +6459,19 @@ private fun SharedMobilePdfTabsDrawerPage(
             },
         )
         HorizontalDivider()
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize().padding(vertical = 8.dp)) {
             items(tabs, key = { "pdf_drawer_tab_${it.id}" }) { tab ->
-                ListItem(
-                    headlineContent = {
-                        Text(
-                            tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    supportingContent = tab.author?.let { author ->
-                        { Text(author, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    },
-                    leadingContent = if (tab.id == activeTabBookId) {
-                        { Icon(Icons.Default.Check, contentDescription = readerString("content_desc_enabled", "Selected")) }
-                    } else {
-                        null
-                    },
-                    trailingContent = {
-                        IconButton(onClick = { onCloseTab(tab) }) {
-                            Icon(Icons.Default.Close, contentDescription = readerString("close_tab", "Close tab"))
-                        }
-                    },
-                    modifier = Modifier.clickable { onOpenTab(tab) },
+                SharedDrawerTabRow(
+                    title = tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
+                    supportingText = tab.author,
+                    isSelected = tab.id == activeTabBookId,
+                    progress = tab.progressPercentage?.let { (it / 100f).coerceIn(0f, 1f) },
+                    onSelect = { onOpenTab(tab) },
+                    onClose = { onCloseTab(tab) },
+                    closeContentDescription = readerString("close_tab", "Close tab"),
+                    testTag = "PdfDrawerTab_${tab.id}",
+                    closeTestTag = "PdfDrawerTabClose_${tab.id}",
                 )
-                HorizontalDivider()
             }
         }
     }
@@ -6889,14 +6820,23 @@ private fun SharedMobilePdfAnnotationsDrawerPage(
         }
         return
     }
-    var notesOnly by remember { mutableStateOf(false) }
+    var filters by remember { mutableStateOf(SharedAnnotationFilterState()) }
     var deleteTarget by remember { mutableStateOf<SharedPdfAnnotation?>(null) }
-    val filtered = highlights.filter { !notesOnly || !it.note.isNullOrBlank() }
+    // Computed per composition rather than remembered: a host that hands in a mutable list keeps
+    // its identity across in-place edits, and a remembered projection would go stale.
+    val colorFilterOptions = highlights.map { it.colorArgb }
+    val filtered = highlights
+        .filter { filters.matches(it.colorArgb, it.note) }
         .sortedWith(compareBy({ it.pageIndex }, { it.createdAt }, { it.id }))
     Column(modifier) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = !notesOnly, onClick = { notesOnly = false }, label = { Text("All") })
-            FilterChip(selected = notesOnly, onClick = { notesOnly = true }, label = { Text("With notes") })
+        SharedAnnotationFilterBar(
+            filters = filters,
+            annotationColorArgbs = colorFilterOptions,
+            onFiltersChange = { filters = it },
+        )
+        if (filtered.isEmpty()) {
+            SharedAnnotationFilteredEmptyState(onClearFilters = { filters = filters.cleared() })
+            return@Column
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 16.dp)) {
             items(filtered, key = { it.id }) { annotation ->

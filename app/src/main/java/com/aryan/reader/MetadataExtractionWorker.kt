@@ -12,12 +12,14 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import com.aryan.reader.data.RecentFileItem
 import com.aryan.reader.data.RecentFilesRepository
 import com.aryan.reader.data.CloudFolderSyncRepository
 import com.aryan.reader.pdf.PdfiumCoreProvider
 import com.aryan.reader.pdf.PdfiumEngineProvider
 import com.aryan.reader.shared.ReaderPlatform
+import com.aryan.reader.shared.SharedComicInfoMetadata
 import com.aryan.reader.shared.SharedFileCapabilities
 import com.aryan.reader.shared.parseSharedDocumentXmlMetadata
 import com.aryan.reader.shared.sharedDocumentMetadataArchivePath
@@ -47,8 +49,16 @@ class MetadataExtractionWorker(
         const val WORK_NAME = "MetadataExtractionWorker"
         const val KEY_SOURCE_FOLDER_URI = "key_source_folder_uri"
         const val KEY_CLOUD_ROOT_ID = "key_cloud_root_id"
+        const val KEY_PROGRESS_PROCESSED = "key_progress_processed"
+        const val KEY_PROGRESS_TOTAL = "key_progress_total"
         private const val METADATA_DB_BATCH_SIZE = 100
         private const val METADATA_WORKER_BOOK_BATCH_SIZE = 300
+        /**
+         * WorkManager gives a worker ~10 minutes before it is stopped. Stopping mid-book wastes the
+         * whole batch, so the loop checks the clock and hands the remainder to a chained run instead.
+         */
+        private val METADATA_WORKER_TIME_BUDGET_NANOS = TimeUnit.MINUTES.toNanos(8)
+        private const val METADATA_PROGRESS_UPDATE_EVERY = 25
         private const val METADATA_PROGRESS_LOG_EVERY = 250
         private val TEXT_METADATA_TYPES = setOf(
             FileType.PDF,
@@ -57,7 +67,11 @@ class MetadataExtractionWorker(
             FileType.FB2,
             FileType.ODT,
             FileType.FODT,
-            FileType.DOCX
+            FileType.DOCX,
+            FileType.CBZ,
+            FileType.CBR,
+            FileType.CB7,
+            FileType.CBT
         )
         private val CONTENT_THUMBNAIL_TYPES = SharedFileCapabilities.readableTypesFor(ReaderPlatform.ANDROID) - FileType.EPUB
     }
@@ -179,10 +193,24 @@ class MetadataExtractionWorker(
                 pendingUpdates.clear()
             }
 
-            filesToProcess.forEach { item ->
-                if (isStopped) return@forEach
+            var budgetExhausted = false
+            var budgetReached = false
+            val budgetNanos = METADATA_WORKER_TIME_BUDGET_NANOS
+            for (item in filesToProcess) {
+                if (isStopped) {
+                    budgetReached = true
+                    break
+                }
+                if (ReaderPerfLog.nowNanos() - workerStart >= budgetNanos) {
+                    budgetReached = true
+                    budgetExhausted = true
+                    ReaderPerfLog.d(
+                        "MetadataWorker pausing at time budget processed=$processed remaining=${filesToProcess.size - processed}"
+                    )
+                    break
+                }
 
-                if (item.sourceFolderUri == null) return@forEach
+                if (item.sourceFolderUri == null) continue
 
                 var needsTextMetadata = item.type in TEXT_METADATA_TYPES && !item.folderTextMetadataParsed
                 var needsEmbeddedCover = false
@@ -195,18 +223,18 @@ class MetadataExtractionWorker(
                             cloudFolderLogW(
                                 "event=metadata_extract_item result=skipped reason=source_unavailable " +
                                     "book=${cloudFolderSafeId(item.bookId)} " +
-                                    "folder=${cloudFolderSafeUri(item.sourceFolderUri?.toUri())}"
+                                    "folder=${cloudFolderSafeUri(item.sourceFolderUri.toUri())}"
                             )
-                            return@forEach
+                            continue
                         }
                     if (!isReadableSource(uri)) {
                         failed++
                         cloudFolderLogW(
                             "event=metadata_extract_item result=skipped reason=source_unavailable " +
                                 "book=${cloudFolderSafeId(item.bookId)} " +
-                                "folder=${cloudFolderSafeUri(item.sourceFolderUri?.toUri())}"
+                                "folder=${cloudFolderSafeUri(item.sourceFolderUri.toUri())}"
                         )
-                        return@forEach
+                        continue
                     }
                     val fileSize = item.fileSize.takeIf { it > 0L } ?: queryFileSize(uri)
                     val existingCoverIsAvailable = item.coverImagePath?.let { File(it).isFile } == true
@@ -239,6 +267,21 @@ class MetadataExtractionWorker(
                             }
                         }
                         FileType.PDF -> parsePdfTextMetadata(uri)
+                        FileType.CBZ,
+                        FileType.CBR,
+                        FileType.CB7,
+                        FileType.CBT -> {
+                            if (needsTextMetadata) {
+                                ComicInfoArchiveReader.read(
+                                    type = item.type,
+                                    openStream = { openInputStream(uri) },
+                                    openFileDescriptor = { openFileDescriptor(uri) },
+                                    cacheDir = appContext.cacheDir
+                                )?.toTextMetadata() ?: TextMetadata()
+                            } else {
+                                TextMetadata()
+                            }
+                        }
                         FileType.ODT -> parseZipTextMetadata(uri, requireNotNull(sharedDocumentMetadataArchivePath(item.type)))
                         FileType.FODT -> parseFlatXmlTextMetadata(uri)
                         FileType.DOCX,
@@ -259,7 +302,12 @@ class MetadataExtractionWorker(
                     val seriesIndexChanged = seriesIndex != null && seriesIndex != item.seriesIndex
                     val coverPath = if (needsEmbeddedCover) {
                         metadata.cover?.let { cover ->
-                            recentFilesRepository.saveEmbeddedCoverToCache(cover.bytes, uri, cover.extension)
+                            recentFilesRepository.saveEmbeddedCoverToCache(
+                                bytes = cover.bytes,
+                                uri = uri,
+                                extension = cover.extension,
+                                previousPath = item.coverImagePath,
+                            )
                         }
                     } else {
                         null
@@ -270,7 +318,11 @@ class MetadataExtractionWorker(
                         // source validation used by text extraction.
                         contentThumbnailGenerator.generate(item.copy(uriString = uri.toString()))?.let { thumbnail ->
                             try {
-                                recentFilesRepository.saveCoverToCache(thumbnail, uri)
+                                recentFilesRepository.saveCoverToCache(
+                                    bitmap = thumbnail,
+                                    uri = uri,
+                                    previousPath = item.coverImagePath,
+                                )
                             } finally {
                                 thumbnail.recycle()
                             }
@@ -306,6 +358,14 @@ class MetadataExtractionWorker(
                     }
 
                     processed++
+                    if (processed % METADATA_PROGRESS_UPDATE_EVERY == 0) {
+                        setProgressAsync(
+                            workDataOf(
+                                KEY_PROGRESS_PROCESSED to processed,
+                                KEY_PROGRESS_TOTAL to filesToProcess.size,
+                            )
+                        )
+                    }
                     if (processed % METADATA_PROGRESS_LOG_EVERY == 0) {
                         ReaderPerfLog.d(
                             "MetadataWorker progress mode=metadata processed=$processed updated=$updated covers=$coversUpdated failed=$failed"
@@ -332,12 +392,17 @@ class MetadataExtractionWorker(
 
             flushUpdates()
 
-            val nextBatchEnqueued = !isStopped &&
-                failed == 0 &&
-                filesToProcess.size >= METADATA_WORKER_BOOK_BATCH_SIZE &&
+            // Chain when this run made progress but work remains (more than one batch, a time
+            // budget stop, or a stopped worker). A run that failed on every item does not chain:
+            // it retries with backoff so a transient outage cannot spin through the pending list.
+            val madeProgress = processed > 0 || budgetExhausted
+            val nextBatchEnqueued = !isStopped && madeProgress &&
                 recentFilesRepository.hasFolderBooksNeedingTextMetadata(sourceFolderUri)
             if (nextBatchEnqueued) {
                 enqueueNextBatch(sourceFolderUri, resolvedRootId)
+            }
+            if (budgetReached && !nextBatchEnqueued) {
+                ReaderPerfLog.d("MetadataWorker stopped early processed=$processed failed=$failed")
             }
 
             ReaderPerfLog.i(
@@ -351,7 +416,11 @@ class MetadataExtractionWorker(
                     "durationMs=${ReaderPerfLog.elapsedMs(workerStart)}",
             )
 
-            return@withContext if (shouldRetryMetadataExtraction(failed, runAttemptCount)) {
+            // A chained batch already covers the remaining work; retrying on top of it would
+            // re-walk the same pending rows in parallel with the chain.
+            val shouldRetry = !nextBatchEnqueued &&
+                shouldRetryMetadataExtraction(failed, runAttemptCount)
+            return@withContext if (shouldRetry) {
                 ReaderPerfLog.w(
                     "MetadataWorker scheduling retry attempt=${runAttemptCount + 1} failed=$failed " +
                         "folder=${sourceFolderUri ?: "ALL"}"
@@ -591,6 +660,16 @@ class MetadataExtractionWorker(
         return value
             ?.trim()
             ?.takeIf { it.isNotBlank() && !it.equals("Unknown", ignoreCase = true) }
+    }
+
+    private fun SharedComicInfoMetadata.toTextMetadata(): TextMetadata {
+        return TextMetadata(
+            title = title,
+            author = author,
+            description = description,
+            seriesName = seriesName,
+            seriesIndex = seriesIndex
+        )
     }
 
     private fun EmbeddedEbookMetadata.toTextMetadata(): TextMetadata {

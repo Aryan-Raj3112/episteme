@@ -204,6 +204,16 @@ internal fun PaginatedReaderContent(
     chapterHighlightIndexes: ChapterHighlightIndexes,
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
+    /**
+     * Recolour/restyle a highlight that already exists, by id.
+     *
+     * A selection made inside an existing highlight is the same highlight, and the WebView surface
+     * has always treated a colour tap there as an edit (`updateHighlightStyle`), not as a second
+     * annotation stacked on the first. Adding one here instead made the tap look like it did nothing:
+     * the new highlight covered the same words with the same colour, so nothing visibly changed while
+     * the annotation list grew.
+     */
+    onHighlightRecolored: (highlightId: String, colorArgb: Int, style: HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
@@ -220,6 +230,14 @@ internal fun PaginatedReaderContent(
     val imageLoader = context.imageLoader
     val textMeasurer = rememberTextMeasurer()
     var activeSelection by remember { mutableStateOf<PaginatedSelection?>(null) }
+    // Resolved highlights of the page the active selection starts on, published by that page.
+    //
+    // The selection menu lives above the pages, so it never sees the block-local ranges that a page
+    // resolves; without them it cannot tell whether the selected words are already highlighted, and
+    // it used to answer that question by marking the palette's first colour. The page owns both the
+    // answer and the coordinate space, so it publishes the pair (book page, resolution) here and the
+    // menu only accepts the entry for the selection's own page.
+    val selectionPageHighlights = remember { mutableStateOf<Pair<Int, PaginatedPageHighlights>?>(null) }
 
     if (showExternalLinkDialog != null) {
         val urlToShow = showExternalLinkDialog!!
@@ -366,6 +384,13 @@ internal fun PaginatedReaderContent(
                 highlights = userHighlights,
                 chapterTextIndex = pageChapterIndexValue
             )
+        }
+        // Publish this page's resolution for the selection menu (see selectionPageHighlights).
+        val selectionStartsHere = activeSelection?.startPageIndex == bookPageIndex
+        LaunchedEffect(bookPageIndex, pageUserHighlights, selectionStartsHere) {
+            if (selectionStartsHere) {
+                selectionPageHighlights.value = bookPageIndex to pageUserHighlights
+            }
         }
         val themedPageContent = remember(pageContent, isDarkTheme, effectiveBg, effectiveText) {
             pageContent?.applyReaderThemeForDisplay(
@@ -1031,7 +1056,8 @@ internal fun PaginatedReaderContent(
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
                                                 userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1085,7 +1111,8 @@ internal fun PaginatedReaderContent(
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
                                                 userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1142,7 +1169,8 @@ internal fun PaginatedReaderContent(
                                                 onGeneralTap = onGeneralTapCallback,
                                                 block = block,
                                                 userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                 activeSelection = activeSelection,
                                                 onSelectionChange = { sel ->
                                                     activeSelection = sel
@@ -1230,7 +1258,8 @@ internal fun PaginatedReaderContent(
                                                     onGeneralTap = onGeneralTapCallback,
                                                     block = block,
                                                     userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                    highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                    noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                     activeSelection = activeSelection,
                                                     onSelectionChange = { sel ->
                                                         activeSelection = sel
@@ -1276,15 +1305,11 @@ internal fun PaginatedReaderContent(
                                         }
 
                                         is FlexContainerBlock -> {
-
-                                            if (block.style.flexDirection == "row") {
-                                                val horizontalArrangement =
-                                                    nativeFlexRowHorizontalArrangement(block.style.justifyContent)
-                                                val verticalAlignment =
-                                                    nativeFlexRowVerticalAlignment(block.style.alignItems)
-                                                val chantChildren: @Composable () -> Unit = {
-                                                    block.children.forEach { childBlock ->
-                                                        RenderFlexChildBlock(
+                                            // One argument list for both flex directions: an item that opts out of
+                                            // stretch is wrapped in its own alignment box instead of repeating
+                                            // these parameters at each call site.
+                                            val renderFlexChild: @Composable (ContentBlock) -> Unit = { childBlock ->
+                                                RenderFlexChildBlock(
                                                             childBlock = childBlock,
                                                             textStyle = textStyle,
                                                             imageSizeMultiplier = imageSizeMultiplier,
@@ -1298,6 +1323,7 @@ internal fun PaginatedReaderContent(
                                                             onGeneralTapCallback = onGeneralTapCallback,
                                                             userHighlights = pageUserHighlights.highlights,
                                                             highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                                            noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                                             activeSelection = activeSelection,
                                                             onSelectionChange = { sel ->
                                                                 activeSelection =
@@ -1317,74 +1343,70 @@ internal fun PaginatedReaderContent(
                                                             density = density,
                                                             imageLoader = imageLoader,
                                                             pageIndex = bookPageIndex
-                                                        )
-                                                    }
-                                                }
+                                                )
+                                            }
+
+                                            if (block.style.isFlexRow) {
+                                                val horizontalArrangement = nativeFlexRowHorizontalArrangement(
+                                                    block.style.justifyContent,
+                                                    block.style.flexMainAxisGap
+                                                )
+                                                val verticalAlignment = nativeFlexRowVerticalAlignment(block.style.alignItems)
                                                 if (block.style.display == "reader-chant-flow") {
                                                     FlowRow(
                                                         modifier = paddingModifier.fillMaxWidth(),
                                                         horizontalArrangement = Arrangement.SpaceBetween,
                                                         verticalArrangement = Arrangement.Bottom,
-                                                        content = { chantChildren() }
+                                                        content = { block.children.forEach { childBlock -> renderFlexChild(childBlock) } }
                                                     )
                                                 } else {
                                                     Row(
                                                         modifier = paddingModifier.fillMaxWidth(),
                                                         horizontalArrangement = horizontalArrangement,
-                                                        verticalAlignment = verticalAlignment,
-                                                        content = { chantChildren() }
-                                                    )
+                                                        verticalAlignment = verticalAlignment
+                                                    ) {
+                                                        block.children.forEach { childBlock ->
+                                                            if (childBlock.style.hasSelfAlignment()) {
+                                                                val alignment = nativeFlexRowChildVerticalAlignment(
+                                                                    childBlock.style.alignSelf,
+                                                                    block.style.alignItems
+                                                                )
+                                                                Box(modifier = Modifier.align(alignment)) {
+                                                                    renderFlexChild(childBlock)
+                                                                }
+                                                            } else {
+                                                                renderFlexChild(childBlock)
+                                                            }
+                                                        }
+                                                    }
                                                 }
                                             } else {
-                                                val verticalArrangement =
-                                                    nativeFlexColumnVerticalArrangement(block.style.justifyContent)
-                                                val horizontalAlignment =
-                                                    nativeFlexColumnHorizontalAlignment(block.style.alignItems)
+                                                val verticalArrangement = nativeFlexColumnVerticalArrangement(
+                                                    block.style.justifyContent,
+                                                    block.style.flexMainAxisGap
+                                                )
+                                                val horizontalAlignment = nativeFlexColumnHorizontalAlignment(block.style.alignItems)
                                                 Column(
                                                     modifier = paddingModifier.fillMaxWidth(),
                                                     verticalArrangement = verticalArrangement,
                                                     horizontalAlignment = horizontalAlignment
                                                 ) {
                                                     block.children.forEach { childBlock ->
-                                                        RenderFlexChildBlock(
-                                                            childBlock = childBlock,
-                                                            textStyle = textStyle,
-                                                            imageSizeMultiplier = imageSizeMultiplier,
-                                                            hideImages = hideImages,
-                                                            searchQuery = searchQuery,
-                                                            searchHighlightColor = searchHighlightColor,
-                                                            ttsHighlightInfo = ttsHighlightInfo,
-                                                            ttsHighlightColor = ttsHighlightColor,
-                                                            textMeasurer = textMeasurer,
-                                                            onLinkClickCallback = onLinkClickCallback,
-                                                            onGeneralTapCallback = onGeneralTapCallback,
-                                                            userHighlights = pageUserHighlights.highlights,
-                                                            highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
-                                                            activeSelection = activeSelection,
-                                                            onSelectionChange = { sel ->
-                                                                activeSelection =
-                                                                    sel
-                                                            },
-                                                            onHighlightClick = { highlight, _ ->
-                                                                onNoteRequested(
-                                                                    highlight.cfi
-                                                                )
-                                                                activeSelection =
-                                                                    null
-                                                            },
-                                                            isDarkTheme = isDarkTheme,
-                                                            themeBackgroundColor = effectiveBg,
-                                                            themeTextColor = effectiveText,
-                                                            blockLayoutMap = blockLayoutMap,
-                                                            density = density,
-                                                            imageLoader = imageLoader,
-                                                            pageIndex = bookPageIndex
-                                                        )
+                                                        if (childBlock.style.hasSelfAlignment()) {
+                                                            val alignment = nativeFlexColumnChildAlignment(
+                                                                childBlock.style.alignSelf,
+                                                                block.style.alignItems
+                                                            )
+                                                            Box(modifier = Modifier.align(alignment)) {
+                                                                renderFlexChild(childBlock)
+                                                            }
+                                                        } else {
+                                                            renderFlexChild(childBlock)
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
-
                                         is MathBlock -> {
                                             val svgContent = block.svgContent?.takeIf { it.isNotBlank() }
                                             Timber.d(
@@ -2144,6 +2166,30 @@ internal fun PaginatedReaderContent(
                             }
                         }
 
+                        // The highlight this selection already sits in, if any. The menu has to show
+                        // that highlight's colour and style rather than a colour nobody picked, and a
+                        // colour tap then edits it: on the WebView surface the same gesture has always
+                        // updated the existing highlight instead of adding a second one over it.
+                        val publishedSelectionHighlights = selectionPageHighlights.value
+                            ?.takeIf { it.first == sel.startPageIndex }
+                            ?.second
+                        val highlightUnderSelection = remember(
+                            sel.startBlockIndex,
+                            sel.startOffset,
+                            sel.endOffset,
+                            sel.endPageIndex,
+                            publishedSelectionHighlights
+                        ) {
+                            if (sel.startBlockIndex == sel.endBlockIndex) {
+                                publishedSelectionHighlights?.highlightCovering(
+                                    blockIndex = sel.startBlockIndex,
+                                    start = sel.startOffset,
+                                    end = sel.endOffset
+                                )
+                            } else {
+                                null
+                            }
+                        }
                         Popup(
                             popupPositionProvider = remember(
                                 menuAnchorRect,
@@ -2184,12 +2230,24 @@ internal fun PaginatedReaderContent(
                                     activeSelection = null
                                 },
                                 onHighlight = { color, style ->
-                                    val finalCfi =
-                                        "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                    val locator = sel.toSharedHighlightLocator(
-                                        chapterIndex = onGetChapterIndex(sel.startPageIndex),
-                                        cfi = finalCfi
+                                    val existing = highlightUnderSelection
+                                    if (existing != null) {
+                                        Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                            "recolor_request source=highlight_menu colorArgb=$color " +
+                                                "highlightId=${existing.id} style=${style.id} " +
+                                                "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                        )
+                                        onHighlightRecolored(existing.id, color, style)
+                                        activeSelection = null
+                                        return@PaginatedTextSelectionMenu
+                                    }
+                                    val chapterIndex = onGetChapterIndex(sel.startPageIndex)
+                                    val placement = sel.toHighlightPlacement(
+                                        chapterIndex = chapterIndex,
+                                        chapterTextIndex = chapterHighlightIndexes.forChapter(chapterIndex)
                                     )
+                                    val finalCfi = placement.cfi
+                                    val locator = placement.locator
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                         "create_request source=highlight_menu colorArgb=$color " +
                                             "savedCfi=$finalCfi " +
@@ -2213,12 +2271,13 @@ internal fun PaginatedReaderContent(
                                 },
                                 onNote = { style ->
                                     onNoteRequested(null)
-                                    val finalCfi =
-                                        "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                    val locator = sel.toSharedHighlightLocator(
-                                        chapterIndex = onGetChapterIndex(sel.startPageIndex),
-                                        cfi = finalCfi
+                                    val chapterIndex = onGetChapterIndex(sel.startPageIndex)
+                                    val placement = sel.toHighlightPlacement(
+                                        chapterIndex = chapterIndex,
+                                        chapterTextIndex = chapterHighlightIndexes.forChapter(chapterIndex)
                                     )
+                                    val finalCfi = placement.cfi
+                                    val locator = placement.locator
                                     Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                         "create_request source=note_menu color=${HighlightColor.YELLOW.id} " +
                                             "savedCfi=$finalCfi " +
@@ -2249,6 +2308,8 @@ internal fun PaginatedReaderContent(
                                 isProUser = isProUser,
                                 isOss = isOss,
                                 activeHighlightPalette = activeHighlightPalette,
+                                selectedColorArgb = highlightUnderSelection?.effectiveArgb,
+                                selectedStyle = highlightUnderSelection?.style,
                                 onOpenPaletteManager = { showPaletteManager = true })
                         }
                     }
@@ -2654,6 +2715,13 @@ internal fun RenderFlexChildBlock(
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
     highlightRanges: Map<String, List<IntRange>>,
+    /**
+     * Exclusive end offset, in this block's own coordinates, of each highlight that *ends* here. A
+     * highlight that merely passes through this block gets nothing, so a note mark never lands in the
+     * middle of a paragraph it is still crossing. See
+     * [com.aryan.reader.paginatedreader.PaginatedPageHighlights.noteBadgeEndsForBlock].
+     */
+    noteBadgeEndOffsets: Map<String, Int> = emptyMap(),
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -2678,15 +2746,54 @@ internal fun RenderFlexChildBlock(
             color = ttsHighlightColor
         )
 
-        val finalStyle = when (block) {
-            is HeaderBlock -> createHeaderTextStyle(
-                baseStyle = textStyle,
-                level = block.level,
-                textAlign = block.textAlign
-            )
-            is ParagraphBlock -> textStyle.copy(textAlign = block.textAlign ?: textStyle.textAlign)
-            is QuoteBlock -> textStyle.copy(textAlign = block.textAlign ?: textStyle.textAlign)
-            is ListItemBlock -> textStyle
+        // Keyed on cheap values, never on `block` itself: a `TextContentBlock` compares its whole
+        // `AnnotatedString` graph, and this composition path is where the reader spends its frames
+        // (docs/crashlytics-triage.md#131/#138).
+        val headerLevel = (block as? HeaderBlock)?.level
+        val blockTextAlign = when (block) {
+            is HeaderBlock -> block.textAlign
+            is ParagraphBlock -> block.textAlign
+            is QuoteBlock -> block.textAlign
+            is ListItemBlock -> null
+        }
+        val finalStyle = remember(textStyle, headerLevel, blockTextAlign) {
+            when {
+                headerLevel != null -> createHeaderTextStyle(
+                    baseStyle = textStyle,
+                    level = headerLevel,
+                    textAlign = blockTextAlign
+                )
+                // `copy(textAlign = textStyle.textAlign)` when the block has no alignment would be an
+                // equal-but-new instance on every pass; returning the base style is equivalent.
+                blockTextAlign != null -> textStyle.copy(textAlign = blockTextAlign)
+                else -> textStyle
+            }
+        }
+
+        // `onGloballyPositioned` reads this callback during the layout pass, so it has to see the
+        // current block/page — but handing down a freshly allocated lambda made
+        // `TextWithEmphasis`'s group "changed" on every pass (the composer's `changedInstance` on
+        // this argument was where a scroll ANR was sampled) and re-created its
+        // `onGloballyPositioned` modifier node each time. The reads go through
+        // `rememberUpdatedState` instead, so the instance handed down is stable
+        // (docs/crashlytics-triage.md#138).
+        val layoutBlock by rememberUpdatedState(block)
+        val layoutPageIndex by rememberUpdatedState(pageIndex)
+        val layoutMap by rememberUpdatedState(blockLayoutMap)
+        val registerLayout = remember(registerStableLayoutKey) {
+            { layout: TextLayoutResult, coords: LayoutCoordinates ->
+                val currentBlock = layoutBlock
+                val cfi = currentBlock.cfi
+                if (cfi != null) {
+                    val currentPageIndex = layoutPageIndex
+                    val key = if (registerStableLayoutKey) {
+                        textBlockLayoutKey(cfi, currentPageIndex, currentBlock)
+                    } else {
+                        legacyTextBlockLayoutKey(cfi, currentPageIndex)
+                    }
+                    layoutMap[key] = Triple(layout, coords, currentBlock)
+                }
+            }
         }
 
         TextWithEmphasis(
@@ -2700,22 +2807,15 @@ internal fun RenderFlexChildBlock(
             block = block,
             userHighlights = userHighlights,
             highlightRanges = highlightRanges,
+            noteBadgeEndOffsets = noteBadgeEndOffsets,
             activeSelection = activeSelection,
             onSelectionChange = onSelectionChange,
             onHighlightClick = onHighlightClick,
             isDarkTheme = isDarkTheme,
             themeBackgroundColor = themeBackgroundColor,
             themeTextColor = themeTextColor,
-            onRegisterLayout = { layout, coords ->
-                block.cfi?.let { cfi ->
-                    val key = if (registerStableLayoutKey) {
-                        textBlockLayoutKey(cfi, pageIndex, block)
-                    } else {
-                        legacyTextBlockLayoutKey(cfi, pageIndex)
-                    }
-                    blockLayoutMap[key] = Triple(layout, coords, block)
-                }
-            })
+            onRegisterLayout = registerLayout
+        )
     }
 
     when (childBlock) {
@@ -2956,6 +3056,7 @@ internal fun RenderFlexChildBlock(
                         onGeneralTapCallback = onGeneralTapCallback,
                         userHighlights = userHighlights,
                         highlightRanges = highlightRanges,
+                        noteBadgeEndOffsets = noteBadgeEndOffsets,
                         activeSelection = activeSelection,
                         onSelectionChange = onSelectionChange,
                         onHighlightClick = onHighlightClick,

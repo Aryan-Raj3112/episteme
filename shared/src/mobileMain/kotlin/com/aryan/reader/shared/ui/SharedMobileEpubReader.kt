@@ -18,6 +18,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,10 +41,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.ScrollableTabRow
+import com.aryan.reader.shared.epub.EpubDrawerCapabilities
+import com.aryan.reader.shared.epub.EpubDrawerSection
+import com.aryan.reader.shared.epub.epubDrawerSections
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -116,6 +122,8 @@ import com.aryan.reader.shared.ReaderTtsOverlaySize
 import com.aryan.reader.shared.readerTtsOverlayAlignmentBias
 import com.aryan.reader.shared.ReaderBookReplacementEngine
 import com.aryan.reader.shared.ReaderBookReplacementPreferences
+import com.aryan.reader.shared.cardTitle
+import com.aryan.reader.shared.isDerivedReflowBookId
 import com.aryan.reader.shared.currentTimestamp
 import com.aryan.reader.shared.matchingReaderBookmark
 import com.aryan.reader.shared.withoutMatchingReaderBookmarks
@@ -135,6 +143,7 @@ import com.aryan.reader.shared.withReaderThemeFrom
 import com.aryan.reader.shared.reader.ReaderBookmark
 import com.aryan.reader.shared.reader.ReaderEngine
 import com.aryan.reader.shared.reader.ReaderJumpHistory
+import com.aryan.reader.shared.reader.ReaderPerceptionLinesSettings
 import com.aryan.reader.shared.reader.PaginatedReaderState
 import com.aryan.reader.shared.reader.ReaderSessionState
 import com.aryan.reader.shared.reader.SharedEpubBook
@@ -251,6 +260,8 @@ fun SharedMobileEpubReaderScreen(
     onMetadataLoaded: (title: String, author: String?) -> Unit = { _, _ -> },
     onBookInfoChange: (BookItem) -> Unit = {},
     knownTags: List<Tag> = emptyList(),
+    /** Opens the same tag editor the library uses; null keeps the info dialog read-only. */
+    onOpenTags: ((BookItem) -> Unit)? = null,
     onKeepScreenOnChange: (Boolean) -> Unit = {},
     appIsActive: Boolean = true,
     appLifecycleEventId: Long = 0L,
@@ -315,6 +326,8 @@ fun SharedMobileEpubReaderScreen(
     onAutoScrollMusicianModePreferenceChange: (Boolean) -> Unit = {},
     initialPageSliderVisible: Boolean = false,
     onPageSliderVisibilityPreferenceChange: (Boolean) -> Unit = {},
+    initialPerceptionLines: ReaderPerceptionLinesSettings = ReaderPerceptionLinesSettings(),
+    onPerceptionLinesChange: (ReaderPerceptionLinesSettings) -> Unit = {},
     initialUseNativeVerticalRenderer: Boolean = false,
     onUseNativeVerticalRendererPreferenceChange: (Boolean) -> Unit = {},
     onTtsError: ((String) -> Unit)? = null,
@@ -372,6 +385,21 @@ fun SharedMobileEpubReaderScreen(
      */
     librarySearchDeepLink: SharedLibrarySearchDeepLink? = null,
     onLibrarySearchDeepLinkConsumed: () -> Unit = {},
+    /**
+     * The reflow reader's own tab set. Kept separate from the page renderer's set so a tap always
+     * stays inside this engine, and defaulted empty so a host without tabs renders unchanged.
+     */
+    textTabs: List<BookItem> = emptyList(),
+    activeTextTabBookId: String? = null,
+    textTabsEnabled: Boolean = true,
+    /** True for a derived reflow view, which owns no tab and so shows no strip. */
+    tabStripHidden: Boolean = false,
+    onOpenTextTab: (BookItem) -> Unit = {},
+    onCloseTextTab: (BookItem) -> Unit = {},
+    /** Reflow books the host can offer as a new tab; the reader owns the sheet that lists them. */
+    newTextTabCandidates: List<BookItem> = emptyList(),
+    onNewTextTabPicked: (BookItem) -> Unit = {},
+    usePdfFileNameAsDisplayName: Boolean = false,
 ) {
     val motionPolicy = rememberReaderMotionPolicy()
     remember(book.id) {
@@ -685,6 +713,7 @@ fun SharedMobileEpubReaderScreen(
     var showFormatSheet by remember(book.id) { mutableStateOf(false) }
     var showJustifyWarningDialog by remember(book.id) { mutableStateOf(false) }
     var showThemeSheet by remember(book.id) { mutableStateOf(false) }
+    var showNewTabSheet by remember(book.id) { mutableStateOf(false) }
     var showVisualOptionsSheet by remember(book.id) { mutableStateOf(false) }
     var showSearch by remember(book.id) { mutableStateOf(false) }
     var showSearchResultsPanel by remember(book.id) { mutableStateOf(true) }
@@ -713,6 +742,17 @@ fun SharedMobileEpubReaderScreen(
     var showCustomizeToolsSheet by remember(book.id) { mutableStateOf(false) }
     var showScreenOrientationSheet by remember(book.id) { mutableStateOf(false) }
     var showBrightnessSheet by remember(book.id) { mutableStateOf(false) }
+    var showPerceptionLinesSheet by remember(book.id) { mutableStateOf(false) }
+    // Host-persisted (Android SharedPreferences / iOS NSUserDefaults) but reader-local: switching
+    // it never touches ReaderSettings, so it cannot invalidate pagination or a measurement key.
+    var perceptionLines by remember(book.id) { mutableStateOf(initialPerceptionLines.sanitized()) }
+    val updatePerceptionLines: (ReaderPerceptionLinesSettings) -> Unit = { next ->
+        val sanitized = next.sanitized()
+        if (sanitized != perceptionLines) {
+            perceptionLines = sanitized
+            onPerceptionLinesChange(sanitized)
+        }
+    }
     var showTtsReplacementsSheet by remember(book.id) { mutableStateOf(false) }
     var showTtsSettingsSheet by remember(book.id) { mutableStateOf(false) }
     var showBookReplacementsSheet by remember(book.id) { mutableStateOf(false) }
@@ -760,7 +800,17 @@ fun SharedMobileEpubReaderScreen(
     // Android parity (EpubReaderDrawer): the drawer's pager state is hoisted so the
     // last-viewed tab survives open/close cycles for this reading session; nothing
     // forces a tab when the drawer opens (the TOC tool just opens it).
-    val drawerPagerState = rememberPagerState(pageCount = { 4 })
+    // Sections mirror the Android drawer exactly: the text-tab list only appears when this reader
+    // actually owns tabs, and it always leads so switching tabs never means scrolling the tab row.
+    val drawerSections = remember(textTabsEnabled, textTabs.isNotEmpty()) {
+        epubDrawerSections(
+            EpubDrawerCapabilities(
+                tabsEnabled = textTabsEnabled,
+                hasOpenTabs = textTabs.isNotEmpty(),
+            )
+        )
+    }
+    val drawerPagerState = rememberPagerState(pageCount = { drawerSections.size })
     var selectedTocIndex by remember(book.id) { mutableIntStateOf(-1) }
     var explicitNavigationLocator by remember(book.id) { mutableStateOf<ReaderLocator?>(null) }
     var explicitNavigationFragment by remember(book.id) { mutableStateOf<String?>(null) }
@@ -1221,6 +1271,19 @@ fun SharedMobileEpubReaderScreen(
             )
         }
         snapshot?.let(onReaderStateChange)
+    }
+
+    /**
+     * Hands a text tab to the host, persisting this reader's position first.
+     *
+     * The autosave above is debounced, so a scroll in the last 220ms would otherwise reopen the
+     * target tab at the position of the *previous* snapshot. The host reopens from the persisted
+     * row, so the snapshot has to be synchronous here — this renderer resolves its locator on the
+     * main thread, which is exactly what makes that possible.
+     */
+    fun openTextTabNow(tab: BookItem) {
+        currentReaderSnapshot()?.let(onReaderStateChange)
+        onOpenTextTab(tab)
     }
 
     // Repair stored highlight locators that point at the wrong place.
@@ -2110,10 +2173,16 @@ fun SharedMobileEpubReaderScreen(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(20.dp)
                 )
-                ScrollableTabRow(selectedTabIndex = drawerPagerState.currentPage.coerceIn(0, 3), edgePadding = 0.dp, modifier = Modifier.fillMaxWidth()) {
-                    listOf("Chapters", "Bookmarks", "Annotations", "Images").forEachIndexed { index, label ->
+                LaunchedEffect(drawerSections.size) {
+                    if (drawerPagerState.currentPage >= drawerSections.size) {
+                        drawerPagerState.scrollToPage(drawerSections.lastIndex.coerceAtLeast(0))
+                    }
+                }
+                val selectedSectionIndex = drawerPagerState.currentPage.coerceIn(0, drawerSections.lastIndex)
+                ScrollableTabRow(selectedTabIndex = selectedSectionIndex, edgePadding = 0.dp, modifier = Modifier.fillMaxWidth()) {
+                    drawerSections.forEachIndexed { index, section ->
                         Tab(
-                            selected = drawerPagerState.currentPage == index,
+                            selected = selectedSectionIndex == index,
                             onClick = {
                                 drawerScope.launch {
                                     if (motionPolicy.animationsEnabled) {
@@ -2123,7 +2192,14 @@ fun SharedMobileEpubReaderScreen(
                                     }
                                 }
                             },
-                            text = { Text(label, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                            text = {
+                                Text(
+                                    readerString(section.stringKey, section.fallbackLabel),
+                                    maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         )
                     }
                 }
@@ -2151,8 +2227,35 @@ fun SharedMobileEpubReaderScreen(
                     deleteDialogDescription = readerString("dialog_delete_bookmark_desc", "This bookmark will be removed from the book."),
                 )
                 HorizontalPager(state = drawerPagerState, modifier = Modifier.fillMaxWidth().weight(1f)) { page ->
-                    when (page) {
-                        0 -> SharedMobileEpubToc(
+                    when (drawerSections[page]) {
+                        EpubDrawerSection.TABS -> Column(Modifier.fillMaxSize()) {
+                            SharedDrawerTabsHeader(
+                                title = readerString("active_tabs", "Active Tabs"),
+                                openTabCount = textTabs.size,
+                                newTabContentDescription = readerString("content_desc_new_tab", "New tab"),
+                                onNewTab = { showNewTabSheet = true },
+                            )
+                            HorizontalDivider()
+                            LazyColumn(Modifier.fillMaxSize().padding(vertical = 8.dp)) {
+                                items(textTabs, key = { "epub_drawer_tab_${it.id}" }) { tab ->
+                                    SharedDrawerTabRow(
+                                        title = tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
+                                        supportingText = tab.author,
+                                        isSelected = tab.id == activeTextTabBookId,
+                                        progress = tab.progressPercentage?.let { (it / 100f).coerceIn(0f, 1f) },
+                                        onSelect = {
+                                            openTextTabNow(tab)
+                                            drawerScope.launch { drawerState.close() }
+                                        },
+                                        onClose = { onCloseTextTab(tab) },
+                                        closeContentDescription = readerString("close_tab", "Close tab"),
+                                        testTag = "EpubDrawerTab_${tab.id}",
+                                        closeTestTag = "EpubDrawerTabClose_${tab.id}",
+                                    )
+                                }
+                            }
+                        }
+                        EpubDrawerSection.CHAPTERS -> SharedMobileEpubToc(
                             entries = loadedBook?.effectiveReaderTocEntries().orEmpty(),
                             activeIndex = selectedTocIndex,
                             onEntryClick = { index, entry ->
@@ -2175,7 +2278,7 @@ fun SharedMobileEpubReaderScreen(
                             },
                             modifier = Modifier.fillMaxSize()
                         )
-                        1 -> SharedEpubBookmarksList(
+                        EpubDrawerSection.BOOKMARKS -> SharedEpubBookmarksList(
                             bookmarks = bookmarks.deduplicatedReaderBookmarks(),
                             rowOf = { bookmark ->
                                 SharedEpubBookmarkRow(
@@ -2197,7 +2300,7 @@ fun SharedMobileEpubReaderScreen(
                             },
                             onDeleteBookmark = { bookmark -> bookmarks = bookmarks.filterNot { it.id == bookmark.id } }
                         )
-                        2 -> SharedMobileEpubHighlights(
+                        EpubDrawerSection.ANNOTATIONS -> SharedMobileEpubHighlights(
                             highlights = highlights,
                             chapterTitleOf = { chapterIndex ->
                                 loadedBook?.chapters?.getOrNull(chapterIndex)?.title
@@ -2233,7 +2336,7 @@ fun SharedMobileEpubReaderScreen(
                                 },
                                 modifier = Modifier.fillMaxSize()
                         )
-                        else -> {
+                        EpubDrawerSection.IMAGES -> {
                             val imageRefs = if (settings.hideImages) {
                                 emptyList()
                             } else {
@@ -3320,6 +3423,7 @@ fun SharedMobileEpubReaderScreen(
                 }
                 // Android parity (EpubReaderTopBar/BottomBar): chrome slides +
                 // fades with the shared 200ms spec instead of popping.
+                val displayNameMode = LocalUsePdfFileNameAsDisplayName.current
                 SharedReaderBarVisibility(
                     visible = showChrome,
                     edge = SharedReaderBarEdge.TOP,
@@ -3354,8 +3458,10 @@ fun SharedMobileEpubReaderScreen(
                         onFileInfo = { showFileInfo = true },
                         onCustomizeTools = { showCustomizeToolsSheet = true },
                         onScreenOrientation = { showScreenOrientationSheet = true },
-                        onTtsReplacements = { showTtsReplacementsSheet = true },
+                        onPerceptionLines = { showPerceptionLinesSheet = true },
+                        perceptionLinesVisible = perceptionLines.enabled,
                         onTtsSettings = { showTtsSettingsSheet = true },
+                        onTtsReplacements = { showTtsReplacementsSheet = true },
                         onBookReplacements = { showBookReplacementsSheet = true },
                         onOpenDictionarySettings = onOpenDictionarySettings,
                         onOpenAiHub = { showAiHub = true; onOpenAiHub() },
@@ -3436,6 +3542,33 @@ fun SharedMobileEpubReaderScreen(
                         ),
                         isMediaOverlayActive = mediaOverlayPlaybackState.hasBook,
                         onToggleMediaOverlay = ::toggleMediaOverlay,
+                        // Same rule as the page renderer's strip: the reflow reader only ever offers
+                        // tabs it can open in place, and a derived reflow view owns none.
+                        tabStrip = if (textTabsEnabled && textTabs.isNotEmpty() && !tabStripHidden) {
+                            {
+                                SharedReaderTabStrip(
+                                    tabs = remember(textTabs, displayNameMode) {
+                                        textTabs.map { tab ->
+                                            SharedReaderTab(bookId = tab.id, title = tab.cardTitle(displayNameMode))
+                                        }
+                                    },
+                                    activeBookId = activeTextTabBookId,
+                                    onSelect = { bookId ->
+                                        textTabs.firstOrNull { it.id == bookId }?.let(::openTextTabNow)
+                                    },
+                                    onClose = { bookId ->
+                                        textTabs.firstOrNull { it.id == bookId }?.let(onCloseTextTab)
+                                    },
+                                    onNewTab = { showNewTabSheet = true },
+                                    // The bar already paints the chrome surface; a second fill would stack.
+                                    onSurface = true,
+                                    newTabContentDescription = readerString("content_desc_new_tab", "New tab"),
+                                    closeTabContentDescription = readerString("close_tab", "Close tab"),
+                                )
+                            }
+                        } else {
+                            null
+                        },
                     )
                 }
                 if (loadedBook != null && pages.isNotEmpty()) {
@@ -3491,6 +3624,8 @@ fun SharedMobileEpubReaderScreen(
                             onDictionary = onOpenDictionarySettings,
                             onBrightness = { showBrightnessSheet = true },
                             onScreenOrientation = { showScreenOrientationSheet = true },
+                            onPerceptionLines = { showPerceptionLinesSheet = true },
+                            perceptionLinesVisible = perceptionLines.enabled,
                             onOpenAiHub = { showAiHub = true; onOpenAiHub() },
                             aiAvailable = readerAiAvailable,
                             localTtsState = localTts.state,
@@ -3517,6 +3652,13 @@ fun SharedMobileEpubReaderScreen(
                             cancelTtsPlanning(); localTts.stop()
                         },
                             onCloudTtsStop = cloudTts?.let { controller -> { cancelTtsPlanning(); controller.stop() } } ?: {},
+                        )
+                        // Perception lines: drawn above the page but below the chrome, and with no
+                        // pointer input, so scroll, tap, selection and long-press lookup still reach
+                        // the WebView underneath.
+                        SharedPerceptionLinesOverlay(
+                            settings = perceptionLines,
+                            modifier = Modifier.fillMaxSize()
                         )
                     }
                     }
@@ -4036,6 +4178,39 @@ fun SharedMobileEpubReaderScreen(
             }
     }
 
+    if (showNewTabSheet) {
+        ModalBottomSheet(onDismissRequest = { showNewTabSheet = false }) {
+            val openIds = textTabs.mapTo(mutableSetOf()) { it.id }
+            val displayNameMode = LocalUsePdfFileNameAsDisplayName.current
+            val candidates = remember(newTextTabCandidates, openIds, displayNameMode) {
+                newTextTabCandidates
+                    .filter { it.id !in openIds && !it.id.isDerivedReflowBookId() }
+                    .sortedByDescending { it.timestamp }
+                    .map { candidate ->
+                        SharedReaderNewTabCandidate(
+                            bookId = candidate.id,
+                            title = candidate.cardTitle(displayNameMode),
+                            subtitle = candidate.author,
+                        )
+                    }
+            }
+            SharedReaderNewTabSheetContent(
+                title = readerString("title_add_book_to_tab", "Add book to tab"),
+                emptyMessage = readerString("msg_no_other_books_found", "No other books found"),
+                candidates = candidates,
+                onPick = { bookId ->
+                    showNewTabSheet = false
+                    newTextTabCandidates.firstOrNull { it.id == bookId }?.let { target ->
+                        // Opening a new tab leaves this book in the set: its position must be the
+                        // one the user left it at, not the last debounced snapshot.
+                        currentReaderSnapshot()?.let(onReaderStateChange)
+                        onNewTextTabPicked(target)
+                    }
+                },
+            )
+        }
+    }
+
     if (showFormatSheet) {
         SharedMobileEpubFormatSheet(
             settings = settings,
@@ -4154,6 +4329,13 @@ fun SharedMobileEpubReaderScreen(
             rememberedCustomBrightness = readerCustomBrightness,
             onBrightnessChange = onReaderBrightnessChange,
             onDismiss = { showBrightnessSheet = false },
+        )
+    }
+    if (showPerceptionLinesSheet) {
+        SharedPerceptionLinesSheet(
+            settings = perceptionLines,
+            onSettingsChange = updatePerceptionLines,
+            onDismiss = { showPerceptionLinesSheet = false },
         )
     }
     if (showTtsReplacementsSheet) {
@@ -4351,6 +4533,18 @@ fun SharedMobileEpubReaderScreen(
                 opdsLabel = readerString("source_opds", "Source: OPDS Stream"),
                 inAppLabel = readerString("source_in_app", "In-App Storage"),
             ),
+            // Android benchmark: the reader's book info shows tag chips and opens
+            // the tri-state tag sheet instead of a comma-separated text field.
+            editLibraryTags = false,
+            tagChipsContent = book.tags.takeIf { it.isNotEmpty() }?.let { tags ->
+                { SharedMobileBookTagChipsRow(tags = tags) }
+            },
+            onOpenTags = onOpenTags?.let { open ->
+                {
+                    showFileInfo = false
+                    open(book)
+                }
+            },
             onDismiss = { showFileInfo = false },
             onSave = { updated ->
                 onBookInfoChange(updated)
@@ -4390,8 +4584,9 @@ fun SharedMobileEpubReaderScreen(
             onOpenPaletteManager = { showHighlightPaletteManager = true },
             onDismiss = { editingHighlight = null },
             onSave = { note ->
+                // Persist only: the sheet autosaves the draft through this callback and closes
+                // itself, so clearing `editingHighlight` here would dismiss the editor mid-typing.
                 update(highlight.copy(note = note.trim().takeIf { it.isNotBlank() }))
-                editingHighlight = null
             },
             onDelete = { confirmDeleteHighlight = highlight }
         )

@@ -20,6 +20,7 @@
 package com.aryan.reader.pdf.data
 
 import android.content.Context
+import android.database.SQLException
 import android.graphics.RectF
 import timber.log.Timber
 import androidx.core.graphics.createBitmap
@@ -51,59 +52,73 @@ sealed interface SmartSearchResult {
     data class Paged(val pagingData: Flow<PagingData<SearchResult>>, val totalPageCount: Int) : SmartSearchResult
 }
 
-class PdfTextRepository(context: Context) {
-    private val db = PdfTextDatabase.getDatabase(context)
-    private val dao = db.pdfTextDao()
-    private val metaDao = db.pdfMetaDao()
+class PdfTextRepository(private val context: Context) {
+    // Resolved per use, not cached: `PdfTextDatabase.getDatabase` rebuilds the singleton after a
+    // cache-database failure, and a handle captured in a constructor would keep pointing at the
+    // closed instance (docs/crashlytics-triage.md#137). Room caches the DAO objects itself.
+    private val db: PdfTextDatabase get() = PdfTextDatabase.getDatabase(context)
+    private val dao: PdfTextDao get() = db.pdfTextDao()
+    private val metaDao: PdfMetaDao get() = db.pdfMetaDao()
 
     private suspend fun replacePageText(bookId: String, pageIndex: Int, content: String) {
         dao.deletePageText(bookId, pageIndex)
         dao.insertPageText(PdfSearchIndex(bookId = bookId, pageIndex = pageIndex, content = content))
     }
 
-    suspend fun getPageRatios(bookId: String): List<Float>? {
-        return withContext(Dispatchers.IO) {
-            val meta = metaDao.getMetadata(bookId)
-            if (meta != null && meta.ratiosJson.isNotEmpty()) {
-                try {
-                    val jsonArray = JSONArray(meta.ratiosJson)
-                    val list = ArrayList<Float>(jsonArray.length())
-                    for (i in 0 until jsonArray.length()) {
-                        list.add(jsonArray.getDouble(i).toFloat())
-                    }
-                    list
-                } catch (e: Exception) {
-                    Timber.tag(TAG).e(e, "Failed to parse ratios json")
-                    null
-                }
-            } else {
-                null
+    /**
+     * Runs a cache-database operation, degrading to [fallback] when the cache itself is unusable.
+     *
+     * This database is a rebuildable cache, and SQLite signals corruption by closing it: Room's
+     * `onCorruption` closes the database and deletes its files, then the unwinding transaction
+     * throws a masking `IllegalStateException: attempt to re-open an already-closed object`
+     * (docs/crashlytics-triage.md#137). Crashing the reader for a cache is not worth it — the next
+     * access rebuilds the database, and a missing cache only means the text is re-extracted.
+     */
+    private suspend fun <T> cacheDbOr(fallback: T, block: suspend () -> T): T =
+        try {
+            block()
+        } catch (e: Exception) {
+            if (!e.isCacheDatabaseUnavailable()) throw e
+            Timber.tag(TAG).w(e, "PDF text cache unavailable; continuing without it")
+            PdfTextDatabase.invalidateInstance()
+            fallback
+        }
+
+    private fun Throwable.isCacheDatabaseUnavailable(): Boolean =
+        this is SQLException ||
+            (this is IllegalStateException && message?.contains("already-closed") == true)
+
+    suspend fun getPageRatios(bookId: String): List<Float>? = withContext(Dispatchers.IO) {
+        val meta = cacheDbOr(null) { metaDao.getMetadata(bookId) } ?: return@withContext null
+        if (meta.ratiosJson.isEmpty()) return@withContext null
+        try {
+            val jsonArray = JSONArray(meta.ratiosJson)
+            val list = ArrayList<Float>(jsonArray.length())
+            for (i in 0 until jsonArray.length()) {
+                list.add(jsonArray.getDouble(i).toFloat())
             }
+            list
+        } catch (e: Exception) {
+            Timber.tag(TAG).e(e, "Failed to parse ratios json")
+            null
         }
     }
 
-    suspend fun savePageRatios(bookId: String, ratios: List<Float>) {
-        withContext(Dispatchers.IO) {
-            try {
-                val jsonString = JSONArray(ratios).toString()
-                val existing = metaDao.getMetadata(bookId)
-                val lang = existing?.ocrLanguage ?: "LATIN"
-
-                metaDao.insertMetadata(PdfMetadata(bookId, ratios.size, jsonString, lang))
-            } catch (e: Exception) {
-                Timber.tag(TAG).e(e, "Failed to save page ratios")
-            }
+    suspend fun savePageRatios(bookId: String, ratios: List<Float>) = withContext(Dispatchers.IO) {
+        val jsonString = JSONArray(ratios).toString()
+        cacheDbOr(Unit) {
+            val existing = metaDao.getMetadata(bookId)
+            val lang = existing?.ocrLanguage ?: "LATIN"
+            metaDao.insertMetadata(PdfMetadata(bookId, ratios.size, jsonString, lang))
         }
     }
 
-    suspend fun getBookLanguage(bookId: String): String? {
-        return withContext(Dispatchers.IO) {
-            metaDao.getMetadata(bookId)?.ocrLanguage
-        }
+    suspend fun getBookLanguage(bookId: String): String? = withContext(Dispatchers.IO) {
+        cacheDbOr(null) { metaDao.getMetadata(bookId)?.ocrLanguage }
     }
 
-    suspend fun setBookLanguage(bookId: String, language: String) {
-        withContext(Dispatchers.IO) {
+    suspend fun setBookLanguage(bookId: String, language: String) = withContext(Dispatchers.IO) {
+        cacheDbOr(Unit) {
             val existing = metaDao.getMetadata(bookId)
             if (existing != null) {
                 metaDao.updateLanguage(bookId, language)

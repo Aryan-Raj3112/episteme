@@ -1,6 +1,7 @@
 package com.aryan.reader
 
 import android.view.View
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -32,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -178,7 +180,8 @@ internal fun UnifiedContinueReadingCard(item: RecentFileItem, onClick: () -> Uni
 internal fun UnifiedLibraryTopBar(
     section: UnifiedLibrarySection,
     selectedShelf: Shelf?,
-    onMenuClick: () -> Unit,
+    /** Null when navigation is already on screen (the wide-window rail). */
+    onMenuClick: (() -> Unit)?,
     onBackFromShelf: () -> Unit,
     uiState: ReaderScreenState,
     onAccountClick: () -> Unit,
@@ -186,22 +189,34 @@ internal fun UnifiedLibraryTopBar(
     onSearchQueryChange: (String) -> Unit,
     searchInsideFiles: Boolean = false,
     onSearchInsideFilesChange: ((Boolean) -> Unit)? = null,
+    /**
+     * Shown when no shelf is open. Tags use this for the selected tag's name
+     * without pretending the tag is a shelf in the top-bar back path.
+     */
+    titleOverride: String? = null,
+    /** Open reader tabs, text first, as the shared tab switcher lists them. */
+    openTabs: List<com.aryan.reader.shared.ui.SharedOpenTab> = emptyList(),
+    onOpenTabSelected: (bookId: String) -> Unit = {},
+    onOpenTabClosed: (bookId: String) -> Unit = {},
+    onTabOrderCommitted: ((kind: com.aryan.reader.shared.ReaderTabKind, orderedBookIds: List<String>) -> Unit)? = null,
+    onCloseAllTabs: (() -> Unit)? = null,
 ) {
-    val title = selectedShelf?.name ?: when (section) {
+    val title = selectedShelf?.name ?: titleOverride ?: when (section) {
         UnifiedLibrarySection.HOME -> null
         UnifiedLibrarySection.AUDIOBOOKS -> stringResource(R.string.listen_title)
         UnifiedLibrarySection.SHELVES -> stringResource(R.string.tab_shelves)
+        UnifiedLibrarySection.TAGS -> stringResource(R.string.section_tags)
         UnifiedLibrarySection.FOLDERS -> stringResource(R.string.tab_folders)
         UnifiedLibrarySection.CATALOGS -> stringResource(R.string.tab_catalogs)
     }
     com.aryan.reader.shared.ui.SharedAndroidUnifiedTopBar(
         title = title,
-        showingShelf = selectedShelf != null,
+        showingShelf = selectedShelf != null || titleOverride != null,
         drawerDescription = stringResource(R.string.unified_library_drawer_title),
-        backToShelvesDescription = if (selectedShelf?.parentShelfId != null) {
-            stringResource(R.string.action_back)
-        } else {
-            stringResource(R.string.unified_library_back_to_shelves)
+        backToShelvesDescription = when {
+            selectedShelf?.parentShelfId != null -> stringResource(R.string.action_back)
+            titleOverride != null -> stringResource(R.string.section_tags)
+            else -> stringResource(R.string.unified_library_back_to_shelves)
         },
         onMenu = onMenuClick,
         onBackFromShelf = onBackFromShelf,
@@ -214,6 +229,46 @@ internal fun UnifiedLibraryTopBar(
         searchInsideFiles = searchInsideFiles,
         onSearchInsideFilesChange = onSearchInsideFilesChange,
         searchInsideFilesLabel = stringResource(R.string.unified_library_search_inside_files),
+        trailingActions = {
+            if (openTabs.isNotEmpty()) {
+                val context = LocalContext.current
+                val booksById = remember(uiState.textOpenTabs, uiState.openTabs) {
+                    (uiState.textOpenTabs + uiState.openTabs).associateBy { it.bookId }
+                }
+                com.aryan.reader.shared.ui.SharedTabsMenuButton(
+                    tabs = openTabs,
+                    label = stringResource(R.string.home_tabs_title),
+                    openTabsDescription = stringResource(R.string.content_desc_open_tabs),
+                    closeTabDescription = stringResource(R.string.close_tab),
+                    dragToReorderDescription = stringResource(R.string.content_desc_drag_to_reorder),
+                    openCountLabel = stringResource(R.string.home_tabs_open_count, openTabs.size),
+                    epubLabel = stringResource(R.string.home_tabs_epub),
+                    pdfLabel = stringResource(R.string.home_tabs_pdf),
+                    chapterLabel = { number -> context.getString(R.string.home_tabs_chapter, number) },
+                    pageLabel = { number -> context.getString(R.string.home_tabs_page, number) },
+                    percentLabel = { percent -> context.getString(R.string.home_tabs_percent, percent) },
+                    closeAllLabel = onCloseAllTabs?.let { stringResource(R.string.home_tabs_close_all) },
+                    onCloseAllTabs = onCloseAllTabs,
+                    onTabSelected = { tab -> onOpenTabSelected(tab.bookId) },
+                    onTabClosed = { tab -> onOpenTabClosed(tab.bookId) },
+                    onTabOrderCommitted = onTabOrderCommitted,
+                    cover = { tab, coverModifier ->
+                        val item = booksById[tab.bookId]
+                        if (item != null) {
+                            ThemedBookCover(
+                                item = item,
+                                modifier = coverModifier,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                            )
+                        } else {
+                            Box(coverModifier.background(MaterialTheme.colorScheme.surfaceVariant))
+                        }
+                    },
+                    modifier = Modifier.padding(end = 2.dp),
+                )
+            }
+        },
     )
 }
 
@@ -260,14 +315,14 @@ internal fun UnifiedLibraryHome(
     onListViewChange: (Boolean) -> Unit,
     onBookClick: (RecentFileItem) -> Unit,
     onBookLongClick: (RecentFileItem) -> Unit,
-    openTabs: List<RecentFileItem>,
-    tabsEnabled: Boolean,
-    onCloseTab: (RecentFileItem) -> Unit,
-    onCloseAllTabs: () -> Unit,
     widthSizeClass: WindowWidthSizeClass,
     searchInsideFiles: Boolean = false,
     contentSearchResults: List<SharedGlobalSearchBookResult> = emptyList(),
     onContentHitClick: (RecentFileItem, SharedGlobalSearchHit, String) -> Unit = { _, _, _ -> },
+    isLoading: Boolean = false,
+    /** Host-provided "clear filters" affordance for an empty, filtered view. */
+    clearFiltersLabel: String? = null,
+    onClearFilters: (() -> Unit)? = null,
 ) {
     // Content search replaces the grid: one row per matching book, its matched
     // text, and an expand affordance for the rest of that book's matches.
@@ -309,26 +364,13 @@ internal fun UnifiedLibraryHome(
         onControls = onControlsClick,
         onAdvancedFilters = onAdvancedFiltersClick,
         onListViewChange = onListViewChange,
-        openTabsContent = {
-            com.aryan.reader.shared.ui.SharedAndroidActiveTabsRow(
-                openTabs = openTabs,
-                tabsEnabled = tabsEnabled,
-                activeTabsLabel = stringResource(R.string.active_tabs),
-                closeAllTabsDescription = stringResource(R.string.close_all_tabs),
-                closeTabDescription = stringResource(R.string.close_tab),
-                itemKey = { it.bookId },
-                itemTitle = { it.title?.takeIf(String::isNotBlank) ?: it.displayName },
-                onItemClick = onBookClick,
-                onCloseTab = onCloseTab,
-                onCloseAllTabs = onCloseAllTabs,
-            )
-        },
         continueCard = { item, cardModifier -> UnifiedContinueReadingCard(item, { onBookClick(item) }, cardModifier) },
         bookCard = { item ->
             RecentFileCard(
                 item = item,
                 isSelected = item.bookId in selectedBookIds,
                 modifier = Modifier.fillMaxWidth(),
+                isPinned = item.bookId in pinnedBookIds,
                 onClick = { onBookClick(item) },
                 onLongClick = { onBookLongClick(item) },
                 isDownloading = item.bookId in downloadingBookIds,
@@ -351,6 +393,14 @@ internal fun UnifiedLibraryHome(
             WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
             else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
         },
+        isLoading = isLoading,
+        // Only a filtered/searched view has something to clear; a genuinely empty library keeps the
+        // import path (the empty state) instead of offering a button that would do nothing.
+        emptyActionLabel = clearFiltersLabel.takeIf {
+            onClearFilters != null && (filter != UnifiedLibraryFilter.ALL || query.isNotBlank())
+        },
+        onEmptyAction = onClearFilters,
+        sectionTitle = stringResource(R.string.unified_library_your_books),
         modifier = modifier,
     )
 }
@@ -365,6 +415,8 @@ internal fun UnifiedShelvesSection(
     usePdfFileNameAsDisplayName: Boolean,
     widthSizeClass: WindowWidthSizeClass,
     sortOrder: SortOrder,
+    useListView: Boolean,
+    onListViewChange: (Boolean) -> Unit,
     onShelfSelected: (Shelf) -> Unit,
     onBreadcrumbNavigate: (String?) -> Unit,
     onSortOrderChange: (SortOrder) -> Unit,
@@ -375,6 +427,7 @@ internal fun UnifiedShelvesSection(
     onBookLongClick: (RecentFileItem) -> Unit,
 ) {
     val selectedShelf = shelves.find { it.id == selectedShelfId }
+    // Generated tag shelves belong to the Tags destination, not the shelf tree.
     val visibleShelves = remember(shelves) { shelves.filter { it.type != ShelfType.TAG && it.parentShelfId == null } }
     val childShelves = remember(shelves, selectedShelf) {
         selectedShelf?.childShelfIds?.mapNotNull { childId -> shelves.find { it.id == childId } } ?: emptyList()
@@ -439,6 +492,128 @@ internal fun UnifiedShelvesSection(
                 usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
             )
         },
+        bookListItem = { item ->
+            LibraryListItem(
+                item = item,
+                isSelected = item.bookId in selectedBookIds,
+                onItemClick = { onBookClick(item) },
+                onItemLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
+        useListView = useListView,
+        onListViewChange = onListViewChange,
+        listViewDescription = stringResource(R.string.unified_library_list_view),
+        gridViewDescription = stringResource(R.string.unified_library_grid_view),
+        sortOrder = sortOrder,
+        sortLabels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
+        sortDescription = stringResource(R.string.content_desc_sort),
+        selectedSortDescription = stringResource(R.string.content_desc_selected),
+        onSortOrderChange = onSortOrderChange,
+    )
+}
+
+/**
+ * Tags destination for Library Beta.
+ *
+ * Before this section existed, tags were only reachable from the book info sheet and the
+ * filter sheet: the generated `tag_*` shelves were filtered out of every shelf surface and
+ * tag chips only rendered on list rows. Reading [tags] directly keeps empty tags visible too.
+ */
+@Composable
+internal fun UnifiedTagsSection(
+    modifier: Modifier,
+    tags: List<com.aryan.reader.data.TagEntity>,
+    books: List<RecentFileItem>,
+    selectedTagId: String?,
+    selectedBookIds: Set<String>,
+    downloadingBookIds: Set<String>,
+    usePdfFileNameAsDisplayName: Boolean,
+    useListView: Boolean,
+    widthSizeClass: WindowWidthSizeClass,
+    sortOrder: SortOrder,
+    onTagSelected: (String) -> Unit,
+    onListViewChange: (Boolean) -> Unit,
+    onSortOrderChange: (SortOrder) -> Unit,
+    onBookClick: (RecentFileItem) -> Unit,
+    onBookLongClick: (RecentFileItem) -> Unit,
+) {
+    val selectedTag = selectedTagId?.let { id -> tags.find { it.id == id } }
+    if (selectedTag == null) {
+        com.aryan.reader.shared.ui.SharedAndroidUnifiedTags(
+            tags = tags.map { it.toSharedTag() },
+            bookCountLabel = { tag ->
+                val count = books.count { book -> book.tags.any { it.id == tag.id } }
+                pluralStringResource(R.plurals.book_count, count, count)
+            },
+            noTagsLabel = stringResource(R.string.desktop_no_tags_yet),
+            onTagSelected = { tag -> onTagSelected(tag.id) },
+            modifier = modifier,
+        )
+        return
+    }
+
+    val tagBooks = remember(books, selectedTag.id, sortOrder) {
+        sortFiles(
+            files = books.filter { book -> book.tags.any { it.id == selectedTag.id } },
+            sortOrder = sortOrder,
+        )
+    }
+    val tagShelf = remember(selectedTag, tagBooks) {
+        Shelf(
+            id = "tag_${selectedTag.id}",
+            name = selectedTag.name,
+            type = ShelfType.TAG,
+            books = tagBooks,
+            directBooks = tagBooks,
+        )
+    }
+
+    com.aryan.reader.shared.ui.SharedAndroidUnifiedShelves(
+        visibleShelves = emptyList(),
+        selectedShelf = tagShelf,
+        selectedBooks = tagBooks,
+        noShelvesLabel = stringResource(R.string.desktop_no_tags_yet),
+        shelfKey = { it.id },
+        shelfName = { it.name },
+        shelfBookCountLabel = { shelf ->
+            pluralStringResource(R.plurals.book_count, shelf.bookCount, shelf.bookCount)
+        },
+        bookKey = { it.bookId },
+        onShelfSelected = {},
+        widthClass = when (widthSizeClass) {
+            WindowWidthSizeClass.Compact -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.COMPACT
+            WindowWidthSizeClass.Medium -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.MEDIUM
+            else -> com.aryan.reader.shared.ui.SharedAndroidHomeWidthClass.EXPANDED
+        },
+        modifier = modifier,
+        emptyShelfLabel = stringResource(R.string.shelf_empty),
+        bookCard = { item ->
+            RecentFileCard(
+                item = item,
+                isSelected = item.bookId in selectedBookIds,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onBookClick(item) },
+                onLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
+        bookListItem = { item ->
+            LibraryListItem(
+                item = item,
+                isSelected = item.bookId in selectedBookIds,
+                onItemClick = { onBookClick(item) },
+                onItemLongClick = { onBookLongClick(item) },
+                isDownloading = item.bookId in downloadingBookIds,
+                usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
+            )
+        },
+        useListView = useListView,
+        onListViewChange = onListViewChange,
+        listViewDescription = stringResource(R.string.unified_library_list_view),
+        gridViewDescription = stringResource(R.string.unified_library_grid_view),
         sortOrder = sortOrder,
         sortLabels = SortOrder.entries.associateWith { stringResource(it.labelRes) },
         sortDescription = stringResource(R.string.content_desc_sort),

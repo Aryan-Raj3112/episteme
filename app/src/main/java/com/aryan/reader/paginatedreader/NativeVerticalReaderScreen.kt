@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -70,6 +71,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageShader
@@ -157,7 +159,10 @@ import com.aryan.reader.shared.ReaderLocator as SharedReaderLocator
 import com.aryan.reader.shared.reader.SharedPlaybackFragment
 import com.aryan.reader.shared.reader.paintOnlyColorOverlayText
 import com.aryan.reader.shared.reader.withoutForegroundColorSpans
+import com.aryan.reader.shared.pdf.HighlightNoteBadgeBounds
+import com.aryan.reader.shared.pdf.highlightNoteBadgeBounds
 import com.aryan.reader.shared.ui.PaintableHighlight
+import com.aryan.reader.shared.ui.drawHighlightNoteBadge
 import com.aryan.reader.shared.ui.highlightHitsAt
 import com.aryan.reader.shared.ui.SharedNativeHighlightPaintPlan
 import com.aryan.reader.shared.ui.sharedAcceleratedLazyWheelScroll
@@ -244,6 +249,11 @@ fun NativeVerticalReaderScreen(
     onInternalLinkNavigated: (Int, Locator?) -> Unit = { _, _ -> },
     userHighlights: List<UserHighlight>,
     onHighlightCreated: (String, String, String, SharedReaderLocator, HighlightStyle) -> Unit,
+    /**
+     * A colour tap on a selection that already sits inside a highlight edits that highlight instead
+     * of writing a second one over the same words.
+     */
+    onHighlightRecolored: (highlightId: String, colorArgb: Int, style: HighlightStyle) -> Unit,
     onHighlightDeleted: (String) -> Unit,
     activeHighlightPalette: List<Int>,
     onUpdatePalette: (Int, Int) -> Unit,
@@ -915,6 +925,12 @@ fun NativeVerticalReaderScreen(
         val searchHighlightColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
         val ttsHighlightColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
         var activeSelection by remember { mutableStateOf<PaginatedSelection?>(null) }
+        // Resolved highlights of the block the active selection starts in, published by that block.
+        // The selection menu lives outside the flow items, so it cannot resolve placement itself;
+        // without this it cannot tell an already-highlighted word from a plain one. See the same
+        // mechanism in PaginatedReaderContent.
+        val selectionBlockHighlights =
+            remember { mutableStateOf<PaginatedPageHighlights?>(null) }
         var isDraggingHandle by remember { mutableStateOf(false) }
         var selectionEdgeScrollDelta by remember { mutableFloatStateOf(0f) }
         var selectionEdgeDragWindowPos by remember { mutableStateOf(Offset.Unspecified) }
@@ -1079,6 +1095,13 @@ fun NativeVerticalReaderScreen(
                                 highlights = userHighlights,
                                 chapterTextIndex = chapterTextIndex
                             )
+                            val selectionStartsHere = activeSelection?.startPageIndex == chapterIndex &&
+                                activeSelection?.startBlockIndex == block.blockIndex
+                            LaunchedEffect(pageUserHighlights, selectionStartsHere) {
+                                if (selectionStartsHere) {
+                                    selectionBlockHighlights.value = pageUserHighlights
+                                }
+                            }
 
                             Box(
                                 modifier = Modifier
@@ -1110,6 +1133,7 @@ fun NativeVerticalReaderScreen(
                                     onGeneralTapCallback = onGeneralTapCallback,
                                     userHighlights = pageUserHighlights.highlights,
                                     highlightRanges = pageUserHighlights.rangesForBlock(block.blockIndex),
+                                    noteBadgeEndOffsets = pageUserHighlights.noteBadgeEndsForBlock(block.blockIndex),
                                     activeSelection = activeSelection,
                                     onSelectionChange = { activeSelection = it },
                                     onHighlightClick = { highlight, _ ->
@@ -1158,6 +1182,17 @@ fun NativeVerticalReaderScreen(
                 if (!isDraggingHandle && selectedBlocks.isNotEmpty()) {
                     val handleSizePx = with(density) { 36.dp.toPx() }
                     val menuAnchorRect = selectionWindowBounds(sel, selectedBlocks, handleSizePx)
+                    val highlightUnderSelection = remember(sel, selectionBlockHighlights.value) {
+                        if (sel.startBlockIndex == sel.endBlockIndex) {
+                            selectionBlockHighlights.value?.highlightCovering(
+                                blockIndex = sel.startBlockIndex,
+                                start = sel.startOffset,
+                                end = sel.endOffset
+                            )
+                        } else {
+                            null
+                        }
+                    }
                     Popup(
                         popupPositionProvider = remember(menuAnchorRect, density) {
                             SmartPopupPositionProvider(menuAnchorRect, density)
@@ -1195,12 +1230,23 @@ fun NativeVerticalReaderScreen(
                                 activeSelection = null
                             },
                             onHighlight = { color, style ->
-                                val finalCfi =
-                                    "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                val locator = sel.toSharedHighlightLocator(
+                                val existingHighlight = highlightUnderSelection
+                                if (existingHighlight != null) {
+                                    Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
+                                        "recolor_request source=native_vertical_highlight_menu colorArgb=$color " +
+                                            "highlightId=${existingHighlight.id} style=${style.id} " +
+                                            "textLen=${sel.text.length} text='${highlightDiagSnippet(sel.text)}'"
+                                    )
+                                    onHighlightRecolored(existingHighlight.id, color, style)
+                                    activeSelection = null
+                                    return@PaginatedTextSelectionMenu
+                                }
+                                val placement = sel.toHighlightPlacement(
                                     chapterIndex = sel.startPageIndex,
-                                    cfi = finalCfi
+                                    chapterTextIndex = chapterHighlightIndexes.forChapter(sel.startPageIndex)
                                 )
+                                val finalCfi = placement.cfi
+                                val locator = placement.locator
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                     "create_request source=native_vertical_highlight_menu colorArgb=$color " +
                                         "savedCfi=$finalCfi " +
@@ -1222,12 +1268,12 @@ fun NativeVerticalReaderScreen(
                             },
                             onNote = { style ->
                                 onNoteRequested(null)
-                                val finalCfi =
-                                    "${sel.startBaseCfi}:${sel.startOffset}|${sel.endBaseCfi}:${sel.endOffset}"
-                                val locator = sel.toSharedHighlightLocator(
+                                val placement = sel.toHighlightPlacement(
                                     chapterIndex = sel.startPageIndex,
-                                    cfi = finalCfi
+                                    chapterTextIndex = chapterHighlightIndexes.forChapter(sel.startPageIndex)
                                 )
+                                val finalCfi = placement.cfi
+                                val locator = placement.locator
                                 Timber.tag(TAG_PAGINATED_HIGHLIGHT_DIAG).d(
                                     "create_request source=native_vertical_note_menu color=${HighlightColor.YELLOW.id} " +
                                         "savedCfi=$finalCfi " +
@@ -1256,7 +1302,9 @@ fun NativeVerticalReaderScreen(
                             isProUser = isProUser,
                             isOss = isOss,
                             activeHighlightPalette = activeHighlightPalette,
-                            onOpenPaletteManager = { showPaletteManager = true }
+                            onOpenPaletteManager = { showPaletteManager = true },
+                            selectedColorArgb = highlightUnderSelection?.effectiveArgb,
+                            selectedStyle = highlightUnderSelection?.style
                         )
                     }
                 }
@@ -1493,6 +1541,13 @@ internal fun NativeVerticalPage(
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
     highlightRanges: Map<String, List<IntRange>>,
+    /**
+     * Exclusive end offset, in this block's own coordinates, of each highlight that *ends* here. A
+     * highlight that merely passes through this block gets nothing, so a note mark never lands in the
+     * middle of a paragraph it is still crossing. See
+     * [com.aryan.reader.paginatedreader.PaginatedPageHighlights.noteBadgeEndsForBlock].
+     */
+    noteBadgeEndOffsets: Map<String, Int> = emptyMap(),
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -1531,6 +1586,7 @@ internal fun NativeVerticalPage(
                 onGeneralTapCallback = onGeneralTapCallback,
                 userHighlights = userHighlights,
                 highlightRanges = highlightRanges,
+                noteBadgeEndOffsets = noteBadgeEndOffsets,
                 activeSelection = activeSelection,
                 onSelectionChange = onSelectionChange,
                 onHighlightClick = onHighlightClick,
@@ -1563,6 +1619,13 @@ internal fun NativeVerticalContentBlock(
     onGeneralTapCallback: (Offset) -> Unit,
     userHighlights: List<UserHighlight>,
     highlightRanges: Map<String, List<IntRange>>,
+    /**
+     * Exclusive end offset, in this block's own coordinates, of each highlight that *ends* here. A
+     * highlight that merely passes through this block gets nothing, so a note mark never lands in the
+     * middle of a paragraph it is still crossing. See
+     * [com.aryan.reader.paginatedreader.PaginatedPageHighlights.noteBadgeEndsForBlock].
+     */
+    noteBadgeEndOffsets: Map<String, Int> = emptyMap(),
     activeSelection: PaginatedSelection?,
     onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -1618,7 +1681,16 @@ internal fun NativeVerticalContentBlock(
         }
         is ChantScoreBlock -> NativeChantScore(block, textStyle, styledModifier)
         is FlexContainerBlock -> {
-            val renderChild: @Composable (ContentBlock) -> Unit = { child ->
+            // A flex item that opts out of `stretch` sizes to its content, the way a
+            // block-level flex item does in CSS; everything else fills the line.
+            val flexChildModifier: (ContentBlock) -> Modifier = { child ->
+                when {
+                    child.style.display == "reader-chant-unit" -> Modifier.widthIn(min = 1.dp)
+                    child.style.hasSelfAlignment() -> Modifier.wrapContentWidth()
+                    else -> Modifier.fillMaxWidth()
+                }
+            }
+            val renderChild: @Composable (ContentBlock, Modifier) -> Unit = { child, childModifier ->
                 NativeVerticalContentBlock(
                     block = child,
                     pageIndex = pageIndex,
@@ -1634,6 +1706,7 @@ internal fun NativeVerticalContentBlock(
                     onGeneralTapCallback = onGeneralTapCallback,
                     userHighlights = userHighlights,
                     highlightRanges = highlightRanges,
+                    noteBadgeEndOffsets = noteBadgeEndOffsets,
                     activeSelection = activeSelection,
                     onSelectionChange = onSelectionChange,
                     onHighlightClick = onHighlightClick,
@@ -1643,11 +1716,7 @@ internal fun NativeVerticalContentBlock(
                     blockLayoutMap = blockLayoutMap,
                     density = density,
                     imageLoader = imageLoader,
-                    modifier = if (child.style.display == "reader-chant-unit") {
-                        Modifier.widthIn(min = 1.dp)
-                    } else {
-                        Modifier.fillMaxWidth()
-                    }
+                    modifier = childModifier
                 )
             }
             if (block.style.display == "reader-chant-flow") {
@@ -1657,20 +1726,53 @@ internal fun NativeVerticalContentBlock(
                     verticalArrangement = Arrangement.Bottom
                 ) {
                     block.children.forEach { child ->
-                        Box(modifier = Modifier.wrapContentHeight()) { renderChild(child) }
+                        Box(modifier = Modifier.wrapContentHeight()) {
+                            renderChild(child, flexChildModifier(child))
+                        }
                     }
                 }
-            } else if (block.style.flexDirection == "row") {
-                Row(modifier = styledModifier.fillMaxWidth()) {
+            } else if (block.style.isFlexRow) {
+                Row(
+                    modifier = styledModifier.fillMaxWidth(),
+                    horizontalArrangement = nativeFlexRowHorizontalArrangement(
+                        block.style.justifyContent,
+                        block.style.flexMainAxisGap
+                    ),
+                    verticalAlignment = nativeFlexRowVerticalAlignment(block.style.alignItems)
+                ) {
                     block.children.forEach { child ->
-                        Box(modifier = Modifier.weight(1f, fill = false)) {
-                            renderChild(child)
+                        val alignment = nativeFlexRowChildVerticalAlignment(
+                            child.style.alignSelf,
+                            block.style.alignItems
+                        )
+                        Box(
+                            modifier = Modifier
+                                .weight(1f, fill = false)
+                                .align(alignment)
+                        ) {
+                            renderChild(child, flexChildModifier(child))
                         }
                     }
                 }
             } else {
-                Column(modifier = styledModifier.fillMaxWidth()) {
-                    block.children.forEach { child -> renderChild(child) }
+                Column(
+                    modifier = styledModifier.fillMaxWidth(),
+                    verticalArrangement = nativeFlexColumnVerticalArrangement(
+                        block.style.justifyContent,
+                        block.style.flexMainAxisGap
+                    ),
+                    horizontalAlignment = nativeFlexColumnHorizontalAlignment(block.style.alignItems)
+                ) {
+                    block.children.forEach { child ->
+                        val alignment = nativeFlexColumnChildAlignment(
+                            child.style.alignSelf,
+                            block.style.alignItems
+                        )
+                        renderChild(
+                            child,
+                            flexChildModifier(child).align(alignment)
+                        )
+                    }
                 }
             }
         }
@@ -1690,6 +1792,7 @@ internal fun NativeVerticalContentBlock(
                     onGeneralTapCallback = onGeneralTapCallback,
                     userHighlights = userHighlights,
                     highlightRanges = highlightRanges,
+                    noteBadgeEndOffsets = noteBadgeEndOffsets,
                     activeSelection = activeSelection,
                     onSelectionChange = onSelectionChange,
                     onHighlightClick = onHighlightClick,
@@ -2458,6 +2561,13 @@ internal fun TextWithEmphasis(
     block: TextContentBlock,
     highlightRanges: Map<String, List<IntRange>>,
     userHighlights: List<UserHighlight>,
+    /**
+     * Exclusive end offset, in this block's own coordinates, of each highlight that *ends* here. A
+     * highlight that merely passes through this block gets nothing, so a note mark never lands in the
+     * middle of a paragraph it is still crossing. See
+     * [com.aryan.reader.paginatedreader.PaginatedPageHighlights.noteBadgeEndsForBlock].
+     */
+    noteBadgeEndOffsets: Map<String, Int> = emptyMap(),
     activeSelection: PaginatedSelection?,
     @Suppress("unused") onSelectionChange: (PaginatedSelection?) -> Unit,
     onHighlightClick: (UserHighlight, Rect) -> Unit,
@@ -2583,6 +2693,48 @@ internal fun TextWithEmphasis(
             Timber.tag("DecorationsDiag").w("Calculated highlight paths for block ${block.blockIndex} in ${duration}ms")
         }
         paths
+    }
+
+    // The note mark. A highlight that carries a note is marked where it ends, at the top of its own
+    // line box and right-aligned with its last character. The line box is what the highlight fills
+    // here, so the mark stays inside the highlight: it needs no room of its own, cannot reach the
+    // line above, and covers only the band above the glyphs it marks.
+    val noteBadgeDraws = remember(textLayoutResult, noteBadgeEndOffsets, highlightById) {
+        val layout = textLayoutResult
+        if (layout == null || noteBadgeEndOffsets.isEmpty()) {
+            emptyList<HighlightNoteBadgeBounds>()
+        } else {
+            val layoutTextLength = layout.layoutInput.text.length
+            if (layoutTextLength == 0) {
+                emptyList()
+            } else {
+                noteBadgeEndOffsets.mapNotNull { (highlightId, endOffset) ->
+                    val highlight = highlightById[highlightId]
+                    if (highlight == null || highlight.note.isNullOrBlank()) {
+                        null
+                    } else {
+                        try {
+                            val lastIndex = (endOffset - 1).coerceIn(0, layoutTextLength - 1)
+                            val characterBox = layout.getBoundingBox(lastIndex)
+                            val line = layout.getLineForOffset(lastIndex)
+                            val lineTop = layout.getLineTop(line)
+                            val lineHeight = layout.getLineBottom(line) - lineTop
+                            highlightNoteBadgeBounds(
+                                right = characterBox.right,
+                                lineTop = lineTop,
+                                lineHeight = lineHeight,
+                                // The highlight's fill covers the whole line box, so there is no
+                                // leading above it to borrow: the mark stays inside the fill.
+                                leadingAbove = 0f,
+                            )
+                        } catch (error: Exception) {
+                            Timber.tag("DecorationsDiag").e(error, "Note badge out of bounds")
+                            null
+                        }
+                    }
+                }
+            }
+        }
     }
 
     val cachedEmphasisMarks = remember(textLayoutResult, text, style.color, density) {
@@ -2758,6 +2910,11 @@ internal fun TextWithEmphasis(
             ?: style.fontSize
     )
 
+    val noteBadgeDrawer = Modifier.drawWithContent {
+        drawContent()
+        noteBadgeDraws.forEach { bounds -> drawHighlightNoteBadge(bounds) }
+    }
+
     val customDrawer = Modifier.drawBehind {
         val drawStartTime = System.currentTimeMillis()
 
@@ -2931,6 +3088,7 @@ internal fun TextWithEmphasis(
             }
         }
         .then(customDrawer)
+        .then(noteBadgeDrawer)
         .pointerInput(displayText, viewConfiguration.touchSlop) {
             awaitEachGesture {
                 awaitReaderLinkTap(

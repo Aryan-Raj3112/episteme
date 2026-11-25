@@ -57,4 +57,44 @@ class SharedLibraryFilterDialogTest {
             assertThat(applied?.fileTypes).containsExactly(FileType.PDF)
         }
     }
+
+    @Test
+    fun readStatusIsAnExclusiveSegmentedChoice() {
+        var applied: LibraryFilters? = null
+
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedMobileLibraryFilterDialog(
+                    filters = LibraryFilters(),
+                    allTags = emptyList(),
+                    syncedFolders = emptyList(),
+                    readableFileTypes = setOf(FileType.PDF),
+                    fileTypeLabels = mapOf(FileType.PDF to "PDF"),
+                    readStatusLabels = ReadStatusFilter.entries.associateWith { it.name },
+                    labels = SharedMobileLibraryFilterLabels(
+                        title = "Filter library",
+                        fileType = "File type",
+                        sourceFolder = "Source folder",
+                        inAppStorage = "In-app storage",
+                        readStatus = "Reading status",
+                        tags = "Tags",
+                        clearAll = "Clear all",
+                        apply = "Apply",
+                    ),
+                    onApply = { applied = it },
+                    onDismiss = {},
+                )
+            }
+        }
+
+        // Picking a second status replaces the first: the group is single-select, which is what
+        // segmented buttons express and what the previous chip row only implied.
+        composeTestRule.onNodeWithText(ReadStatusFilter.COMPLETED.name).performClick()
+        composeTestRule.onNodeWithText(ReadStatusFilter.UNREAD.name).performClick()
+        composeTestRule.onNodeWithText("Apply").performClick()
+
+        composeTestRule.runOnIdle {
+            assertThat(applied?.readStatus).isEqualTo(ReadStatusFilter.UNREAD)
+        }
+    }
 }

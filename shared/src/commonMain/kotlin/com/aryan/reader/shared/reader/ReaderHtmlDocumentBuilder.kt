@@ -552,7 +552,7 @@ object ReaderHtmlDocumentBuilder {
         textureDataUri: String? = null
     ): String {
         val appearance = settings.toDocumentAppearanceCss(textureDataUri)
-        val customFontCss = settings.readerCustomFontFaceCss()
+        val webFontCss = settings.readerWebFontCss()
         return """
             (function () {
               var root = document.documentElement;
@@ -578,8 +578,8 @@ object ReaderHtmlDocumentBuilder {
               root.style.setProperty('--reader-image-scale', ${settings.readerImageScaleCss().toJsStringLiteral()});
               root.style.setProperty('--reader-hide-images', ${if (settings.hideImages) "'none'" else "'block'"});
               root.style.setProperty('--reader-align', ${settings.readerTextAlignCss().toJsStringLiteral()});
-              root.style.setProperty('--reader-family', ${settings.readerFontFamilyCss().toJsStringLiteral()});
-              var customFontCss = ${customFontCss.toJsStringLiteral()};
+              root.style.setProperty('--reader-family', ${webFontCss.familyCss.toJsStringLiteral()});
+              var customFontCss = ${webFontCss.documentCss.toJsStringLiteral()};
               var customFontStyle = document.getElementById('reader-custom-font-style');
               if (customFontCss) {
                 if (!customFontStyle) {

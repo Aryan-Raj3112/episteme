@@ -41,14 +41,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.ui.state.ToggleableState
-import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.rememberModalBottomSheetState
 import com.aryan.reader.data.TagEntity
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -81,7 +76,6 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -105,7 +99,6 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -155,6 +148,7 @@ import androidx.core.text.HtmlCompat
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.SharedFontFiles
 import com.aryan.reader.shared.SharedLegalLinks
 import com.aryan.reader.shared.SharedLegalProfile
 import com.aryan.reader.data.BookMetadataEdit
@@ -166,8 +160,6 @@ import com.aryan.reader.shared.ui.SharedBookInfoDialog
 import com.aryan.reader.shared.ui.SharedMobileEmptyLibrary
 import com.aryan.reader.shared.ui.SharedMobileTopBanner
 import com.aryan.reader.shared.ui.SharedMobileTopAppBar
-import com.aryan.reader.shared.ui.SharedMobileContextualActionBar
-import com.aryan.reader.shared.ui.SharedMobileContextualActionLabels
 import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
@@ -186,16 +178,7 @@ internal val PRIVACY_POLICY_URL: String get() = legalLinksForAndroidFlavor().pri
 internal val TERMS_URL: String get() = legalLinksForAndroidFlavor().termsUrl
 internal val LICENSES_URL: String get() = legalLinksForAndroidFlavor().licensesUrl
 
-fun supportedFontMimeTypes(): Array<String> = arrayOf(
-    "font/ttf",
-    "font/otf",
-    "font/woff2",
-    "application/x-font-ttf",
-    "application/x-font-otf",
-    "application/font-woff2",
-    "application/vnd.ms-opentype",
-    "application/x-font-opentype"
-)
+fun supportedFontMimeTypes(): Array<String> = SharedFontFiles.androidPickerMimeTypes.toTypedArray()
 
 class CustomTabUriHandler(private val context: Context) : UriHandler {
     override fun openUri(uri: String) {
@@ -310,60 +293,6 @@ fun rememberFilePickerLauncher(
     )
 }
 
-@Composable
-fun ContextualTopAppBar(
-    selectedItemCount: Int,
-    onNavIconClick: () -> Unit,
-    onInfoClick: (() -> Unit)? = null,
-    onSaveClick: (() -> Unit)? = null,
-    onShareClick: (() -> Unit)? = null,
-    onExportAnnotationsClick: (() -> Unit)? = null,
-    onTagClick: (() -> Unit)? = null,
-    onAddToShelfClick: (() -> Unit)? = null,
-    onSelectAllClick: (() -> Unit)? = null,
-    onPinClick: (() -> Unit)? = null,
-    onDeleteClick: () -> Unit,
-    compactSelectionActions: Boolean = false,
-    overflowDeleteLabelRes: Int = R.string.action_delete,
-    onClearSelectionClick: (() -> Unit)? = null,
-) {
-    SharedMobileContextualActionBar(
-        selectedItemCount = selectedItemCount,
-        labels = SharedMobileContextualActionLabels(
-            selectedCount = stringResource(R.string.items_selected_count, selectedItemCount),
-            clearSelection = stringResource(R.string.clear_selection),
-            info = stringResource(R.string.info),
-            pin = stringResource(R.string.pin_unpin),
-            selectAll = stringResource(R.string.select_all),
-            delete = stringResource(overflowDeleteLabelRes),
-            moreOptions = stringResource(R.string.content_desc_more_options),
-            tag = stringResource(R.string.content_desc_tag),
-            addToShelf = stringResource(R.string.desktop_add_to_shelf),
-            save = stringResource(R.string.action_save_copy_to_device),
-            share = stringResource(R.string.action_share),
-            exportAnnotations = stringResource(R.string.action_export_annotations),
-            clear = stringResource(R.string.action_clear),
-        ),
-        onNavigateBack = onNavIconClick,
-        onDelete = onDeleteClick,
-        compact = compactSelectionActions,
-        onInfo = onInfoClick,
-        onSave = onSaveClick,
-        onShare = onShareClick,
-        onExportAnnotations = onExportAnnotationsClick,
-        onTag = onTagClick,
-        onAddToShelf = onAddToShelfClick,
-        onSelectAll = onSelectAllClick,
-        onPin = onPinClick,
-        onClear = onClearSelectionClick,
-        tagIcon = { contentDescription ->
-            Icon(
-                painterResource(R.drawable.tag),
-                contentDescription = contentDescription,
-            )
-        },
-    )
-}
 @Composable
 fun CustomTopAppBar(
     modifier: Modifier = Modifier,
@@ -1028,145 +957,11 @@ fun ReadingProgressSection(
             }
         }
         Spacer(modifier = Modifier.height(if (compact) 6.dp else 8.dp))
-        LinearProgressIndicator(
-            progress = { progress },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(if (compact) 5.dp else 6.dp),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-        )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun TagSelectionBottomSheet(
-    allTags: List<TagEntity>,
-    selectedBookIds: Set<String>,
-    booksWithTags: List<RecentFileItem>,
-    onCreateAndAssign: (String) -> Unit,
-    onToggleTag: (String, Boolean) -> Unit,
-    onDeleteTag: (TagEntity) -> Unit = {},
-    onDismiss: () -> Unit
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var searchQuery by remember { mutableStateOf("") }
-    var tagPendingDeletion by remember { mutableStateOf<TagEntity?>(null) }
-
-    val filteredTags = remember(allTags, searchQuery) {
-        if (searchQuery.isBlank()) allTags else allTags.filter { it.name.contains(searchQuery, ignoreCase = true) }
-    }
-
-    val exactMatch = remember(allTags, searchQuery) {
-        allTags.any { it.name.equals(searchQuery.trim(), ignoreCase = true) }
-    }
-
-    // Membership precomputed once per selection/library change: the per-row
-    // loop below used to run an O(selectedBooks * library) find for every
-    // visible row on every recomposition (scroll, keystroke).
-    val tagMembership = remember(selectedBookIds, booksWithTags) {
-        val byBookId = booksWithTags.associateBy { it.bookId }
-        selectedBookIds.mapNotNull { bookId ->
-            byBookId[bookId]?.let { book ->
-                bookId to book.tags.mapTo(mutableSetOf()) { it.id }
-            }
-        }.toMap()
-    }
-
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
-        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).heightIn(max = 500.dp)) {
-            Text(stringResource(R.string.title_apply_tags), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 16.dp))
-
-            androidx.compose.material3.OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text(stringResource(R.string.placeholder_search_create_tag)) },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp),
-                leadingIcon = { Icon(Icons.Default.Search, null) }
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f, fill = false)) {
-                if (searchQuery.isNotBlank() && !exactMatch) {
-                    item {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp).clickable {
-                                onCreateAndAssign(searchQuery)
-                                searchQuery = ""
-                            },
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Default.Add, null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(stringResource(R.string.action_create_tag, searchQuery.trim()), color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                }
-
-                items(filteredTags, key = { it.id }) { tag ->
-                    val checkedCount = tagMembership.values.count { tag.id in it }
-
-                    val state = when (checkedCount) {
-                        0 -> ToggleableState.Off
-                        selectedBookIds.size -> ToggleableState.On
-                        else -> ToggleableState.Indeterminate
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable {
-                            val assign = state != ToggleableState.On
-                            onToggleTag(tag.id, assign)
-                        },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TriStateCheckbox(state = state, onClick = null)
-                        Spacer(modifier = Modifier.width(16.dp))
-                        Surface(shape = androidx.compose.foundation.shape.CircleShape, color = Color(tag.color ?: 0xFF64B5F6.toInt()).copy(alpha = 0.2f), modifier = Modifier.size(24.dp)) {
-                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Icon(painterResource(id = R.drawable.tag), contentDescription = null, modifier = Modifier.size(12.dp), tint = Color(tag.color ?: 0xFF64B5F6.toInt()))
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            tag.name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = { tagPendingDeletion = tag }) {
-                            Icon(
-                                imageVector = Icons.Default.Delete,
-                                contentDescription = stringResource(R.string.menu_delete_tag),
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    tagPendingDeletion?.let { tag ->
-        AlertDialog(
-            onDismissRequest = { tagPendingDeletion = null },
-            title = { Text(stringResource(R.string.menu_delete_tag)) },
-            text = { Text(stringResource(R.string.dialog_delete_tag_desc, tag.name)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeleteTag(tag)
-                    tagPendingDeletion = null
-                }) {
-                    Text(stringResource(R.string.action_delete))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { tagPendingDeletion = null }) {
-                    Text(stringResource(R.string.action_cancel))
-                }
-            }
+        com.aryan.reader.shared.ui.SharedProgressBar(
+            progress = progress,
+            modifier = Modifier.fillMaxWidth(),
+            trackColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+            barHeight = if (compact) 5.dp else 6.dp,
         )
     }
 }

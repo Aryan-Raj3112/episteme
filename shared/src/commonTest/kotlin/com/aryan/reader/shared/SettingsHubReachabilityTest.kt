@@ -77,26 +77,21 @@ class SettingsHubReachabilityTest {
     }
 
     @Test
-    fun `about and feedback are not duplicated into extra`() {
-        // Help & About is now its own root category, so leaving these rows in Extra would show
-        // them twice under two different breadcrumbs.
-        val extraActions = model.page(SharedSettingsDestination.EXTRA).items.map { it.action }
-        assertTrue(SharedSettingsAction.ABOUT !in extraActions)
-        assertTrue(SharedSettingsAction.SUPPORT !in extraActions)
-        assertTrue(SharedSettingsAction.HELP_FEEDBACK !in extraActions)
+    fun `about and feedback are not duplicated into storage and privacy`() {
+        // Help & About is its own root category, so leaving these rows in Storage & Privacy would
+        // show them twice under two different breadcrumbs.
+        val storageActions = model.page(SharedSettingsDestination.STORAGE_PRIVACY).items.map { it.action }
+        assertTrue(SharedSettingsAction.ABOUT !in storageActions)
+        assertTrue(SharedSettingsAction.SUPPORT !in storageActions)
+        assertTrue(SharedSettingsAction.HELP_FEEDBACK !in storageActions)
     }
 
     @Test
-    fun `every root category with items is non-degenerate`() {
+    fun `every root category renders rows`() {
         for (category in model.rootCategories) {
             assertTrue(
-                category.itemCount > 0,
-                "${category.destination} is listed with itemCount=${category.itemCount}",
-            )
-            assertEquals(
-                model.page(category.destination).items.size,
-                category.itemCount,
-                "${category.destination} advertises a count it does not have",
+                model.page(category.destination).items.isNotEmpty(),
+                "${category.destination} is listed but renders no rows",
             )
         }
     }
@@ -105,7 +100,7 @@ class SettingsHubReachabilityTest {
     fun `every category summary is distinct from its siblings`() {
         // Two categories with identical summaries read as a duplicate to the user and usually
         // mean one of them was meant to say something else.
-        val bySummary = model.rootCategories.groupBy { it.summary }
+        val bySummary = model.rootCategories.groupBy { it.summary.fallback }
         val collisions = bySummary.filterValues { it.size > 1 }
         assertEquals(
             emptyList(),
@@ -117,11 +112,13 @@ class SettingsHubReachabilityTest {
     }
 
     @Test
-    fun `no category claims to contain app info after about moved out of extra`() {
-        // "app info" moved to Help & About; leaving it on Extra is the kind of drift that makes a
-        // user hunt in the wrong place.
-        val extra = model.rootCategories.first { it.destination == SharedSettingsDestination.EXTRA }
-        assertTrue("app info" !in extra.summary, "Extra still advertises app info")
+    fun `storage category does not advertise app info`() {
+        // "app info" belongs to Help & About; advertising it on Storage & Privacy is the kind of
+        // drift that makes a user hunt in the wrong place.
+        val storage = model.rootCategories.first {
+            it.destination == SharedSettingsDestination.STORAGE_PRIVACY
+        }
+        assertTrue("app info" !in storage.summary.fallback, "Storage still advertises app info")
     }
 
     @Test

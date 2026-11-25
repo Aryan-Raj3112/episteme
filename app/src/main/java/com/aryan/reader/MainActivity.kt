@@ -144,9 +144,9 @@ open class MainActivity : AppCompatActivity() {
             // inline English fallback unless a resolver is installed. Installing the app's resolver
             // once here is what makes the shared PDF chrome - the annotation dock, the tool panels,
             // their tooltips - and every other shared surface localized, instead of only the
-            // screens that happened to install one (see AndroidSharedStrings.kt). Screens with a
-            // narrower resolver (the settings screen's literal table, the reader bars' own install)
-            // still win inside their own subtree; this is the floor, not an override.
+            // screens that happened to install one (see AndroidSharedStrings.kt). Screens that
+            // install a narrower resolver (the reader bars) still win inside their own subtree;
+            // this is the floor, not an override.
             CompositionLocalProvider(
                 LocalSharedStringResolver provides androidSharedStringResolver(this@MainActivity)
             ) {

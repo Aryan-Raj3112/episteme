@@ -164,21 +164,35 @@ class EpubChapterTextIndex private constructor(
 
         val quote = highlight.locator.textQuote?.takeIf { it.isNotBlank() } ?: highlight.text
         if (quote.isBlank()) return null
-        if (storedRangeAgreesWithQuote(highlight.locator, quote)) return null
+        // Offsets that agree with the text are only half a position when a structural CFI names the
+        // block but not the characters inside it: each surface then guesses them, and the guesses
+        // differ by however much text precedes the highlight in its own paragraph. Rewriting is what
+        // gets those highlights onto a CFI that says where they start. A highlight with no structural
+        // CFI at all is left alone — it has never claimed to have one, and its offsets still place it.
+        val cfi = highlight.locator.cfi
+        val cfiNeedsStart = !cfi.isNullOrBlank() && cfi.startsWith("/") && !storedCfiNamesStart(cfi)
+        if (storedRangeAgreesWithQuote(highlight.locator, quote) && !cfiNeedsStart) return null
 
-        val anchor = resolve(quote) ?: return null
-        if (anchor.confidence != HighlightAnchorConfidence.QuoteMatched) return null
+        // The position the locator itself names is preferred over searching for the words: a repeated
+        // word has no single right answer, and the CFI says which copy this highlight is on. Searching
+        // is the fallback for a locator that names no position at all.
+        val anchor = anchorFromCfi(cfi, quote, highlight.locator.blockIndex)
+            ?: resolve(quote)?.takeIf { it.confidence == HighlightAnchorConfidence.QuoteMatched }
+            ?: return null
         val firstSegment = anchor.segments.firstOrNull() ?: return null
 
-        return highlight.copy(
+        val repaired = highlight.copy(
             locator = highlight.locator.copy(
                 startOffset = anchor.absoluteStart,
                 endOffset = anchor.absoluteEnd,
                 blockIndex = firstSegment.blockIndex,
                 charOffset = firstSegment.absoluteStart,
-                cfi = anchorCfi(anchor) ?: highlight.locator.cfi
+                cfi = cfiFor(anchor) ?: highlight.locator.cfi
             )
         )
+        // Rewriting a locator with the values it already holds would count as a repair on every open,
+        // and every repair is persisted.
+        return repaired.takeIf { it.locator != highlight.locator }
     }
 
     /**
@@ -200,14 +214,42 @@ class EpubChapterTextIndex private constructor(
      * The first and last parts carry the start and end offsets of the range, matching the form a selection
      * produces, so the document sees the same shape of CFI whichever wrote it.
      */
-    private fun anchorCfi(anchor: HighlightAnchor): String? {
+    /**
+     * Whether [cfi] names the highlight's starting characters, not merely the block holding them.
+     *
+     * A structural CFI without a `:offset` part points at an element. Surfaces can only paint a range
+     * from it by guessing where inside that element the highlight begins, and they guess differently:
+     * one starts at the element, the other searches the element for the stored text. This is the test
+     * that decides whether repair has anything to add, so it has to mean "the position is complete"
+     * rather than "the position looks plausible".
+     */
+    private fun storedCfiNamesStart(cfi: String?): Boolean {
+        val value = cfi?.takeIf { it.isNotBlank() } ?: return false
+        if (!value.startsWith("/")) return false
+        val first = value.split('|').firstOrNull() ?: return false
+        return first.substringAfterLast(':', "").toIntOrNull() != null
+    }
+
+    /**
+     * [anchor] as a CFI, in the block-local coordinates both surfaces resolve against.
+     *
+     * Exposed because a surface that has just placed a selection must store the same CFI it painted
+     * from: a CFI is what the WebView resolves against the DOM, so writing offsets relative to a page
+     * fragment instead of the block puts the highlight a fragment's width away from the words.
+     */
+    fun cfiFor(anchor: HighlightAnchor): String? {
         val segments = anchor.segments.filter { !it.blockCfi.isNullOrBlank() }
         if (segments.isEmpty()) return null
-        // One block needs no list. The element alone says where the highlight is, and a lone part would
-        // have to pick between the block's start and its end to carry an offset, and neither is more
-        // right than the element on its own. Keeping the single-block form unchanged also keeps the
-        // document's host matching reading exactly what it read before.
-        if (segments.size == 1) return segments.first().blockCfi
+        // A single block still carries its start offset. The element alone only says *which* block,
+        // and a surface has to guess the characters from there: it either starts at the block's
+        // beginning, painting the paragraph from its first letter, or searches the block for the
+        // stored text and takes the first copy of it. Both are guesses, and the second one is wrong
+        // whenever the passage repeats a phrase from earlier in its own paragraph. The offset is the
+        // part of the position that says where in the block the highlight actually begins, so it is
+        // written for one block exactly as it is for the first block of several.
+        if (segments.size == 1) {
+            return "${segments.first().blockCfi}:${segments.first().localStart}"
+        }
         val lastIndex = segments.lastIndex
         val parts = segments.mapIndexed { index, segment ->
             // The document takes a range's extent from the first part's offset and the last part's, and
@@ -311,7 +353,11 @@ fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
         if (storedRangeAgreesWithQuote(highlight.locator, quote)) {
             return storedAnchor(highlight)
         }
-        return resolve(quote)?.takeIf { it.confidence == HighlightAnchorConfidence.QuoteMatched }
+        // Before searching: the locator's CFI names the block and the characters inside it, which is
+        // the same coordinate space this index lays out. A search cannot answer "which of these five
+        // identical words", and a highlight placed by one lands on the first copy every time.
+        return anchorFromCfi(highlight.locator.cfi, quote, highlight.locator.blockIndex)
+            ?: resolve(quote)?.takeIf { it.confidence == HighlightAnchorConfidence.QuoteMatched }
     }
 
     /**
@@ -364,6 +410,149 @@ fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
         )
     }
 
+    /**
+     * The anchor a selection covers, built from where the page that made it reported the words.
+     *
+     * A page reports offsets inside what it is holding. For a paragraph the paginator split across
+     * pages that is the page's slice of the paragraph, not the paragraph: the two differ by exactly the
+     * shift [HighlightBlockSegment.rangeInFragment] removes in the other direction. Converting here,
+     * once, is what lets the stored CFI and the painted range name the same characters. The CFI is
+     * written in the block's own coordinates, so the WebView resolves it against the same element the
+     * paginator paints, and the stored offsets are chapter-wide, so any surface can use them as they are.
+     */
+    fun anchorForSelection(
+        startBlockIndex: Int?,
+        startBlockCfi: String?,
+        startFragmentSourceStart: Int,
+        startLocal: Int,
+        endBlockIndex: Int?,
+        endBlockCfi: String?,
+        endFragmentSourceStart: Int,
+        endLocal: Int
+    ): HighlightAnchor? {
+        val startBlock = selectionBlock(startBlockIndex, startBlockCfi) ?: return null
+        val endBlock = selectionBlock(endBlockIndex, endBlockCfi) ?: return null
+        val startInBlock = localInBlock(startBlock, startFragmentSourceStart, startLocal) ?: return null
+        val endInBlock = localInBlock(endBlock, endFragmentSourceStart, endLocal) ?: return null
+        val absoluteStart = blockStarts[startBlock] + startInBlock
+        val absoluteEnd = blockStarts[endBlock] + endInBlock
+        if (absoluteEnd <= absoluteStart) return null
+        return toAnchor(absoluteStart, absoluteEnd, HighlightAnchorConfidence.Resolved)?.toHighlightAnchor()
+    }
+
+    /**
+     * Places [highlight] from the position its locator's CFI names in this chapter.
+     *
+     * A CFI is written by the surface that made the selection — `/<block path>:<block offset>`, one part
+     * per block — which is the coordinate space this index lays out. The block is known by its path and
+     * the characters by the offset, so nothing has to be searched and every copy of the same words stays
+     * distinct. Searching the text instead is what painted a highlight on the first copy of a repeated
+     * word rather than on the copy the reader selected.
+     *
+     * A CFI is still a claim, so the characters under the named position are checked against the
+     * highlight's own words. A locator written in another surface's coordinates, or one left stale by an
+     * edited book, fails that check and is not used. When the CFI names a block but no range inside it,
+     * that block is searched — the narrowest search that is still a search, and never the whole chapter
+     * while the locator says which block it is on.
+     */
+    fun anchorFromCfi(cfi: String?, quote: String, blockIndex: Int? = null): HighlightAnchor? {
+        val value = cfi?.trim()?.takeIf { it.startsWith("/") } ?: return null
+        val parts = value.split('|').map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return null
+        val start = cfiPoint(parts.first())
+        if (start == null) {
+            // The CFI path is not a block of this chapter. The locator may still name one.
+            val named = selectionBlock(blockIndex, null) ?: return null
+            return locateInBlock(named, quote)
+        }
+        val end = if (parts.size > 1) cfiPoint(parts.last()) else start
+        val absoluteStart = blockStarts[start.block] + start.local
+        val absoluteEnd = end?.let { blockStarts[it.block] + it.local }
+        if (absoluteEnd != null && absoluteEnd > absoluteStart) {
+            val anchored = toAnchor(absoluteStart, absoluteEnd, HighlightAnchorConfidence.Resolved)
+            if (anchored != null && rangeAgreesWithQuote(absoluteStart, absoluteEnd, quote)) {
+                return anchored.toHighlightAnchor()
+            }
+        }
+        return locateInBlock(start.block, quote, preferredStart = absoluteStart)
+    }
+
+    /** One `/<path>:<offset>` part of a CFI, resolved to a block of this chapter. */
+    private class CfiPoint(val block: Int, val local: Int)
+
+    private fun cfiPoint(part: String): CfiPoint? {
+        val block = indexOfBlockCfi(readerCfiPath(part)) ?: return null
+        val local = readerCfiOffsetOrNull(part) ?: return null
+        return CfiPoint(block, local.coerceIn(0, textBlocks[block].text.length))
+    }
+
+    private fun indexOfBlockCfi(path: String): Int? {
+        if (path.isEmpty()) return null
+        val index = textBlocks.indexOfFirst { it.cfi == path }
+        return index.takeIf { it >= 0 }
+    }
+
+    /**
+     * The block [blockIndex] (else [blockCfi]) names, or null when this chapter has neither.
+     *
+     * A CFI is the stronger name: a block index is only comparable within one parse of the chapter,
+     * while the path is what every surface writes and reads.
+     */
+    private fun selectionBlock(blockIndex: Int?, blockCfi: String?): Int? {
+        val path = blockCfi?.let { readerCfiPath(it) }
+        if (!path.isNullOrEmpty()) indexOfBlockCfi(path)?.let { return it }
+        if (blockIndex == null) return null
+        val index = textBlocks.indexOfFirst { it.blockIndex == blockIndex }
+        return index.takeIf { it >= 0 }
+    }
+
+    /**
+     * [local] from a fragment of [block] shifted into the block's own coordinates, or null when the
+     * shift would push it outside the block.
+     */
+    private fun localInBlock(block: Int, fragmentSourceStart: Int, local: Int): Int? {
+        val shift = fragmentSourceStart - textBlocks[block].startCharOffsetInSource
+        val shifted = local + shift
+        if (shifted < 0 || shifted > textBlocks[block].text.length) return null
+        return shifted
+    }
+
+    /**
+     * The first place [quote] appears inside [block], preferring the one at or after [preferredStart].
+     *
+     * Used when the locator names the block but not the characters. The chapter is never searched: a
+     * block is a paragraph, and the alternative is a copy of the same words somewhere else entirely.
+     */
+    private fun locateInBlock(block: Int, quote: String, preferredStart: Int? = null): HighlightAnchor? {
+        val needle = quote.trim()
+        if (needle.isEmpty()) return null
+        val hits = LinkedHashSet<IntRange>()
+        collectExact(needle, hits)
+        if (hits.isEmpty()) collectNormalized(needle, hits)
+        if (hits.isEmpty()) collectWordSequence(needle, hits)
+        val blockStart = blockStarts[block]
+        val blockEnd = blockStart + textBlocks[block].text.length
+        val inBlock = hits.filter { it.first >= blockStart && it.last < blockEnd }
+        if (inBlock.isEmpty()) return null
+        val hit = when {
+            preferredStart == null -> inBlock.minByOrNull { it.first }
+            else -> inBlock.firstOrNull { it.first == preferredStart }
+                ?: inBlock.filter { it.first >= preferredStart }.minByOrNull { it.first }
+                ?: inBlock.maxByOrNull { it.first }
+        } ?: return null
+        return toAnchor(hit.first, hit.last + 1, HighlightAnchorConfidence.QuoteMatched)?.toHighlightAnchor()
+    }
+
+    /** Whether the chapter's own characters in [start]..[end] are the words the highlight selected. */
+    private fun rangeAgreesWithQuote(start: Int, end: Int, quote: String): Boolean {
+        if (start < 0 || end > buffer.length || end <= start) return false
+        val needle = collapseReaderWhitespace(quote)
+        if (needle.isEmpty()) return false
+        val slice = collapseReaderWhitespace(buffer.substring(start, end))
+        if (slice.isEmpty()) return false
+        return slice == needle || slice.contains(needle)
+    }
+
     /** Built on first whitespace-insensitive search; a chapter's text does not change while open. */
     private var normalizedView: NormalizedChapterText? = null
 
@@ -383,12 +572,7 @@ fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
     private fun storedRangeAgreesWithQuote(locator: ReaderLocator, quote: String): Boolean {
         val start = locator.startOffset ?: return false
         val end = locator.endOffset ?: return false
-        if (start < 0 || end > buffer.length || end <= start) return false
-        val needle = collapseReaderWhitespace(quote)
-        if (needle.isEmpty()) return false
-        val slice = collapseReaderWhitespace(buffer.substring(start, end))
-        if (slice.isEmpty()) return false
-        return slice == needle || slice.contains(needle)
+        return rangeAgreesWithQuote(start, end, quote)
     }
 
     private fun collectExact(needle: String, into: MutableSet<IntRange>) {
@@ -462,7 +646,11 @@ fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
         return false
     }
 
-    private fun toAnchor(bufferStart: Int, bufferEnd: Int): ResolvedHighlightAnchor? {
+    private fun toAnchor(
+        bufferStart: Int,
+        bufferEnd: Int,
+        confidence: HighlightAnchorConfidence = HighlightAnchorConfidence.QuoteMatched
+    ): ResolvedHighlightAnchor? {
         if (bufferStart < 0 || bufferEnd > buffer.length || bufferStart >= bufferEnd) return null
         val segments = mutableListOf<HighlightBlockSegment>()
         var position = bufferStart
@@ -500,7 +688,7 @@ fun anchorFor(highlight: UserHighlight): HighlightAnchor? {
             startOffset = segments.first().absoluteStart,
             endOffset = segments.last().absoluteEnd,
             segments = segments,
-            confidence = HighlightAnchorConfidence.QuoteMatched
+            confidence = confidence
         )
     }
 

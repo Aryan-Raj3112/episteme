@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -7,14 +8,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -25,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -34,7 +32,16 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
+/**
+ * The library's hero: the book the reader is most likely to come back to.
+ *
+ * It is the one surface on Home that is allowed to be loud, so it uses the container role rather
+ * than `inverseSurface` (which turns into a bright grey slab in dark theme and reads as a card that
+ * belongs to another app) and it blends the book's cover tone into that container, so two different
+ * books never produce the same hero.
+ */
 @Composable
 fun SharedAndroidUnifiedContinueCard(
     sectionLabel: String,
@@ -51,46 +58,60 @@ fun SharedAndroidUnifiedContinueCard(
     density: SharedAndroidHomeDensity = SharedAndroidHomeDensity.Standard,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(if (density.compact) 20.dp else 28.dp)
+    val shape = RoundedCornerShape(if (density.compact) 24.dp else SharedUiTokens.heroRadius)
     val isRtl = cardLayoutDirection == LayoutDirection.Rtl
+    val container = MaterialTheme.colorScheme.primaryContainer
+    val content = MaterialTheme.colorScheme.onPrimaryContainer
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .height(density.continueCardHeight)
+            // The hero's height follows its content, floored by the one-line card. A fixed height
+            // clipped a two-line title: the progress bar was pushed past the rounded bottom edge
+            // and cut in half. Titles therefore get their second line (and a longer localised
+            // section label keeps its breathing room) at the cost of a slightly taller card.
+            .heightIn(min = density.continueCardHeight)
             .clip(shape)
             .testTag("UnifiedLibraryContinueReading")
             .combinedClickable(onClick = onClick, onLongClick = {}),
-        color = MaterialTheme.colorScheme.inverseSurface,
-        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
-        shadowElevation = if (density.compact) 2.dp else 5.dp,
+        color = container,
+        contentColor = content,
+        // No shadow: tonal surfaces separate by colour in M3, and a 5dp drop shadow under the
+        // largest element on the screen was the heaviest thing in the layout.
+        border = BorderStroke(1.dp, content.copy(alpha = 0.10f)),
     ) {
         CompositionLocalProvider(LocalLayoutDirection provides cardLayoutDirection) {
-            val backgroundBrush = if (isRtl) {
-                Brush.horizontalGradient(
-                    0f to MaterialTheme.colorScheme.inverseSurface,
-                    0.48f to coverTone.copy(alpha = 0.28f),
-                    1f to coverTone.copy(alpha = 0.74f),
-                )
-            } else {
-                Brush.horizontalGradient(
-                    0f to coverTone.copy(alpha = 0.74f),
-                    0.48f to coverTone.copy(alpha = 0.28f),
-                    1f to MaterialTheme.colorScheme.inverseSurface,
-                )
-            }
+            val backgroundBrush = Brush.horizontalGradient(
+                colorStops = if (isRtl) {
+                    arrayOf(
+                        0f to container,
+                        0.52f to coverTone.copy(alpha = 0.26f),
+                        1f to coverTone.copy(alpha = 0.72f),
+                    )
+                } else {
+                    arrayOf(
+                        0f to coverTone.copy(alpha = 0.72f),
+                        0.48f to coverTone.copy(alpha = 0.26f),
+                        1f to container,
+                    )
+                },
+            )
             Box(Modifier.background(backgroundBrush)) {
                 Row(
-                    Modifier.fillMaxSize().padding(
-                        start = if (density.compact) 12.dp else 16.dp,
-                        end = if (density.compact) 12.dp else 18.dp,
+                    Modifier.fillMaxWidth().padding(
+                        start = if (density.compact) 12.dp else 18.dp,
+                        end = if (density.compact) 12.dp else 20.dp,
+                        top = density.continueCardVerticalPadding,
+                        bottom = density.continueCardVerticalPadding,
                     ),
-                    horizontalArrangement = Arrangement.spacedBy(if (density.compact) 12.dp else 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (density.compact) 12.dp else 18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Deliberately not `fillMaxHeight`: that would stretch the cover to whatever
+                    // height the host offers. The cover keeps its own size and the row centres it,
+                    // so the card can grow for a second title line without growing the artwork.
                     Box(
                         Modifier
                             .width(density.continueCoverWidth)
-                            .fillMaxHeight()
                             .testTag("UnifiedLibraryContinueReadingCover")
                     ) { cover(Modifier.align(Alignment.CenterStart)) }
                     Column(
@@ -142,33 +163,36 @@ private fun StandardContinueContent(
     isRtl: Boolean,
     fileTypeBadge: @Composable () -> Unit,
 ) {
+    val onContainer = MaterialTheme.colorScheme.onPrimaryContainer
     Text(
         sectionLabel.uppercase(),
         modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.labelMedium,
         fontWeight = FontWeight.Bold,
+        letterSpacing = 1.4.sp,
+        color = onContainer.copy(alpha = 0.78f),
         textAlign = TextAlign.Start,
     )
     Text(
         title,
         modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.titleLarge,
+        style = MaterialTheme.typography.headlineSmall,
         fontWeight = FontWeight.Bold,
-        maxLines = 1,
+        maxLines = 2,
         overflow = TextOverflow.Ellipsis,
         textAlign = TextAlign.Start,
     )
     Text(
         author,
         modifier = Modifier.fillMaxWidth(),
-        style = MaterialTheme.typography.bodySmall,
+        style = MaterialTheme.typography.bodyMedium,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.72f),
+        color = onContainer.copy(alpha = 0.74f),
         textAlign = TextAlign.Start,
     )
     Row(
-        Modifier.padding(top = 6.dp),
+        Modifier.padding(top = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -177,25 +201,24 @@ private fun StandardContinueContent(
             Text(
                 it,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.66f),
+                color = onContainer.copy(alpha = 0.66f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Start,
             )
         }
     }
-    Spacer(Modifier.height(10.dp))
+    Spacer(Modifier.height(8.dp))
     Text(
         progressLabel,
         modifier = Modifier.fillMaxWidth(),
         style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.82f),
+        color = onContainer.copy(alpha = 0.86f),
         textAlign = TextAlign.Start,
     )
-    Spacer(Modifier.height(6.dp))
+    Spacer(Modifier.height(4.dp))
     ContinueProgress(
         progressPercent = progressPercent,
-        isRtl = isRtl,
         barHeight = 6.dp,
         modifier = Modifier.fillMaxWidth().testTag("UnifiedLibraryContinueReadingProgress"),
     )
@@ -216,6 +239,7 @@ private fun CompactContinueContent(
     isRtl: Boolean,
     fileTypeBadge: @Composable () -> Unit,
 ) {
+    val onContainer = MaterialTheme.colorScheme.onPrimaryContainer
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -226,6 +250,8 @@ private fun CompactContinueContent(
             modifier = Modifier.weight(1f, fill = false),
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
+            letterSpacing = 1.2.sp,
+            color = onContainer.copy(alpha = 0.78f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Start,
@@ -249,38 +275,35 @@ private fun CompactContinueContent(
     ) {
         ContinueProgress(
             progressPercent = progressPercent,
-            isRtl = isRtl,
             barHeight = 4.dp,
             modifier = Modifier.weight(1f).testTag("UnifiedLibraryContinueReadingProgress"),
         )
         Text(
             progressLabel,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.82f),
+            color = onContainer.copy(alpha = 0.86f),
             maxLines = 1,
         )
     }
 }
 
 /**
- * The progress bar is drawn left-to-right and mirrored for RTL, in both densities, so the
- * two cards cannot drift apart.
+ * Progress for the hero: the Material 3 Expressive wavy bar.
+ *
+ * This used to be a hand-drawn sine wave because the common `material3` did not expose
+ * `LinearWavyProgressIndicator`. It does now (see `SharedExpressiveComponents`), so the drawing
+ * code - the mirroring for RTL included - is gone and both platforms share one implementation.
  */
 @Composable
 private fun ContinueProgress(
     progressPercent: Float,
-    isRtl: Boolean,
     barHeight: Dp,
     modifier: Modifier = Modifier,
 ) {
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        LinearProgressIndicator(
-            progress = { progressPercent.coerceIn(0f, 100f) / 100f },
-            modifier = modifier
-                .height(barHeight)
-                .then(if (isRtl) Modifier.graphicsLayer { scaleX = -1f } else Modifier),
-            color = MaterialTheme.colorScheme.inverseOnSurface,
-            trackColor = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.25f),
-        )
-    }
+    SharedProgressBar(
+        progress = progressPercent / 100f,
+        modifier = modifier,
+        activeColor = MaterialTheme.colorScheme.onPrimaryContainer,
+        barHeight = barHeight,
+    )
 }

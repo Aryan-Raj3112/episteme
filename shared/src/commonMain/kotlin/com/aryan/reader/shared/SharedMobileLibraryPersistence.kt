@@ -10,7 +10,6 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
         audiobooks = audiobooks,
         pinnedHomeBookIds = pinnedHomeBookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds,
-        recentFilesLimit = recentFilesLimit,
         isTabsEnabled = isTabsEnabled,
         isFolderSyncEnabled = isFolderSyncEnabled,
         sortOrder = sortOrder,
@@ -19,6 +18,8 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
         libraryScreenStartPage = libraryScreenStartPage,
         openTabIds = openTabIds,
         activeTabBookId = activeTabBookId,
+        textOpenTabIds = textOpenTabIds,
+        activeTextTabBookId = activeTextTabBookId,
         useStrictFileFilter = useStrictFileFilter,
         externalFileBehavior = externalFileBehavior,
         usePdfFileNameAsDisplayName = usePdfFileNameAsDisplayName,
@@ -47,7 +48,9 @@ fun SharedLibrarySnapshot.toSharedMobileReaderState(): SharedReaderScreenState {
     return SharedLibraryStateProjector().project(
         SharedLibraryProjectionInput(
             state = base.toLibraryFeatureState(),
-            booksFromStore = books,
+            // Older snapshots stored tags in whatever order they were assigned. The
+            // chips and pickers show natural tag order on both platforms.
+            booksFromStore = books.map { it.withNaturallySortedTags() },
             shelfRecords = shelfRecords,
             shelfRefs = shelfRefs,
             tags = tags,
@@ -102,8 +105,7 @@ fun SharedReaderScreenState.toLibraryFeatureState() = LibraryFeatureState(
     syncedFolders = syncedFolders,
     pinnedHomeBookIds = pinnedHomeBookIds,
     pinnedLibraryBookIds = pinnedLibraryBookIds,
-    recentLimit = recentFilesLimit,
-    tabs = AppTabState(isTabsEnabled, openTabIds, activeTabBookId),
+    tabs = toTabState(),
 )
 
 /** Copies a projection result back onto the originating reader screen state. */
@@ -122,11 +124,13 @@ fun SharedReaderScreenState.withLibraryFeatureState(feature: LibraryFeatureState
     pinnedHomeBookIds = feature.pinnedHomeBookIds,
     pinnedLibraryBookIds = feature.pinnedLibraryBookIds,
     libraryFilters = feature.filters,
-    recentFilesLimit = feature.recentLimit,
     isTabsEnabled = feature.tabs.isEnabled,
-    openTabIds = feature.tabs.openBookIds,
+    openTabIds = feature.tabs.fixedLayout.openBookIds,
     openTabs = feature.openTabs,
-    activeTabBookId = feature.tabs.activeBookId,
+    activeTabBookId = feature.tabs.fixedLayout.activeBookId,
+    textOpenTabIds = feature.tabs.text.openBookIds,
+    textOpenTabs = feature.textOpenTabs,
+    activeTextTabBookId = feature.tabs.text.activeBookId,
     booksAvailableForAdding = feature.booksAvailableForAdding,
     allTags = feature.tags,
     syncedFolders = feature.syncedFolders,
@@ -166,7 +170,6 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
         tags = allTags,
         customFonts = customFonts,
         syncedFolders = syncedFolders,
-        recentFilesLimit = normalizedRecentFilesLimit(recentFilesLimit),
         isTabsEnabled = isTabsEnabled,
         isFolderSyncEnabled = isFolderSyncEnabled,
         sortOrder = sortOrder,
@@ -175,6 +178,8 @@ fun SharedReaderScreenState.toSharedMobileLibrarySnapshot(): SharedLibrarySnapsh
         libraryScreenStartPage = libraryScreenStartPage.coerceIn(0, 3),
         openTabIds = openTabIds,
         activeTabBookId = activeTabBookId,
+        textOpenTabIds = textOpenTabIds,
+        activeTextTabBookId = activeTextTabBookId,
         pinnedHomeBookIds = pinnedHomeBookIds,
         pinnedLibraryBookIds = pinnedLibraryBookIds,
         useStrictFileFilter = useStrictFileFilter,

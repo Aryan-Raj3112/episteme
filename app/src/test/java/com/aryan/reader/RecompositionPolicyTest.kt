@@ -31,7 +31,12 @@ class RecompositionPolicyTest {
         val source = readMain("SettingsScreen.kt")
         // Every value the model reads must be a remembered key: dropping one silently
         // freezes that section, e.g. the FPS toggle would stop updating its check state.
-        assertTrue(source.contains("val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled)"))
+        assertTrue(source.contains("val settingsModel = remember(uiState, hideReaderAi, fpsOverlayEnabled, settingsItemValues)"))
+        // The value previews are their own remembered keys: rebuilding them inline would rebuild
+        // the whole model on every recomposition. The shared helper remembers the host-owned
+        // previews, and the host adds its own entries on top without re-running that helper.
+        assertTrue(source.contains("val baseItemValues = rememberSharedSettingsItemValues("))
+        assertTrue(source.contains("val settingsItemValues = remember(baseItemValues, "))
     }
 
     @Test
@@ -76,16 +81,26 @@ class RecompositionPolicyTest {
 
     @Test
     fun `tag membership is precomputed outside item composition`() {
-        val source = readMain("SharedComposables.kt")
-        assertTrue(source.contains("val tagMembership = remember(selectedBookIds, booksWithTags)"))
+        // The sheet now lives in shared so Android and iOS cannot drift again.
+        val source = readShared("src/mobileMain/kotlin/com/aryan/reader/shared/ui/SharedMobileTagSheet.kt")
+        assertTrue(source.contains("val tagCounts = remember(books, selectedBookIds)"))
         val itemsBody = source.substringAfter("items(filteredTags, key = { it.id })")
-        assertFalse(itemsBody.substringBefore("TriStateCheckbox").contains("booksWithTags.find"))
+        val rowBeforeCheckbox = itemsBody.substringBefore("TriStateCheckbox")
+        assertFalse(rowBeforeCheckbox.contains("books.find"))
+        assertFalse(rowBeforeCheckbox.contains(".count {"))
     }
 
     private fun readMain(relativePath: String): String {
         return listOf(
             File("src/main/java/com/aryan/reader/$relativePath"),
             File("app/src/main/java/com/aryan/reader/$relativePath")
+        ).first { it.isFile }.readText()
+    }
+
+    private fun readShared(relativePath: String): String {
+        return listOf(
+            File("../shared/$relativePath"),
+            File("shared/$relativePath")
         ).first { it.isFile }.readText()
     }
 }

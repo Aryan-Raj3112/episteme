@@ -3151,7 +3151,7 @@ class TtsPlaybackManager(
         handleStopTts(userInitiated = true)
         directLocalAudioFocusManager.abandonFocus()
         directLocalPlaybackAnchor.release()
-        directLocalTtsPlayer.shutdown()
+        directLocalTtsPlayer.release()
         Timber.d("TtsPlaybackManager released.")
     }
 

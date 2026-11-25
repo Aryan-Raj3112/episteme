@@ -128,6 +128,7 @@ import com.aryan.reader.shared.ui.SharedMobileEpubBottomBar
 import com.aryan.reader.shared.ui.SharedMobileEpubLocalTtsState
 import com.aryan.reader.shared.ui.SharedMobileEpubToolbarTools
 import com.aryan.reader.shared.ui.SharedMobileEpubTopBar
+import com.aryan.reader.shared.ui.SharedReaderIcons
 import com.aryan.reader.shared.ui.SharedReaderBarEdge
 import com.aryan.reader.shared.ui.SharedReaderBarVisibility
 import com.aryan.reader.shared.ui.SharedReaderToolbarPlacement
@@ -170,6 +171,7 @@ val ReaderTool.titleRes: Int
         ReaderTool.KEEP_SCREEN_ON -> R.string.menu_keep_screen_on
         ReaderTool.VISUAL_OPTIONS -> R.string.menu_visual_options
         ReaderTool.SCREEN_ORIENTATION -> R.string.menu_screen_orientation
+        ReaderTool.PERCEPTION_LINES -> R.string.menu_perception_lines
         ReaderTool.AUTO_SCROLL -> R.string.menu_auto_scroll
         ReaderTool.TTS_SETTINGS -> R.string.menu_tts_settings
         ReaderTool.TTS_REPLACEMENTS -> R.string.menu_tts_word_replacements
@@ -205,7 +207,8 @@ internal fun epubOverflowMenuSections(
 
 internal fun defaultReaderHiddenTools(): Set<String> = setOf(
     ReaderTool.SCREEN_ORIENTATION.name,
-    ReaderTool.BRIGHTNESS.name
+    ReaderTool.BRIGHTNESS.name,
+    ReaderTool.PERCEPTION_LINES.name
 )
 
 internal fun defaultReaderToolOrder(): List<ReaderTool> = ReaderTool.entries.toList()
@@ -298,6 +301,8 @@ fun EpubReaderTopBar(
     onOpenBrightness: () -> Unit,
     onOpenVisualOptions: () -> Unit,
     onOpenScreenOrientation: () -> Unit,
+    onOpenPerceptionLines: () -> Unit,
+    perceptionLinesVisible: Boolean,
     onOpenSlider: () -> Unit,
     onOpenDrawer: () -> Unit,
     onToggleFormat: () -> Unit,
@@ -329,6 +334,8 @@ fun EpubReaderTopBar(
     onDeleteReflow: (() -> Unit)? = null,
     onExportAnnotations: (() -> Unit)? = null,
     readerMotionPolicy: ReaderMotionPolicy = ReaderMotionPolicy(),
+    /** The reflow reader's tab strip, painted as a second band of this same chrome. */
+    tabStrip: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current
     // The popup's own state: Android has always owned it inside the bar (there is no screen-level
@@ -382,6 +389,8 @@ fun EpubReaderTopBar(
                 onFileInfo = onOpenFileInfo,
                 onCustomizeTools = onCustomizeTools,
                 onScreenOrientation = onOpenScreenOrientation,
+                onPerceptionLines = onOpenPerceptionLines,
+                perceptionLinesVisible = perceptionLinesVisible,
                 onTtsSettings = onOpenTtsSettings,
                 onTtsReplacements = onOpenTtsReplacements,
                 onBookReplacements = onOpenBookReplacements,
@@ -409,6 +418,7 @@ fun EpubReaderTopBar(
                         onOpenAiHub = onOpenAiHub,
                         onToggleTts = onToggleTts,
                         onOpenScreenOrientation = onOpenScreenOrientation,
+                        onOpenPerceptionLines = onOpenPerceptionLines,
                     )
                 },
                 readingMode = if (currentRenderMode == RenderMode.PAGINATED) {
@@ -458,6 +468,7 @@ fun EpubReaderTopBar(
                         onCloseSearch = onCloseSearch
                     )
                 },
+                tabStrip = tabStrip,
             )
         }
     }
@@ -532,6 +543,8 @@ fun EpubReaderBottomBar(
     onOpenBrightness: () -> Unit,
     onToggleTts: () -> Unit,
     onOpenScreenOrientation: () -> Unit,
+    onOpenPerceptionLines: () -> Unit,
+    perceptionLinesVisible: Boolean,
     hiddenTools: Set<String>,
     toolOrder: List<ReaderTool>,
     bottomTools: Set<String>,
@@ -579,6 +592,8 @@ fun EpubReaderBottomBar(
                 onDictionary = onOpenDictionarySettings,
                 onBrightness = onOpenBrightness,
                 onScreenOrientation = onOpenScreenOrientation,
+                onPerceptionLines = onOpenPerceptionLines,
+                perceptionLinesVisible = perceptionLinesVisible,
                 onOpenAiHub = onOpenAiHub,
                 aiAvailable = areReaderAiFeaturesEnabled(context),
                 localTtsState = epubChromeReadAloudState(isTtsSessionActive),
@@ -829,7 +844,7 @@ fun CustomizeToolsSheet(
 private fun ToolPreviewIcon(tool: ReaderTool, isSliderActive: Boolean = false) {
     val title = stringResource(tool.titleRes)
     when (tool) {
-        ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.apps), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.SLIDER -> Icon(
@@ -846,6 +861,7 @@ private fun ToolPreviewIcon(tool: ReaderTool, isSliderActive: Boolean = false) {
         ReaderTool.BOOK_REPLACEMENTS -> Icon(painterResource(id = R.drawable.text_fields), contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.FILE_INFO -> Icon(Icons.Default.Info, contentDescription = title, modifier = Modifier.size(20.dp))
         ReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = title, modifier = Modifier.size(20.dp))
+        ReaderTool.PERCEPTION_LINES -> Icon(SharedReaderIcons.PerceptionLines, contentDescription = title, modifier = Modifier.size(20.dp))
         else -> Icon(Icons.Default.MoreVert, contentDescription = title, modifier = Modifier.size(20.dp))
     }
 }
@@ -864,9 +880,10 @@ private fun HiddenEpubToolMenuItem(
     onToggleSearch: () -> Unit,
     onOpenAiHub: () -> Unit,
     onToggleTts: () -> Unit,
-    onOpenScreenOrientation: () -> Unit
+    onOpenScreenOrientation: () -> Unit,
+    onOpenPerceptionLines: () -> Unit,
 ) {
-    DropdownMenuItem(
+    com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
         text = { Text(stringResource(tool.titleRes)) },
         onClick = {
             showMoreMenu()
@@ -881,6 +898,7 @@ private fun HiddenEpubToolMenuItem(
                 ReaderTool.AI_FEATURES -> onOpenAiHub()
                 ReaderTool.TTS_CONTROLS -> onToggleTts()
                 ReaderTool.SCREEN_ORIENTATION -> onOpenScreenOrientation()
+                ReaderTool.PERCEPTION_LINES -> onOpenPerceptionLines()
                 else -> Unit
             }
         },

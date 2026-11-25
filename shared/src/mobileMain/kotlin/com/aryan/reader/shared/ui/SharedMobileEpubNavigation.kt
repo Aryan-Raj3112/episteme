@@ -60,6 +60,11 @@ import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.UserHighlight
 import com.aryan.reader.shared.fillCssColor
 import com.aryan.reader.shared.readerWordStartMatchOffsets
+import com.aryan.reader.shared.readerSearchHtmlToText
+import com.aryan.reader.shared.readerSearchMatchQuote
+import com.aryan.reader.paginatedreader.readerSearchMatchIndex
+import com.aryan.reader.paginatedreader.readerSearchTarget
+import com.aryan.reader.paginatedreader.readerSearchTextBlocksFromSemanticBlocks
 import com.aryan.reader.shared.reader.ReaderHtmlDocumentBuilder
 import com.aryan.reader.shared.reader.ReaderPage
 import com.aryan.reader.shared.reader.ReaderSettings
@@ -316,6 +321,12 @@ internal data class SharedMobileEpubSearchResult(
     val matchIndexInSnippet: Int = -1,
     /** Length of the matched span inside [snippet]. */
     val matchLengthInSnippet: Int = 0,
+    /**
+     * Whitespace-collapsed context around the match, used to re-find this exact
+     * occurrence when the chunk text and the painted text diverge (Android
+     * parity: `SearchResult.matchQuote`).
+     */
+    val matchQuote: String = "",
 )
 internal data class SharedMobileEpubLink(val href: String, val chapterHref: String?)
 internal data class SharedMobileEpubActiveToc(val href: String, val fragmentId: String?)
@@ -462,6 +473,13 @@ internal fun sharedMobileEpubHighlightsApplyScript(highlights: List<UserHighligh
             // stylesheet looked tinted, and the same highlight turned opaque the moment it was
             // recoloured. readerUserHighlightPaintColor prefers this value when it is present.
             append(",\"fillCss\":").append(JsonPrimitive(highlight.fillCssColor()))
+            // The note mark is drawn by the document, so it has to be told which highlights carry a
+            // note. Its colour is fixed in the document (HIGHLIGHT_NOTE_MARK_CSS_COLOR), not carried
+            // here: a mark coloured by its own highlight is invisible on a yellow one. The note text
+            // itself never leaves the app.
+            if (!highlight.note.isNullOrBlank()) {
+                append(",\"hasNote\":true")
+            }
             append(",\"chapterIndex\":").append(highlight.chapterIndex)
             append(",\"locator\":{")
             val locator = highlight.locator
@@ -496,12 +514,32 @@ internal fun SharedEpubBook.searchMobileEpub(
     pages: List<ReaderPage>,
 ): List<SharedMobileEpubSearchResult> {
     val needle = query.trim()
+    if (needle.isEmpty()) return emptyList()
     return buildList {
         chapters.forEachIndexed { chapterIndex, chapter ->
-            val chapterOffsets = readerWordStartMatchOffsets(chapter.plainText, query)
+            // Two text spaces on purpose: snippets and the in-chunk ordinal come
+            // from the chunk markup the WebView renders, while the locator has to
+            // be expressed in the paginator's own block text. `ReaderPage`
+            // offsets are `SemanticTextBlock.startCharOffsetInSource`, a
+            // different space from `chapter.plainText`, so resolving the hit
+            // there (ordinal first, quote when the texts drifted) is what makes
+            // the page number and the deep link land on the match.
+            val paginatorBlocks = readerSearchTextBlocksFromSemanticBlocks(chapter.semanticBlocks)
+            val plainTextOffsets = if (paginatorBlocks.isEmpty()) {
+                readerWordStartMatchOffsets(chapter.plainText, query)
+            } else {
+                emptyList()
+            }
+            // One scan per chapter: every hit in it resolves against the same
+            // matches instead of rescanning the chapter per hit.
+            val chapterMatchIndex = if (paginatorBlocks.isEmpty()) {
+                null
+            } else {
+                readerSearchMatchIndex(paginatorBlocks, query)
+            }
             var chapterOccurrence = 0
             ReaderHtmlDocumentBuilder.verticalChapterChunks(this@searchMobileEpub, chapterIndex).forEachIndexed { chunkIndex, html ->
-                val text = html.mobileEpubPlainText()
+                val text = readerSearchHtmlToText(html)
                 readerWordStartMatchOffsets(text, query).forEachIndexed { chunkOccurrence, found ->
                     val snippetStart = (found - 35).coerceAtLeast(0)
                     val snippetEnd = (found + needle.length + 35).coerceAtMost(text.length)
@@ -513,7 +551,17 @@ internal fun SharedEpubBook.searchMobileEpub(
                     val matchInSnippet = (found - snippetStart)
                         .minus(rawSnippet.length - rawSnippet.trimStart().length)
                         .coerceIn(0, trimmedSnippet.length)
-                    val sourceOffset = chapterOffsets.getOrNull(chapterOccurrence)
+                    val matchQuote = readerSearchMatchQuote(text, found, needle.length)
+
+                    val paginatorTarget = chapterMatchIndex?.let { index ->
+                        readerSearchTarget(
+                            index = index,
+                            occurrenceIndexInLocation = chapterOccurrence,
+                            matchQuote = matchQuote,
+                        )
+                    }
+                    val sourceOffset = paginatorTarget?.charOffsetInSource
+                        ?: plainTextOffsets.getOrNull(chapterOccurrence)
                     val page = sourceOffset?.let { offset ->
                         pages.firstOrNull {
                             it.chapterIndex == chapterIndex &&
@@ -532,11 +580,13 @@ internal fun SharedEpubBook.searchMobileEpub(
                             matchLengthInSnippet = needle.length
                                 .coerceAtMost(trimmedSnippet.length - matchInSnippet)
                                 .coerceAtLeast(0),
+                            matchQuote = matchQuote,
                             locator = ReaderLocator(
                                 chapterIndex = chapterIndex,
                                 chapterId = chapter.id,
                                 href = chapter.baseHref,
                                 pageIndex = page?.pageIndex,
+                                blockIndex = paginatorTarget?.blockIndex,
                                 startOffset = sourceOffset ?: page?.startOffset ?: 0,
                                 endOffset = sourceOffset?.plus(needle.length)
                                     ?: page?.startOffset
@@ -551,13 +601,6 @@ internal fun SharedEpubBook.searchMobileEpub(
         }
     }
 }
-
-internal fun String.mobileEpubPlainText(): String =
-    replace(Regex("<script[\\s\\S]*?</script>", RegexOption.IGNORE_CASE), " ")
-        .replace(Regex("<style[\\s\\S]*?</style>", RegexOption.IGNORE_CASE), " ")
-        .replace(Regex("<[^>]+>"), " ")
-        .replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-        .replace(Regex("\\s+"), " ").trim()
 
 internal fun JsonObject.toMobileEpubLocator(): ReaderLocator {
     fun int(name: String): Int? = get(name)?.jsonPrimitive?.intOrNull
@@ -921,29 +964,116 @@ internal fun sharedMobileEpubSearchNavigationScript(result: SharedMobileEpubSear
             "if(window.readerVirtualization&&window.readerVirtualization.requestChunk)window.readerVirtualization.requestChunk(${result.chunkIndex});"
     }
     val needsWait = chunkHtml != null && chunkHtml.length > ReaderHtmlDocumentBuilder.MaxInlineVirtualChunkChars
+    val chunkSelector = "[data-reader-chunk-index='" + result.chunkIndex + "']"
+    // Same matcher as Android's WebView script and as the Kotlin searcher:
+    // flatten the chunk (whitespace runs collapsed, one space at every block
+    // boundary), match word starts, then pick the occurrence by ordinal and,
+    // when the painted text drifted from the searched text, by the hit's quote.
     val highlightBody = """
-          var chunk=document.querySelector('[data-reader-chunk-index="${result.chunkIndex}"]');
+          var chunk=document.querySelector(${JsonPrimitive(chunkSelector)});
           var query=${JsonPrimitive(query)};
+          var quote=${JsonPrimitive(result.matchQuote)};
           document.querySelectorAll('.reader-ios-search-hit').forEach(function(hit){
             var parent=hit.parentNode; while(hit.firstChild)parent.insertBefore(hit.firstChild,hit); parent.removeChild(hit); parent.normalize();
           });
           if(!chunk||!chunk.innerHTML.trim())return false;
-          var walker=document.createTreeWalker(chunk,NodeFilter.SHOW_TEXT);
-          var node,occurrence=0,target=null,needle=query.toLocaleLowerCase();
-          while((node=walker.nextNode())&&!target){
-            var value=node.nodeValue||'',lower=value.toLocaleLowerCase(),from=0,found;
-            while((found=lower.indexOf(needle,from))>=0){
-              var wordStart=found===0||!/[\p{L}\p{N}]/u.test(lower.charAt(found-1));
-              if(wordStart){
-                if(occurrence===${result.occurrenceIndex}){
-                  var range=document.createRange(); range.setStart(node,found); range.setEnd(node,found+needle.length);
-                  var mark=document.createElement('mark'); mark.className='reader-ios-search-hit';
-                  mark.style.background='#ffdf5d'; mark.style.color='inherit'; range.surroundContents(mark); target=mark; break;
-                }
-                occurrence++;
-              }
-              from=found+Math.max(1,needle.length);
+          var boundary={address:1,article:1,aside:1,blockquote:1,br:1,caption:1,dd:1,div:1,dl:1,dt:1,figcaption:1,figure:1,footer:1,h1:1,h2:1,h3:1,h4:1,h5:1,h6:1,header:1,hr:1,li:1,main:1,nav:1,ol:1,p:1,pre:1,section:1,table:1,td:1,th:1,tr:1,ul:1};
+          var skipped={script:1,style:1,noscript:1,template:1};
+          var wordChar=/[\p{L}\p{N}]/u;
+          var chars=[],nodes=[],offsets=[],lastWasSpace=true;
+          function pushSpace(){
+            if(!chars.length||lastWasSpace){lastWasSpace=true;return;}
+            chars.push(' ');nodes.push(null);offsets.push(-1);lastWasSpace=true;
+          }
+          function appendText(node){
+            var value=node.nodeValue||'';
+            for(var i=0;i<value.length;i++){
+              var ch=value.charAt(i);
+              if(/\s/.test(ch)){pushSpace();continue;}
+              chars.push(ch);nodes.push(node);offsets.push(i);lastWasSpace=false;
             }
+          }
+          function visit(node){
+            if(!node)return;
+            if(node.nodeType===3){appendText(node);return;}
+            if(node.nodeType===1){
+              var tag=(node.tagName||'').toLowerCase();
+              if(skipped[tag])return;
+              if(tag==='br'){pushSpace();return;}
+              var kids=node.childNodes;
+              for(var k=0;k<kids.length;k++)visit(kids[k]);
+              if(boundary[tag])pushSpace();
+              return;
+            }
+            var others=node.childNodes||[];
+            for(var o=0;o<others.length;o++)visit(others[o]);
+          }
+          visit(chunk);
+          var text=chars.join('');
+          var lowerText=text.toLowerCase();
+          var needle=query.trim().toLowerCase();
+          var starts=[],from=0;
+          while(needle&&from<=lowerText.length-needle.length){
+            var located=lowerText.indexOf(needle,from);
+            if(located<0)break;
+            if(located===0||!wordChar.test(text.charAt(located-1)))starts.push(located);
+            from=located+1;
+          }
+          var ordinal=${result.occurrenceIndex};
+          var compactQuote=String(quote||'').toLowerCase().replace(/\s+/g,'');
+          if(compactQuote){
+            var compact='',compactToSource=[];
+            for(var c=0;c<text.length;c++){
+              var cc=text.charAt(c);
+              if(/\s/.test(cc))continue;
+              compactToSource.push(c);compact+=cc.toLowerCase();
+            }
+            var quoteSpan=compactQuote.length,best=-1,bestDistance=Number.MAX_VALUE;
+            var qFrom=0;
+            while(qFrom<=compact.length-compactQuote.length){
+              var qFound=compact.indexOf(compactQuote,qFrom);
+              if(qFound<0)break;
+              var qStart=compactToSource[qFound],qEnd=qStart+quoteSpan;
+              for(var m=0;m<starts.length;m++){
+                if(starts[m]<qStart)continue;
+                if(starts[m]>qEnd)break;
+                var distance=Math.abs(m-ordinal);
+                if(distance<bestDistance){bestDistance=distance;best=m;}
+              }
+              qFrom=qFound+compactQuote.length;
+            }
+            if(best>=0)ordinal=best;
+          }
+          if(starts.length&&(ordinal<0||ordinal>=starts.length))ordinal=starts.length-1;
+          var target=null;
+          if(starts.length){
+            var matchStart=starts[Math.max(0,ordinal)],matchEnd=matchStart+needle.length;
+            var groups=[];
+            for(var g=matchStart;g<matchEnd&&g<nodes.length;g++){
+              var groupNode=nodes[g];
+              if(!groupNode)continue;
+              var lastGroup=groups[groups.length-1];
+              if(lastGroup&&lastGroup.node===groupNode){lastGroup.end=offsets[g]+1;}
+              else{groups.push({node:groupNode,start:offsets[g],end:offsets[g]+1});}
+            }
+            var leading=groups[0];
+            groups.sort(function(a,b){return b.start-a.start;});
+            groups.forEach(function(group){
+              var owner=group.node;
+              if(!owner||!owner.parentNode)return;
+              var value=owner.nodeValue||'';
+              var start=Math.max(0,Math.min(group.start,value.length));
+              var end=Math.max(start,Math.min(group.end,value.length));
+              if(end<=start)return;
+              var after=owner.splitText(start);
+              after.splitText(end-start);
+              var mark=document.createElement('mark');
+              mark.className='reader-ios-search-hit';
+              mark.style.background='#ffdf5d'; mark.style.color='inherit';
+              after.parentNode.replaceChild(mark,after);
+              mark.appendChild(after);
+              if(group===leading)target=mark;
+            });
           }
           (target||chunk).scrollIntoView({block:'center',behavior:'auto'});
           return true;
@@ -968,7 +1098,6 @@ internal fun sharedMobileEpubSearchNavigationScript(result: SharedMobileEpubSear
         """.trimIndent()
     }
 }
-
 
 
 

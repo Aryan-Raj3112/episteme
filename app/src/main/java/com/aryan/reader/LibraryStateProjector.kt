@@ -35,20 +35,28 @@ class LibraryStateProjector(
     fun project(input: LibraryProjectionInput): ReaderScreenState {
         val start = ReaderPerfLog.nowNanos()
         val internalState = input.state
-        val projectionContext = AndroidLibraryProjectionAdapter.prepare(input, folderPathResolver)
+        // The key is built before [AndroidLibraryProjectionAdapter.prepare]: prepare resolves tags,
+        // maps every book through the shared item cache and synthesizes folder fallbacks, and all of
+        // that is wasted work when the key matches (every page turn, dialog or selection change
+        // re-emits state while the library itself is unchanged). Folder keys come from the state's
+        // own folder list; folders synthesized from books are already implied by the book list being
+        // part of the key.
         val cacheKey = ProjectionCacheKey(
             recentFilesFromDb = input.recentFilesFromDb,
             dbShelves = input.dbShelves,
             shelfRefs = input.shelfRefs,
             dbTags = input.dbTags,
             tagRefs = input.tagRefs,
-            folderKeys = projectionContext.folderKeys,
+            folderKeys = internalState.syncedFolders.map {
+                AndroidFolderProjectionKey(it.uriString, it.name)
+            },
             sortOrder = internalState.sortOrder,
             searchQuery = internalState.searchQuery,
             libraryFilters = internalState.libraryFilters,
-            recentFilesLimit = internalState.recentFilesLimit,
             openTabIds = internalState.openTabIds,
             activeTabBookId = internalState.activeTabBookId,
+            textOpenTabIds = internalState.textOpenTabIds,
+            activeTextTabBookId = internalState.activeTextTabBookId,
             selectedBookIds = internalState.contextualActionItems.mapTo(mutableSetOf()) { it.bookId },
             selectedShelfIds = internalState.contextualActionShelfIds,
             viewingShelfId = internalState.viewingShelfId,
@@ -70,6 +78,7 @@ class LibraryStateProjector(
             return result
         }
 
+        val projectionContext = AndroidLibraryProjectionAdapter.prepare(input, folderPathResolver)
         val projected = AndroidLibraryProjectionAdapter.project(projectionContext)
         val cache = CachedProjection(
             key = cacheKey,
@@ -113,9 +122,10 @@ class LibraryStateProjector(
         val sortOrder: SortOrder,
         val searchQuery: String,
         val libraryFilters: LibraryFilters,
-        val recentFilesLimit: Int,
         val openTabIds: List<String>,
         val activeTabBookId: String?,
+        val textOpenTabIds: List<String>,
+        val activeTextTabBookId: String?,
         val selectedBookIds: Set<String>,
         val selectedShelfIds: Set<String>,
         val viewingShelfId: String?,
@@ -134,27 +144,54 @@ class LibraryStateProjector(
     )
 }
 
-fun filterBySearch(files: List<RecentFileItem>, searchQuery: String): List<RecentFileItem> {
-    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
-    return files.mapSharedResults(sharedFilterBySearch(mapper.map(files), searchQuery))
-}
+/**
+ * One projection cache per library pass. The helpers below are called back to back on the same
+ * book instances (filter -> view filter -> sort), so they must share a cache: each one builds a
+ * [SharedBookItem] per book, and a per-call cache maps the whole list 3-4 times per pass.
+ */
+internal fun projectionCacheFor(files: List<RecentFileItem>): SharedProjectionBookItemCache =
+    SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
 
-fun applyLibraryFilters(files: List<RecentFileItem>, filters: LibraryFilters): List<RecentFileItem> {
-    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
-    return files.mapSharedResults(
+fun filterBySearch(files: List<RecentFileItem>, searchQuery: String): List<RecentFileItem> =
+    filterBySearch(files, searchQuery, projectionCacheFor(files))
+
+internal fun filterBySearch(
+    files: List<RecentFileItem>,
+    searchQuery: String,
+    mapper: SharedProjectionBookItemCache,
+    byId: Map<String, RecentFileItem> = files.associateBy { it.bookId },
+): List<RecentFileItem> =
+    files.mapSharedResults(sharedFilterBySearch(mapper.map(files), searchQuery), byId)
+
+fun applyLibraryFilters(files: List<RecentFileItem>, filters: LibraryFilters): List<RecentFileItem> =
+    applyLibraryFilters(files, filters, projectionCacheFor(files))
+
+internal fun applyLibraryFilters(
+    files: List<RecentFileItem>,
+    filters: LibraryFilters,
+    mapper: SharedProjectionBookItemCache,
+    byId: Map<String, RecentFileItem> = files.associateBy { it.bookId },
+): List<RecentFileItem> =
+    files.mapSharedResults(
         sharedApplyLibraryFilters(
             books = mapper.map(files),
             filters = filters
-        )
+        ),
+        byId
     )
-}
 
-fun sortFiles(files: List<RecentFileItem>, sortOrder: SortOrder): List<RecentFileItem> {
-    val mapper = SharedProjectionBookItemCache(maxEntries = files.size.coerceAtLeast(1))
-    return files.mapSharedResults(sharedSortBooks(mapper.map(files), sortOrder))
-}
+fun sortFiles(files: List<RecentFileItem>, sortOrder: SortOrder): List<RecentFileItem> =
+    sortFiles(files, sortOrder, projectionCacheFor(files))
 
-private fun List<RecentFileItem>.mapSharedResults(sharedBooks: List<com.aryan.reader.shared.BookItem>): List<RecentFileItem> {
-    val byId = associateBy { it.bookId }
-    return sharedBooks.mapNotNull { byId[it.id] }
-}
+internal fun sortFiles(
+    files: List<RecentFileItem>,
+    sortOrder: SortOrder,
+    mapper: SharedProjectionBookItemCache,
+    byId: Map<String, RecentFileItem> = files.associateBy { it.bookId },
+): List<RecentFileItem> =
+    files.mapSharedResults(sharedSortBooks(mapper.map(files), sortOrder), byId)
+
+private fun List<RecentFileItem>.mapSharedResults(
+    sharedBooks: List<com.aryan.reader.shared.BookItem>,
+    byId: Map<String, RecentFileItem> = associateBy { it.bookId },
+): List<RecentFileItem> = sharedBooks.mapNotNull { byId[it.id] }

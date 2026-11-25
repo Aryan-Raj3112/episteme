@@ -105,6 +105,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.aryan.reader.R
+import com.aryan.reader.supportedFontMimeTypes
 import com.aryan.reader.data.CustomFontEntity
 import com.aryan.reader.shared.pdf.AndroidPdfTextDockFontSizes
 import com.aryan.reader.shared.pdf.PdfTextDockColorMenuMode as ColorMenuMode
@@ -220,7 +221,7 @@ fun TextAnnotationDock(
                 SharedPdfTextDockFontPanel(
                     presetsLabel = stringResource(R.string.tab_presets), importedLabel = stringResource(R.string.tab_imported),
                     importLabel = stringResource(R.string.action_import), noImportedFontsLabel = stringResource(R.string.msg_no_fonts_imported),
-                    onImportClick = { fontPickerLauncher.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf")) },
+                    onImportClick = { fontPickerLauncher.launch(supportedFontMimeTypes()) },
                     hasImportedFonts = customFonts.isNotEmpty(),
                     presetContent = {
                         LazyColumn {

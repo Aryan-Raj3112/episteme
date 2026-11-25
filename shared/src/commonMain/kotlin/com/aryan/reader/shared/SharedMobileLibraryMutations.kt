@@ -1,6 +1,6 @@
 package com.aryan.reader.shared
 
-const val MAX_OPEN_PDF_TABS = 20
+const val MAX_OPEN_TABS_PER_KIND = 20
 
 enum class MobileExternalOpenAction {
     OPEN_LIBRARY_COPY,
@@ -206,6 +206,9 @@ fun SharedReaderScreenState.withMobileFolderFileTypes(
         openTabs = openTabs.withoutRemoved(),
         openTabIds = openTabIds.filterNot { it in removedBookIds },
         activeTabBookId = activeTabBookId?.takeUnless { it in removedBookIds },
+        textOpenTabs = textOpenTabs.withoutRemoved(),
+        textOpenTabIds = textOpenTabIds.filterNot { it in removedBookIds },
+        activeTextTabBookId = activeTextTabBookId?.takeUnless { it in removedBookIds },
         selectedBookId = selectedBookId?.takeUnless { it in removedBookIds },
         selectedBookIds = selectedBookIds - removedBookIds,
         booksSelectedForAdding = booksSelectedForAdding - removedBookIds,
@@ -224,7 +227,7 @@ fun SharedReaderScreenState.withMobileFolderFileTypes(
     )
 }
 
-fun canOpenMobilePdfTab(openTabIds: Collection<String>, bookId: String): Boolean {
+fun canOpenMobileTab(openTabIds: Collection<String>, bookId: String): Boolean {
     val normalizedBookId = bookId.trim()
     if (normalizedBookId.isBlank()) return false
     val currentTabIds = openTabIds.asSequence()
@@ -232,7 +235,7 @@ fun canOpenMobilePdfTab(openTabIds: Collection<String>, bookId: String): Boolean
         .filter(String::isNotBlank)
         .distinct()
         .toList()
-    return normalizedBookId in currentTabIds || currentTabIds.size < MAX_OPEN_PDF_TABS
+    return tabSetAccepts(currentTabIds, normalizedBookId, MAX_OPEN_TABS_PER_KIND)
 }
 
 /**
@@ -565,10 +568,11 @@ fun SharedReaderScreenState.withMobileBookOpened(
             )
         },
     )
-    // Match Android: active tabs are a PDF-only affordance and opening a book must
-    // not turn the feature back on after the user disabled it.
-    val tabState = if (openedBook.type == FileType.PDF && openedState.isTabsEnabled) {
-        openedState.withMobileBookTabOpened(openedBook.id)
+    // Active tabs belong to the reader that will show them, and opening a book must not turn the
+    // feature back on after the user disabled it.
+    val tabKind = openedBook.readerTabKind()
+    val tabState = if (tabKind != null && openedState.isTabsEnabled) {
+        openedState.withMobileBookTabOpened(tabKind, openedBook.id)
     } else {
         openedState
     }
@@ -648,88 +652,106 @@ fun SharedReaderScreenState.withMobileTemporaryBookClosed(bookId: String): Share
         openTabs = openTabs.filterNot { it.id == bookId },
         openTabIds = openTabIds.filterNot { it == bookId },
         activeTabBookId = activeTabBookId?.takeUnless { it == bookId },
+        textOpenTabs = textOpenTabs.filterNot { it.id == bookId },
+        textOpenTabIds = textOpenTabIds.filterNot { it == bookId },
+        activeTextTabBookId = activeTextTabBookId?.takeUnless { it == bookId },
         selectedBookId = selectedBookId?.takeUnless { it == bookId },
         selectedUriString = selectedUriString?.takeUnless { selectedBookId == bookId },
         selectedFileType = selectedFileType.takeUnless { selectedBookId == bookId },
     )
 }
 
-fun SharedReaderScreenState.withMobileBookTabOpened(bookId: String): SharedReaderScreenState {
-    val updated = reduce(AppAction.BookTabOpened(bookId))
-    return updated.copy(
-        openTabs = updated.openTabIds.mapNotNull { id ->
-            updated.rawLibraryBooks.firstOrNull { it.id == id }
-        },
-    )
-}
-
-fun SharedReaderScreenState.withMobileBookClosed(bookId: String): SharedReaderScreenState {
-    val tabState = withMobileBookTabClosed(bookId)
-    return if (selectedBookId == bookId) {
-        tabState.copy(
-            selectedBookId = tabState.activeTabBookId,
-            selectedUriString = tabState.rawLibraryBooks.find { it.id == tabState.activeTabBookId }?.path,
-            selectedFileType = tabState.rawLibraryBooks.find { it.id == tabState.activeTabBookId }?.type
-        )
-    } else {
-        tabState
-    }
-}
-
-fun SharedReaderScreenState.withMobileBookTabClosed(bookId: String): SharedReaderScreenState {
-    val updated = reduce(AppAction.BookTabClosed(bookId))
-    return updated.copy(
-        openTabs = updated.openTabIds.mapNotNull { id ->
-            updated.rawLibraryBooks.firstOrNull { it.id == id }
-        },
-    )
-}
+fun SharedReaderScreenState.withMobileBookTabOpened(
+    kind: ReaderTabKind,
+    bookId: String,
+): SharedReaderScreenState = reduce(AppAction.BookTabOpened(kind, bookId)).withRecomputedTabBooks()
 
 /**
- * Android benchmark (`AppUiModels.setTabsEnabled`): disabling tabs keeps the
- * active tab in memory so re-enabling restores it. The shared
- * [AppAction.TabsEnabledChanged] reducer wipes all tabs on disable, so mobile
- * shells must route toggles through here instead of reducing directly.
+ * Closes one tab in [kind] and, when that tab was the reader's active one, moves the reader to the
+ * next tab of the **same** kind. Closing a tab of the other kind never touches what is on screen.
  */
-fun SharedReaderScreenState.withMobileTabsEnabled(enabled: Boolean): SharedReaderScreenState {
-    if (enabled) {
-        return reduce(AppAction.TabsEnabledChanged(true))
+fun SharedReaderScreenState.withMobileBookClosed(
+    kind: ReaderTabKind,
+    bookId: String,
+): SharedReaderScreenState {
+    val tabState = withMobileBookTabClosed(kind, bookId)
+    if (selectedBookId != bookId) return tabState
+    val nextBook = tabState.activeTabFor(kind)?.let { nextId ->
+        tabState.rawLibraryBooks.firstOrNull { it.id == nextId }
     }
-    val activeId = activeTabBookId ?: return reduce(AppAction.TabsEnabledChanged(false))
-    val activeBook = openTabs.firstOrNull { it.id == activeId }
-        ?: rawLibraryBooks.firstOrNull { it.id == activeId }
-    return reduce(AppAction.TabsEnabledChanged(false)).copy(
-        openTabIds = listOf(activeId),
-        activeTabBookId = activeId,
-        openTabs = listOfNotNull(activeBook),
+    return tabState.copy(
+        selectedBookId = nextBook?.id,
+        selectedUriString = nextBook?.path,
+        selectedFileType = nextBook?.type,
     )
 }
 
+fun SharedReaderScreenState.withMobileBookTabClosed(
+    kind: ReaderTabKind,
+    bookId: String,
+): SharedReaderScreenState = reduce(AppAction.BookTabClosed(kind, bookId)).withRecomputedTabBooks()
+
+fun SharedReaderScreenState.withMobileBookTabsClosed(kind: ReaderTabKind): SharedReaderScreenState =
+    reduce(AppAction.BookTabsClosed(kind)).withRecomputedTabBooks()
+
 /**
- * Drops tab ids that no longer exist in the library and enforces
- * [MAX_OPEN_PDF_TABS], mirroring Android's `reconcileTabState` before every
- * tab open/switch/close. Passive pruning only: the reader selection is left
- * to the explicit close/remove paths.
+ * Applies the tab order a finished drag produced for [kind], which is also the order the reader's
+ * tab strip shows. Reordering keeps the readers' active tabs untouched.
  */
-fun SharedReaderScreenState.withReconciledMobilePdfTabs(
-    maxOpenTabs: Int = MAX_OPEN_PDF_TABS,
+fun SharedReaderScreenState.withMobileTabsReordered(
+    kind: ReaderTabKind,
+    orderedBookIds: List<String>,
+): SharedReaderScreenState =
+    reduce(AppAction.BookTabsReordered(kind, orderedBookIds)).withRecomputedTabBooks()
+
+/**
+ * Disabling tabs parks each set on its active tab instead of forgetting it, so re-enabling
+ * restores both readers. The shared reducer owns the rule; this wrapper only keeps the derived
+ * book lists in step.
+ */
+fun SharedReaderScreenState.withMobileTabsEnabled(enabled: Boolean): SharedReaderScreenState =
+    reduce(AppAction.TabsEnabledChanged(enabled)).withRecomputedTabBooks()
+
+/**
+ * Drops tab ids that no longer exist in the library and enforces [MAX_OPEN_TABS_PER_KIND] per set,
+ * mirroring Android's `reconcileTabState` before every tab open/switch/close. Passive pruning only:
+ * the reader selection is left to the explicit close/remove paths.
+ */
+fun SharedReaderScreenState.withReconciledMobileTabs(
+    maxOpenTabs: Int = MAX_OPEN_TABS_PER_KIND,
 ): SharedReaderScreenState {
     val availableIds = rawLibraryBooks.mapTo(mutableSetOf()) { it.id }
-    val reconciledIds = openTabIds
-        .asSequence()
-        .map { it.trim() }
-        .filter { it.isNotBlank() }
-        .distinct()
-        .filter { it in availableIds }
-        .take(maxOpenTabs.coerceAtLeast(0))
-        .toList()
-    val reconciledActive = activeTabBookId?.takeIf { it in reconciledIds }
-    if (reconciledIds == openTabIds && reconciledActive == activeTabBookId) return this
+    val fixedLayout = AppTabGroup(openTabIds, activeTabBookId).reconciled(availableIds, maxOpenTabs)
+    val text = AppTabGroup(textOpenTabIds, activeTextTabBookId).reconciled(availableIds, maxOpenTabs)
+    if (
+        fixedLayout.openBookIds == openTabIds &&
+        fixedLayout.activeBookId == activeTabBookId &&
+        text.openBookIds == textOpenTabIds &&
+        text.activeBookId == activeTextTabBookId
+    ) {
+        return this
+    }
     return copy(
-        openTabIds = reconciledIds,
-        activeTabBookId = reconciledActive,
-        openTabs = reconciledIds.mapNotNull { id ->
-            rawLibraryBooks.firstOrNull { it.id == id }
-        },
-    )
+        openTabIds = fixedLayout.openBookIds,
+        activeTabBookId = fixedLayout.activeBookId,
+        textOpenTabIds = text.openBookIds,
+        activeTextTabBookId = text.activeBookId,
+    ).withRecomputedTabBooks()
+}
+
+/** Rebuilds both derived tab book lists from their ids after a tab-state change. */
+private fun SharedReaderScreenState.withRecomputedTabBooks(): SharedReaderScreenState = copy(
+    openTabs = openTabIds.mapNotNull { id -> rawLibraryBooks.firstOrNull { it.id == id } },
+    textOpenTabs = textOpenTabIds.mapNotNull { id -> rawLibraryBooks.firstOrNull { it.id == id } },
+)
+
+/** The tab [kind]'s reader is showing, which is not always the book the app is showing. */
+fun SharedReaderScreenState.activeTabFor(kind: ReaderTabKind): String? = when (kind) {
+    ReaderTabKind.FIXED_LAYOUT -> activeTabBookId
+    ReaderTabKind.TEXT -> activeTextTabBookId
+}
+
+fun SharedReaderScreenState.openTabIdsFor(kind: ReaderTabKind): List<String> = when (kind) {
+    ReaderTabKind.FIXED_LAYOUT -> openTabIds
+    ReaderTabKind.TEXT -> textOpenTabIds
 }

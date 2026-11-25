@@ -18,7 +18,9 @@ data class SharedAndroidHomeDensity(
     /** Top margin for the bar on a Duo display; other devices already get it from the inset. */
     val topBarTopPadding: Dp,
     val continueCardTopGap: Dp,
+    /** Floor for the card's height; the card grows past it when a title needs a second line. */
     val continueCardHeight: Dp,
+    val continueCardVerticalPadding: Dp,
     val continueCoverWidth: Dp,
     val continueCoverHeight: Dp,
     val filterRowTopGap: Dp,
@@ -39,6 +41,8 @@ data class SharedAndroidHomeDensity(
             topBarTopPadding = 16.dp,
             continueCardTopGap = 16.dp,
             continueCardHeight = 178.dp,
+            // 146dp cover + twice this = the 178dp floor, so a one-line card keeps its height.
+            continueCardVerticalPadding = 16.dp,
             continueCoverWidth = 94.dp,
             continueCoverHeight = 146.dp,
             filterRowTopGap = 12.dp,
@@ -58,6 +62,7 @@ data class SharedAndroidHomeDensity(
             topBarTopPadding = 8.dp,
             continueCardTopGap = 8.dp,
             continueCardHeight = 72.dp,
+            continueCardVerticalPadding = 4.dp,
             continueCoverWidth = 36.dp,
             continueCoverHeight = 56.dp,
             filterRowTopGap = 6.dp,

@@ -65,6 +65,10 @@ import android.provider.DocumentsContract
  * ([keepNonEmptyJson]). [preferMappedOverExplicit] preserves the historical
  * asymmetry between the two fields: explicit metadata wins for bookmarks, while
  * a non-empty mapped highlight set wins over explicit metadata.
+ *
+ * [mappedJson] is a provider because the mapping is a JSON serialization per book: a folder scan
+ * maps every book in the folder, and the mapped payload is discarded whenever the sidecar or the
+ * existing row already decides the outcome.
  */
 internal fun resolveFolderAnnotationJson(
     hasAppliedMetadata: Boolean,
@@ -72,13 +76,23 @@ internal fun resolveFolderAnnotationJson(
     preferMappedOverExplicit: Boolean,
     appliedJson: String?,
     existingJson: String?,
-    mappedJson: String?,
-): String? = when {
-    !hasAppliedMetadata && existingJson != null -> existingJson
-    appliedFieldIsExplicit && !(preferMappedOverExplicit && mappedJson != null) ->
-        keepNonEmptyJson(appliedJson, existingJson)
-    mappedJson != null -> mappedJson
-    else -> keepNonEmptyJson(appliedJson, existingJson)
+    mappedJson: () -> String?,
+): String? {
+    var mappedResolved = false
+    var mappedValue: String? = null
+    fun mapped(): String? {
+        if (!mappedResolved) {
+            mappedValue = mappedJson()
+            mappedResolved = true
+        }
+        return mappedValue
+    }
+    return when {
+        !hasAppliedMetadata && existingJson != null -> existingJson
+        appliedFieldIsExplicit && !(preferMappedOverExplicit && mapped() != null) ->
+            keepNonEmptyJson(appliedJson, existingJson)
+        else -> mapped() ?: keepNonEmptyJson(appliedJson, existingJson)
+    }
 }
 
 class FolderSyncWorker(
@@ -412,6 +426,16 @@ class FolderSyncWorker(
                     "appManaged=${folderConfig.isAppManaged}"
             )
 
+            // Rows load before the sidecars so the sidecar read can skip books whose metadata the
+            // DB already holds (see LocalSyncUtils.getAllFolderMetadata).
+            val existingFolderBooks = ReaderPerfLog.measureSuspend(
+                name = "FolderSync phase load-existing-db",
+                minLogMs = 25L
+            ) {
+                recentFilesRepository.getFilesBySourceFolder(folderUriString)
+            }
+            val existingItemsMap = existingFolderBooks.associateBy { it.bookId }.toMutableMap()
+
             val folderMetadataMap = ReaderPerfLog.measureSuspend(
                 name = "FolderSync phase metadata-sidecars",
                 minLogMs = 25L,
@@ -420,20 +444,18 @@ class FolderSyncWorker(
                 if (appStorageRoot != null) {
                     LocalSyncUtils.getAllFolderMetadataFromAppStorage(appStorageRoot).toMutableMap()
                 } else {
-                    LocalSyncUtils.getAllFolderMetadata(appContext, folderUri).toMutableMap()
+                    LocalSyncUtils.getAllFolderMetadata(
+                        context = appContext,
+                        sourceFolderUri = folderUri,
+                        knownLocalTimestamps = existingFolderBooks.associate {
+                            it.bookId to it.lastModifiedTimestamp
+                        },
+                    ).toMutableMap()
                 }
             }
             ReaderPerfLog.d(
                 "FolderSync metadata-sidecars records=${folderMetadataMap.size} metadataOnly=$metadataOnly folder=$folderUriString"
             )
-
-            val existingFolderBooks = ReaderPerfLog.measureSuspend(
-                name = "FolderSync phase load-existing-db",
-                minLogMs = 25L
-            ) {
-                recentFilesRepository.getFilesBySourceFolder(folderUriString)
-            }
-            val existingItemsMap = existingFolderBooks.associateBy { it.bookId }.toMutableMap()
 
             val scanResult = if (metadataOnly) {
                 AndroidFolderScanResult(scanStatus = LocalFolderScanStatus.NOT_SCANNED)
@@ -561,9 +583,10 @@ class FolderSyncWorker(
                     nowMillis = nowMillis
                 )
             }
-            folderMetadataMap.forEach { (bookId, metadata) ->
+            syncedItems.forEach { after ->
+                val metadata = folderMetadataMap[after.bookId] ?: return@forEach
+                val bookId = after.bookId
                 val before = existingItemsMap[bookId]
-                val after = syncedItems.firstOrNull { it.bookId == bookId } ?: return@forEach
                 cloudFolderLogD(
                     "event=folder_metadata_apply operation=$operation correlation=$correlation " +
                         "root=$safeRoot book=${cloudFolderSafeId(bookId)} " +
@@ -705,15 +728,18 @@ class FolderSyncWorker(
             return 0
         }
 
+        // Only sidecar *stamps* are resolved up front (cached per folder, see
+        // LocalSyncUtils.preloadAnnotationSidecarIndex); payloads are read for the few books that
+        // are actually newer than their local counterpart.
         val preloadedSidecars = ReaderPerfLog.measureSuspend(
             name = "FolderSync phase annotation-sidecars",
             minLogMs = 25L,
             details = { "phase=$phase" }
         ) {
             if (appStorageRoot != null) {
-                LocalSyncUtils.preloadAnnotationSidecarsFromAppStorage(appStorageRoot)
+                LocalSyncUtils.preloadAnnotationSidecarIndexFromAppStorage(appContext, appStorageRoot)
             } else {
-                LocalSyncUtils.preloadAnnotationSidecars(appContext, folderUri)
+                LocalSyncUtils.preloadAnnotationSidecarIndex(appContext, folderUri)
             }
         }
 
@@ -750,7 +776,7 @@ class FolderSyncWorker(
                 FolderAnnotationExportWorker.schedulePendingNow(appContext, book.bookId)
                 continue
             }
-            val (remoteTs, jsonPayload) = sidecarData
+            val remoteTs = sidecarData.timestamp
 
             // Timestamp probes must mirror the names the repositories use or a
             // long book id is probed at a legacy path that never exists, and
@@ -787,10 +813,12 @@ class FolderSyncWorker(
             val localTs = localFiles.maxOfOrNull { if (it.exists()) it.lastModified() else 0L } ?: 0L
 
             if (remoteTs > (localTs + 1000)) {
+                val jsonPayload = LocalSyncUtils.readAnnotationSidecarPayload(appContext, sidecarData)
+                    ?: continue
                 cloudFolderLogD(
                     "event=annotation_sidecar_import operation=$operation correlation=$correlation " +
                         "root=$safeRoot book=${cloudFolderSafeId(book.bookId)} phase=${phase.replace('-', '_')} " +
-                        "result=applied remoteTs=$remoteTs localTs=$localTs bytes=${jsonPayload.toByteArray(Charsets.UTF_8).size}",
+                        "result=applied remoteTs=$remoteTs localTs=$localTs bytes=${jsonPayload.length}",
                 )
                 Timber.tag("FolderAnnotationSync").i(">>> Newer sidecar found for ${book.displayName}. Importing.")
                 recentFilesRepository.importAnnotationBundle(
@@ -1097,10 +1125,11 @@ class FolderSyncWorker(
             else -> nowMillis
         }
         val legacyPosition = readerPosition
-        val mappedBookmarksJson = readerBookmarks.toAndroidBookmarksJson(id)
-        val mappedHighlightsJson = readerHighlights
-            .takeIf { it.isNotEmpty() }
-            ?.let(EpubAnnotationSerializer::highlightsToJson)
+        val mappedBookmarksJson = { readerBookmarks.toAndroidBookmarksJson(id) }
+        val mappedHighlightsJson = {
+            readerHighlights.takeIf { it.isNotEmpty() }
+                ?.let(EpubAnnotationSerializer::highlightsToJson)
+        }
         val metadataHas = { name: String -> appliedMetadata?.hasExplicitField(name) == true }
         // An empty/absent bookmarksJson or highlightsJson in an applied v2
         // sidecar ("this device has nothing to share") must never erase a

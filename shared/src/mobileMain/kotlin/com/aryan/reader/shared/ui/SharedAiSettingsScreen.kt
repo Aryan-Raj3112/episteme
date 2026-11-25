@@ -29,7 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -40,7 +39,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.shared.AiKeySaveResult
@@ -200,10 +198,10 @@ fun SharedAiSettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .imePadding()
-                .padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+                .padding(SharedSpacing.Lg),
+            verticalArrangement = Arrangement.spacedBy(SharedSpacing.Lg),
         ) {
-            Text(strings.savedKeys, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(strings.savedKeys, style = MaterialTheme.typography.titleMedium)
             // Providers come from the host's labels so new key types (e.g. Fish)
             // appear without screen changes.
             strings.providerLabels.keys.toList().forEach { provider ->
@@ -223,7 +221,7 @@ fun SharedAiSettingsScreen(
             }
 
             HorizontalDivider()
-            Text(strings.addOrReplaceKey, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(strings.addOrReplaceKey, style = MaterialTheme.typography.titleMedium)
             SharedExposedDropdownMenuField(
                 expanded = providerMenuExpanded,
                 onExpandedChange = { providerMenuExpanded = it },
@@ -331,7 +329,6 @@ fun SharedAiSettingsScreen(
                     Text(
                         strings.voicesSectionTitle,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         strings.voicesSectionDescription,
@@ -646,11 +643,16 @@ private fun SharedAiSettingsBannerRow(
     Surface(
         color = if (isError) MaterialTheme.colorScheme.errorContainer
         else MaterialTheme.colorScheme.secondaryContainer,
-        shape = RoundedCornerShape(8.dp),
+        shape = MaterialTheme.shapes.small,
         modifier = Modifier.fillMaxWidth(),
     ) {
         Row(
-            modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+            modifier = Modifier.padding(
+                start = SharedSpacing.Md,
+                top = SharedSpacing.Sm,
+                bottom = SharedSpacing.Sm,
+                end = SharedSpacing.Xs,
+            ),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
@@ -660,7 +662,9 @@ private fun SharedAiSettingsBannerRow(
                 else MaterialTheme.colorScheme.onSecondaryContainer,
                 modifier = Modifier.weight(1f),
             )
-            IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+            // No explicit size: IconButton's 48dp touch target is the minimum, and the 32dp
+            // modifier made the dismiss action the smallest hit area on the screen.
+            IconButton(onClick = onDismiss) {
                 Icon(
                     Icons.Default.Close,
                     contentDescription = "Dismiss",
@@ -704,7 +708,7 @@ private fun SharedAiModelSelector(
     var expanded by remember { mutableStateOf(false) }
     val selected = options.firstOrNull { it.id == selectedId }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(title, style = MaterialTheme.typography.titleMedium)
         Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         SharedExposedDropdownMenuField(
         expanded = expanded,

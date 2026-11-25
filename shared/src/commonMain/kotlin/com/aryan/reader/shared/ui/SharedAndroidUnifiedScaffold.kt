@@ -1,11 +1,6 @@
 package com.aryan.reader.shared.ui
 
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -13,6 +8,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -24,8 +20,11 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -47,6 +46,13 @@ fun SharedAndroidUnifiedScaffold(
     canPullToSync: Boolean = false,
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
+    /** Platforms that expose a reduce-motion setting swap sections without spatial movement. */
+    reduceMotion: Boolean = false,
+    /**
+     * Floats over the content, bottom centre. Selection uses it for its action toolbar: the content
+     * must not reflow every time a book is selected or deselected.
+     */
+    selectionToolbar: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Scaffold(
@@ -58,7 +64,9 @@ fun SharedAndroidUnifiedScaffold(
         contentWindowInsets = WindowInsets.systemBars.only(WindowInsetsSides.Bottom),
         bottomBar = bottomBar,
         topBar = topBar,
-        floatingActionButton = if (showFloatingActionButton) {
+        // A selection toolbar takes the bottom-end corner for itself: leaving the FAB there too put
+        // two floating controls on top of each other, and the FAB does not act on a selection.
+        floatingActionButton = if (showFloatingActionButton && selectionToolbar == null) {
             {
                 // The library's book grid is inset from the content edge, so on a foldable
                 // iPhone the default 16dp end margin left the button straddling the grid
@@ -81,7 +89,8 @@ fun SharedAndroidUnifiedScaffold(
                             )
                         }
                         MobileUnifiedLibrarySection.FOLDERS,
-                        MobileUnifiedLibrarySection.CATALOGS -> Unit
+                        MobileUnifiedLibrarySection.CATALOGS,
+                        MobileUnifiedLibrarySection.TAGS -> Unit
                     }
                 }
             }
@@ -89,12 +98,21 @@ fun SharedAndroidUnifiedScaffold(
             { }
         },
     ) { padding ->
+        Box(Modifier.fillMaxSize()) {
+        // Section changes are a hierarchical move inside one surface, so they use the same
+        // shared-axis tokens as the settings hub instead of Compose's default fade/slide spec.
+        val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
         AnimatedContent(
             targetState = section,
             transitionSpec = {
-                val direction = if (targetState.persistedValue > initialState.persistedValue) 1 else -1
-                (fadeIn() + slideInHorizontally { direction * it / 5 }) togetherWith
-                    (fadeOut() + slideOutHorizontally { -direction * it / 5 })
+                if (reduceMotion) {
+                    sharedReducedMotionSwap()
+                } else {
+                    sharedAxisSlide(
+                        rtl = rtl,
+                        forward = targetState.persistedValue >= initialState.persistedValue,
+                    )
+                }
             },
             label = "UnifiedLibrarySharedAxis",
         ) { displayedSection ->
@@ -107,6 +125,15 @@ fun SharedAndroidUnifiedScaffold(
             } else {
                 sectionContent(displayedSection, padding)
             }
+        }
+        selectionToolbar?.let { toolbar ->
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = SharedSpacing.Lg),
+            ) { toolbar() }
+        }
         }
     }
 }

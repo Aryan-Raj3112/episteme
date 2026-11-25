@@ -36,6 +36,31 @@ object PdfSpreadLayout {
         return listOf(start, start + 1).filter { it in 0 until pageCount }
     }
 
+    /**
+     * Pages of the spread at [pageIndex] in on-screen order.
+     *
+     * [visiblePageIndices] stays logical (left-to-right) order because labels
+     * and progress read it that way. Rendering hosts lay the list out with a
+     * Compose `Row`, so right-to-left pagination has to reverse it to put the
+     * earlier page on the right, the same split
+     * `ReaderSpreadLayout.visiblePageIndicesForDisplay` uses for EPUB.
+     *
+     * Pass the reading setting, not the pager's physical direction: a
+     * reverse-layout pager is mirrored twice (by `reverseLayout` and by an Rtl
+     * host), so the setting is exactly the row reversal that lands the earlier
+     * page on the right in both LTR and RTL hosts (see
+     * `sharedPaginatedPagerRightToLeft`).
+     */
+    fun visiblePageIndicesForDisplay(
+        pageIndex: Int,
+        pageCount: Int,
+        settings: ReaderSettings,
+        isRightToLeft: Boolean
+    ): List<Int> {
+        val indices = visiblePageIndices(pageIndex, pageCount, settings)
+        return if (isRightToLeft) indices.asReversed() else indices
+    }
+
     fun spreadStartPageIndices(
         pageCount: Int,
         settings: ReaderSettings

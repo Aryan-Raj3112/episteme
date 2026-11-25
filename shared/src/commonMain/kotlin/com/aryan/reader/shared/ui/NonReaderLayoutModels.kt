@@ -19,6 +19,7 @@ import com.aryan.reader.shared.progressPercentValue
 import com.aryan.reader.shared.search.SharedGlobalSearchBookResult
 import com.aryan.reader.shared.sortBooks
 import com.aryan.reader.shared.toHomeScreenModel
+import com.aryan.reader.shared.withPinnedFirst
 
 enum class SharedAppToolAction {
     SETTINGS,
@@ -160,12 +161,7 @@ internal fun SharedReaderScreenState.visibleIosLibraryBooks(): List<BookItem> {
         sortOrder,
     )
     if (pinnedLibraryBookIds.isEmpty()) return sorted
-    return sorted.withIndex()
-        .sortedWith(
-            compareByDescending<IndexedValue<BookItem>> { it.value.id in pinnedLibraryBookIds }
-                .thenBy { it.index }
-        )
-        .map { it.value }
+    return sorted.withPinnedFirst(pinnedLibraryBookIds) { it.id }
 }
 
 /** Android's shelves landing page contains manual shelves and root folders only. */
@@ -400,8 +396,7 @@ internal fun SharedReaderScreenState.mobileRecentBooks(): List<BookItem> {
     val sorted = sortBooks(rawLibraryBooks.filter { it.isRecent }, SortOrder.RECENT)
     val pinned = sorted.filter { it.id in pinnedHomeBookIds }
     val unpinned = sorted.filterNot { it.id in pinnedHomeBookIds }
-    return (pinned + unpinned)
-        .take(if (recentFilesLimit > 0) recentFilesLimit else Int.MAX_VALUE)
+    return pinned + unpinned
 }
 
 fun SharedReaderScreenState.toNonReaderHomeLayoutModel(): NonReaderHomeLayoutModel {
@@ -673,9 +668,14 @@ enum class MobileUnifiedLibrarySection(val persistedValue: Int) {
     SHELVES(1),
     FOLDERS(2),
     CATALOGS(3),
-    AUDIOBOOKS(4);
+    AUDIOBOOKS(4),
+    // Appended so the values before it stay stable for restored preferences.
+    TAGS(5);
 
     companion object {
+        /** Highest value ever persisted; saved-section restore clamps to this. */
+        val MAX_PERSISTED_VALUE: Int = entries.maxOf { it.persistedValue }
+
         fun fromPersisted(value: Int): MobileUnifiedLibrarySection =
             entries.firstOrNull { it.persistedValue == value } ?: HOME
     }
@@ -688,6 +688,8 @@ internal fun mobileUnifiedLibraryBooks(
     libraryFilters: LibraryFilters = LibraryFilters(),
     sortOrder: SortOrder = SortOrder.RECENT,
     folderAliases: Map<String, String> = emptyMap(),
+    /** Pinned books lead the list; see [withPinnedFirst]. */
+    pinnedBookIds: Set<String> = emptySet(),
     /**
      * Inside-file content matches for the current query, best-first. Unioned
      * after metadata hits only when [searchInsideFiles] is true; otherwise
@@ -700,29 +702,38 @@ internal fun mobileUnifiedLibraryBooks(
     val preFiltered = applyLibraryFilters(books, libraryFilters, folderAliases)
     val metadataBooks = preFiltered
         .filter { it.matchesMobileUnifiedLibraryFilter(filter, normalizedQuery) }
-    if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
-        return sortBooks(metadataBooks, sortOrder)
-    }
-    // Content-only books join metadata hits but still respect the active
-    // status filter (blank query = filter check without text matching).
-    // Relevance wins inside this group: best content match first, otherwise a
-    // strong hit sits below a book the user merely opened last.
-    val metadataIds = metadataBooks.mapTo(mutableSetOf()) { it.id }
-    val contentOnly = contentSearchResults
-        .filter { it.bookId !in metadataIds }
-    return sortBooks(metadataBooks, sortOrder) +
-        contentOnly.mapNotNull { result ->
-            preFiltered.firstOrNull {
-                it.id == result.bookId && it.matchesMobileUnifiedLibraryFilter(filter, "")
+    val ordered = if (!searchInsideFiles || normalizedQuery.isBlank() || contentSearchResults.isEmpty()) {
+        sortBooks(metadataBooks, sortOrder)
+    } else {
+        // Content-only books join metadata hits but still respect the active
+        // status filter (blank query = filter check without text matching).
+        // Relevance wins inside this group: best content match first, otherwise a
+        // strong hit sits below a book the user merely opened last.
+        val metadataIds = metadataBooks.mapTo(mutableSetOf()) { it.id }
+        val contentOnly = contentSearchResults
+            .filter { it.bookId !in metadataIds }
+        sortBooks(metadataBooks, sortOrder) +
+            contentOnly.mapNotNull { result ->
+                preFiltered.firstOrNull {
+                    it.id == result.bookId && it.matchesMobileUnifiedLibraryFilter(filter, "")
+                }
             }
-        }
+    }
+    return ordered.withPinnedFirst(pinnedBookIds) { it.id }
 }
 
 /**
- * Picks the "Continue reading" card: the most recently touched book that is
- * partway through, else the newest book overall.
+ * Picks the "Continue reading" card: the book the reader touched last.
+ *
+ * Progress is deliberately not part of the choice. The card used to rank only books that were
+ * "partway through", so opening a new book left the card pointing at an older one, and a book
+ * opened at 0% could never become the card at all - the reader pressed a book, came home, and the
+ * strip still advertised something else. "Continue" means *pick up what you were just in*: the
+ * newest activity timestamp wins, whatever its progress. A finished book is still the last thing
+ * that was read, and the card's own progress badge says so.
+ *
+ * `timestamp` is the reader's last-activity stamp: opening a book bumps it (`addFileToRecent`),
+ * and so does saving a reading position, so it already orders books the way a reader expects.
  */
 fun mobileUnifiedContinueReadingBook(books: List<BookItem>): BookItem? =
-    books.filter { (it.progressPercentage ?: 0f) in 0.01f..<100f }
-        .maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) }
-        ?: books.maxByOrNull { it.timestamp }
+    books.maxByOrNull { maxOf(it.readingPositionModifiedTimestamp, it.timestamp) }

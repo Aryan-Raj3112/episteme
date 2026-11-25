@@ -39,6 +39,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -72,6 +74,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -82,6 +86,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
@@ -108,6 +113,8 @@ import com.aryan.reader.shared.pdf.SharedPdfAnnotationComment
 import com.aryan.reader.shared.pdf.pdfCommentChildren
 import com.aryan.reader.shared.pdf.visiblePdfAnnotationComments
 import com.aryan.reader.shared.pdf.withoutPdfCommentThread
+import com.aryan.reader.shared.ui.SharedReaderNoteAutosave
+import com.aryan.reader.shared.ui.sharedMobileAnnotationSheetLayout
 import timber.log.Timber
 import java.text.DateFormat
 import java.util.Date
@@ -684,7 +691,9 @@ fun PdfAnnotationBottomSheet(
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var noteText by remember { mutableStateOf(highlight.note ?: "") }
+    // Keyed on the highlight: without the key, opening the sheet for a second highlight reused the
+    // first one's draft, because this composable's call site is the same for every highlight.
+    var noteText by remember(highlight.id) { mutableStateOf(highlight.note ?: "") }
     var comments by remember(highlight.id) { mutableStateOf(highlight.comments) }
     var selectedSection by remember(highlight.id) { mutableStateOf(PdfAnnotationSheetSection.NOTE) }
     var commentText by remember(highlight.id) { mutableStateOf("") }
@@ -704,8 +713,31 @@ fun PdfAnnotationBottomSheet(
         onUpdate(noteText, nextComments)
     }
 
+    // Draft autosave (#609): the sheet commits the note while the user types and on every dismissal
+    // path, so a swipe-down or a back press can no longer take the note with it. `onSave` is treated
+    // as "persist" for that purpose, which is why the host no longer closes on it.
+    val scope = rememberCoroutineScope()
+    val commitNote by rememberUpdatedState<(String) -> Unit> { text -> onSave(text, comments) }
+    val autosave = remember(highlight.id) {
+        SharedReaderNoteAutosave(
+            scope = scope,
+            initialText = highlight.note.orEmpty(),
+            commit = { commitNote(it) }
+        )
+    }
+    val dismissWithFlush: () -> Unit = {
+        autosave.flush(noteText)
+        onDismiss()
+    }
+    // Delete/Done are the only part of the editor that steps aside while the keyboard is up; the
+    // styling rows, the snippet, the tools and the note field keep the resting layout (see
+    // `sharedMobileAnnotationSheetLayout`). Nothing depends on the row: the note is committed as it
+    // is typed and on dismissal, and it returns when the keyboard closes.
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val annotationLayout = sharedMobileAnnotationSheetLayout(isImeVisible)
+
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = dismissWithFlush,
         sheetState = sheetState,
         containerColor = effectiveBg,
         contentColor = effectiveText,
@@ -714,179 +746,214 @@ fun PdfAnnotationBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp)
+                // Material3's sheet already pads its window for the IME and consumes that inset, so
+                // this is a no-op there; it is the safety net if a Material3 change drops it.
+                .imePadding()
         ) {
-            val displayColor = highlight.resolvedColor(customHighlightColors)
-
-            PdfHighlightStyleRow(
-                selectedStyle = highlight.style,
-                onStyleSelect = {
-                    savePreferredPdfHighlightStyle(context, it)
-                    onStyleChange(it)
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            PdfHighlightColorRow(
-                selectedColor = highlight.color,
-                customHighlightColors = customHighlightColors,
-                onColorSelect = onColorChange,
-                onPaletteClick = onPaletteClick,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            Surface(
-                color = displayColor.copy(alpha = 0.1f),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, displayColor.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
+            // Scrollable body, pinned actions. Everything in one non-scrollable Column is what let
+            // the keyboard squeeze the note field and the Done button out of the sheet: Compose
+            // measures a Column's children with the height that is left, so the rows at the bottom
+            // were the ones measured to nothing.
+            Column(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 16.dp)
             ) {
-                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-                    Box(modifier = Modifier.width(6.dp).fillMaxHeight().background(displayColor))
-                    Text(
-                        text = "\"${highlight.text}\"",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis,
-                        color = effectiveText.copy(alpha = 0.9f),
-                        modifier = Modifier.padding(16.dp)
+                val displayColor = highlight.resolvedColor(customHighlightColors)
+
+                PdfHighlightStyleRow(
+                    selectedStyle = highlight.style,
+                    onStyleSelect = {
+                        savePreferredPdfHighlightStyle(context, it)
+                        onStyleChange(it)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                PdfHighlightColorRow(
+                    selectedColor = highlight.color,
+                    customHighlightColors = customHighlightColors,
+                    onColorSelect = onColorChange,
+                    onPaletteClick = onPaletteClick,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                )
+
+                Surface(
+                    color = displayColor.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, displayColor.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                        Box(modifier = Modifier.width(6.dp).fillMaxHeight().background(displayColor))
+                        Text(
+                            text = "\"${highlight.text}\"",
+                            style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis,
+                            color = effectiveText.copy(alpha = 0.9f),
+                            modifier = Modifier.padding(16.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    PdfBottomSheetToolButton(icon = R.drawable.copy, label = stringResource(R.string.action_copy), effectiveText = effectiveText, onClick = onCopy)
+                    PdfBottomSheetToolButton(icon = R.drawable.dictionary, label = stringResource(R.string.label_dict), effectiveText = effectiveText, onClick = onDictionary)
+                    PdfBottomSheetToolButton(icon = R.drawable.translate, label = stringResource(R.string.action_translate), effectiveText = effectiveText, onClick = onTranslate)
+                    PdfBottomSheetToolButton(icon = R.drawable.search, label = stringResource(R.string.action_search), effectiveText = effectiveText, onClick = onSearch)
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                PdfAnnotationSheetTabs(
+                    selectedSection = selectedSection,
+                    commentCount = comments.count { it.contents.isNotBlank() },
+                    effectiveText = effectiveText,
+                    onSectionChange = { selectedSection = it }
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                if (selectedSection == PdfAnnotationSheetSection.COMMENTS) {
+                    PdfHighlightCommentsEditor(
+                        comments = comments,
+                        commentText = commentText,
+                        commentAuthor = commentAuthor,
+                        replyTargetId = replyTargetId,
+                        editingCommentId = editingCommentId,
+                        effectiveText = effectiveText,
+                        onCommentTextChange = { commentText = it },
+                        onCommentAuthorChange = { commentAuthor = it },
+                        onReply = {
+                            editingCommentId = null
+                            replyTargetId = it.id
+                            commentText = ""
+                        },
+                        onCancelReply = { replyTargetId = null },
+                        onEdit = { comment ->
+                            editingCommentId = comment.id
+                            replyTargetId = null
+                            commentText = comment.contents
+                            commentAuthor = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
+                        },
+                        onCancelEdit = {
+                            editingCommentId = null
+                            commentText = ""
+                        },
+                        onDelete = { comment ->
+                            val nextComments = comments.withoutPdfCommentThread(comment.id)
+                            persistComments(nextComments)
+                            if (replyTargetId != null && (replyTargetId == comment.id || nextComments.none { it.id == replyTargetId })) {
+                                replyTargetId = null
+                            }
+                            if (editingCommentId != null && (editingCommentId == comment.id || nextComments.none { it.id == editingCommentId })) {
+                                editingCommentId = null
+                                commentText = ""
+                            }
+                        },
+                        onAddComment = {
+                            val contents = commentText.trim()
+                            if (contents.isNotBlank()) {
+                                val now = System.currentTimeMillis()
+                                val author = commentAuthor.trim().ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
+                                val nextComments = if (editingCommentId != null) {
+                                    comments.map { comment ->
+                                        if (comment.id == editingCommentId) {
+                                            comment.copy(
+                                                author = author,
+                                                contents = contents,
+                                                modifiedAt = now
+                                            )
+                                        } else {
+                                            comment
+                                        }
+                                    }
+                                } else {
+                                    comments + SharedPdfAnnotationComment(
+                                        id = UUID.randomUUID().toString(),
+                                        parentId = replyTargetId,
+                                        author = author,
+                                        contents = contents,
+                                        createdAt = now,
+                                        modifiedAt = now
+                                    )
+                                }
+                                persistComments(nextComments)
+                                commentText = ""
+                                replyTargetId = null
+                                editingCommentId = null
+                            }
+                        }
                     )
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                PdfBottomSheetToolButton(icon = R.drawable.copy, label = stringResource(R.string.action_copy), effectiveText = effectiveText, onClick = onCopy)
-                PdfBottomSheetToolButton(icon = R.drawable.dictionary, label = stringResource(R.string.label_dict), effectiveText = effectiveText, onClick = onDictionary)
-                PdfBottomSheetToolButton(icon = R.drawable.translate, label = stringResource(R.string.action_translate), effectiveText = effectiveText, onClick = onTranslate)
-                PdfBottomSheetToolButton(icon = R.drawable.search, label = stringResource(R.string.action_search), effectiveText = effectiveText, onClick = onSearch)
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            PdfAnnotationSheetTabs(
-                selectedSection = selectedSection,
-                commentCount = comments.count { it.contents.isNotBlank() },
-                effectiveText = effectiveText,
-                onSectionChange = { selectedSection = it }
-            )
-
-            Spacer(Modifier.height(12.dp))
-
+            // Pinned below the scrolling body like the EPUB sheet: the keyboard may shrink the sheet,
+            // but it can neither scroll the note field out of the editor nor grow it over the styling
+            // rows above it.
             if (selectedSection == PdfAnnotationSheetSection.NOTE) {
                 OutlinedTextField(
                     value = noteText,
-                    onValueChange = { noteText = it },
+                    onValueChange = {
+                        noteText = it
+                        autosave.onTextChanged(it)
+                    },
                     placeholder = { Text(stringResource(R.string.placeholder_add_note), color = effectiveText.copy(alpha = 0.5f)) },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                    maxLines = 5,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .padding(bottom = 16.dp)
+                        .heightIn(min = 100.dp),
+                    maxLines = annotationLayout.noteFieldMaxLines,
                     colors = pdfAnnotationTextFieldColors(effectiveText),
                     shape = RoundedCornerShape(12.dp)
                 )
-            } else {
-                PdfHighlightCommentsEditor(
-                    comments = comments,
-                    commentText = commentText,
-                    commentAuthor = commentAuthor,
-                    replyTargetId = replyTargetId,
-                    editingCommentId = editingCommentId,
-                    effectiveText = effectiveText,
-                    onCommentTextChange = { commentText = it },
-                    onCommentAuthorChange = { commentAuthor = it },
-                    onReply = {
-                        editingCommentId = null
-                        replyTargetId = it.id
-                        commentText = ""
-                    },
-                    onCancelReply = { replyTargetId = null },
-                    onEdit = { comment ->
-                        editingCommentId = comment.id
-                        replyTargetId = null
-                        commentText = comment.contents
-                        commentAuthor = comment.author.ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
-                    },
-                    onCancelEdit = {
-                        editingCommentId = null
-                        commentText = ""
-                    },
-                    onDelete = { comment ->
-                        val nextComments = comments.withoutPdfCommentThread(comment.id)
-                        persistComments(nextComments)
-                        if (replyTargetId != null && (replyTargetId == comment.id || nextComments.none { it.id == replyTargetId })) {
-                            replyTargetId = null
-                        }
-                        if (editingCommentId != null && (editingCommentId == comment.id || nextComments.none { it.id == editingCommentId })) {
-                            editingCommentId = null
-                            commentText = ""
-                        }
-                    },
-                    onAddComment = {
-                        val contents = commentText.trim()
-                        if (contents.isNotBlank()) {
-                            val now = System.currentTimeMillis()
-                            val author = commentAuthor.trim().ifBlank { DEFAULT_SHARED_PDF_COMMENT_AUTHOR }
-                            val nextComments = if (editingCommentId != null) {
-                                comments.map { comment ->
-                                    if (comment.id == editingCommentId) {
-                                        comment.copy(
-                                            author = author,
-                                            contents = contents,
-                                            modifiedAt = now
-                                        )
-                                    } else {
-                                        comment
-                                    }
-                                }
-                            } else {
-                                comments + SharedPdfAnnotationComment(
-                                    id = UUID.randomUUID().toString(),
-                                    parentId = replyTargetId,
-                                    author = author,
-                                    contents = contents,
-                                    createdAt = now,
-                                    modifiedAt = now
-                                )
-                            }
-                            persistComments(nextComments)
-                            commentText = ""
-                            replyTargetId = null
-                            editingCommentId = null
-                        }
-                    }
-                )
             }
 
-            Spacer(Modifier.height(24.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = onDelete,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
+            // Pinned outside the scrolling body, so Done is never the row the keyboard hides... and
+            // hidden outright while the keyboard is open, the one thing it takes away.
+            if (annotationLayout.bottomActionsVisible) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .padding(top = 8.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.action_delete))
-                }
-                Button(
-                    onClick = { onSave(noteText, comments) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) {
-                    Text(stringResource(R.string.action_done))
+                    Button(
+                        onClick = {
+                            // Drop the draft first: a pending commit would write the note back onto
+                            // the highlight this button just deleted.
+                            autosave.discard()
+                            onDelete()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.action_delete))
+                    }
+                    Button(
+                        onClick = dismissWithFlush,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        Text(stringResource(R.string.action_done))
+                    }
                 }
             }
         }

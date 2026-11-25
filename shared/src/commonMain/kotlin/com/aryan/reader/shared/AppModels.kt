@@ -235,11 +235,94 @@ data class AppAppearanceState(
     val customThemes: List<CustomAppTheme> = emptyList(),
 )
 
-data class AppTabState(
-    val isEnabled: Boolean = true,
+/**
+ * One reader engine's open tabs.
+ *
+ * [activeBookId] is the tab that reader is showing. It is not necessarily the book the app is
+ * showing: the PDF set keeps its active tab while the text reader is on screen, so both readers
+ * resume where they were left.
+ */
+data class AppTabGroup(
     val openBookIds: List<String> = emptyList(),
     val activeBookId: String? = null,
-)
+) {
+    fun reconciled(availableBookIds: Set<String>, maxOpenTabs: Int): AppTabGroup {
+        val openIds = openBookIds
+            .asSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .filter { it in availableBookIds }
+            .take(maxOpenTabs.coerceAtLeast(0))
+            .toList()
+        return AppTabGroup(
+            openBookIds = openIds,
+            activeBookId = activeBookId?.takeIf { it in openIds },
+        )
+    }
+}
+
+/**
+ * Moves the item at [fromIndex] into [toIndex]'s slot.
+ *
+ * Dropping downwards lands after the target and upwards lands before it — the rule the toolbar
+ * customiser already uses, so a drag reads the same whether it reorders tools or tabs.
+ * Out-of-range indexes and a no-op move return the list unchanged.
+ */
+fun <T> List<T>.movedItem(fromIndex: Int, toIndex: Int): List<T> {
+    if (fromIndex == toIndex) return this
+    if (fromIndex !in indices || toIndex !in indices) return this
+    return toMutableList().apply { add(toIndex, removeAt(fromIndex)) }
+}
+
+/**
+ * Applies a dragged tab order to [this] set: known ids keep the dragged order and anything the
+ * drag did not mention (a tab opened mid-drag) stays at the end instead of disappearing.
+ */
+fun List<String>.reorderedOpenTabs(ordered: List<String>): List<String> {
+    val known = ordered.filter { it in this }.distinct()
+    val rest = filterNot { it in known }
+    return known + rest
+}
+
+/**
+ * Open tabs, one independent set per [ReaderTabKind].
+ *
+ * The two sets are deliberately separate: a tab tap never swaps the reader engine, chrome, or
+ * pagination model, so each reader only ever offers tabs it can open in place. [isEnabled] is a
+ * single user setting covering both sets.
+ */
+data class AppTabState(
+    val isEnabled: Boolean = true,
+    val fixedLayout: AppTabGroup = AppTabGroup(),
+    val text: AppTabGroup = AppTabGroup(),
+) {
+    /** The fixed-layout set. PDF-only call sites keep their original meaning through these aliases. */
+    val openBookIds: List<String> get() = fixedLayout.openBookIds
+    val activeBookId: String? get() = fixedLayout.activeBookId
+
+    fun group(kind: ReaderTabKind): AppTabGroup = when (kind) {
+        ReaderTabKind.FIXED_LAYOUT -> fixedLayout
+        ReaderTabKind.TEXT -> text
+    }
+
+    fun withGroup(kind: ReaderTabKind, group: AppTabGroup): AppTabState = when (kind) {
+        ReaderTabKind.FIXED_LAYOUT -> copy(fixedLayout = group)
+        ReaderTabKind.TEXT -> copy(text = group)
+    }
+
+    companion object {
+        /** Builds the historical single-set shape, which is always the fixed-layout set. */
+        fun ofFixedLayout(
+            isEnabled: Boolean = true,
+            openBookIds: List<String> = emptyList(),
+            activeBookId: String? = null,
+        ): AppTabState = AppTabState(
+            isEnabled = isEnabled,
+            fixedLayout = AppTabGroup(openBookIds, activeBookId),
+        )
+    }
+}
 
 /** Portable shelf-navigation and dialog state; persistence and repository writes remain platform adapters. */
 data class AppShelfState(
@@ -339,6 +422,17 @@ data class DeviceLimitReachedState(
 fun shouldShowDeviceLimitOverlay(deviceLimitState: DeviceLimitReachedState): Boolean =
     deviceLimitState.isLimitReached
 
+/**
+ * Pairs both tab sets with the one tabs-on/off setting. Tabs are kept as flat, independently
+ * persisted fields above because the screen state is compared field by field on every projection,
+ * and because a value derived from the selected file would empty out as soon as the reader closes.
+ */
+fun SharedReaderScreenState.toTabState(): AppTabState = AppTabState(
+    isEnabled = isTabsEnabled,
+    fixedLayout = AppTabGroup(openTabIds, activeTabBookId),
+    text = AppTabGroup(textOpenTabIds, activeTextTabBookId),
+)
+
 data class SharedReaderScreenState(
     val selectedBookId: String? = null,
     val selectedUriString: String? = null,
@@ -393,11 +487,15 @@ data class SharedReaderScreenState(
     val pinnedHomeBookIds: Set<String> = emptySet(),
     val pinnedLibraryBookIds: Set<String> = emptySet(),
     val libraryFilters: LibraryFilters = LibraryFilters(),
-    val recentFilesLimit: Int = 0,
     val isTabsEnabled: Boolean = true,
+    /** Fixed-layout (PDF-engine) tabs. */
     val openTabIds: List<String> = emptyList(),
     val openTabs: List<BookItem> = emptyList(),
     val activeTabBookId: String? = null,
+    /** Text (reflow-engine) tabs, kept separate so each reader only offers tabs it can open in place. */
+    val textOpenTabIds: List<String> = emptyList(),
+    val textOpenTabs: List<BookItem> = emptyList(),
+    val activeTextTabBookId: String? = null,
     val showExternalFileSavePromptFor: String? = null,
     val externalFileBehavior: String = "ASK",
     val useStrictFileFilter: Boolean = false,
@@ -426,13 +524,6 @@ data class SharedReaderScreenState(
 )
 
 val AndroidExternalFileBehaviors: Set<String> = setOf("ASK", "KEEP", "DELETE", "TEMPORARY")
-val AndroidRecentFilesLimits: List<Int> = listOf(0, 10, 20, 50, 100)
-
-fun normalizedRecentFilesLimit(value: Int): Int {
-    if (value <= 0) return 0
-    return AndroidRecentFilesLimits.drop(1).minBy { kotlin.math.abs(it - value) }
-}
-
 fun normalizedExternalFileBehavior(value: String?): String {
     val normalized = value?.trim()?.uppercase()
     return when (normalized) {

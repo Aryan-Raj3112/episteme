@@ -2,6 +2,7 @@ package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.FileType
 import com.aryan.reader.shared.SharedFileCapabilities
+import com.aryan.reader.shared.isComicInfoArchivePath
 import com.aryan.reader.shared.opds.OpdsCatalog
 import com.aryan.reader.shared.opds.OpdsStreamReference
 import com.sun.jna.Library
@@ -29,6 +30,20 @@ internal object DesktopComicArchive {
     private val imageExtensions = setOf("jpg", "jpeg", "png", "webp", "bmp", "gif")
 
     fun canLoad(type: FileType): Boolean = type in comicTypes
+
+    /**
+     * Reads the `ComicInfo.xml` sidecar of a CBR through the same libarchive
+     * binding the page reader uses, so no new dependency is involved.
+     */
+    fun readComicInfoText(file: File, maxBytes: Int): String? {
+        // macOS has no JNA-loadable libarchive by default, and Linux packaging
+        // can omit it, so fall back to the bsdtar/tar command the page reader
+        // already uses.
+        return runCatching { DesktopLibarchive.readTextEntry(file, maxBytes, ::isComicInfoArchivePath) }
+            .getOrNull()
+            ?: DesktopArchiveCommand.readTextEntry(file, maxBytes, ::isComicInfoArchivePath)
+    }
+
 
     fun load(file: File, type: FileType): DesktopComicDocument {
         require(file.isFile) { "Missing comic archive: ${file.absolutePath}" }
@@ -432,6 +447,37 @@ private object DesktopArchiveCommand {
         }
     }
 
+    /** Reads one text entry from an archive through the bsdtar/tar command. */
+    fun readTextEntry(file: File, maxBytes: Int, matches: (String) -> Boolean): String? {
+        val command = resolveCommand() ?: return null
+        val entryName = runCatching { listArchiveEntries(command, file) }
+            .getOrNull()
+            ?.firstOrNull(matches)
+            ?: return null
+        val process = ProcessBuilder(command, "-xOf", file.absolutePath, entryName)
+            .start()
+        process.errorStream.close()
+        val collected = ByteArrayOutputStream()
+        process.inputStream.use { input ->
+            val buffer = ByteArray(16 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (collected.size() + read > maxBytes) {
+                    process.destroyForcibly()
+                    return null
+                }
+                collected.write(buffer, 0, read)
+            }
+        }
+        val finished = process.waitFor(EXTRACT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        if (!finished) {
+            process.destroyForcibly()
+            return null
+        }
+        return if (process.exitValue() == 0) collected.toString(Charsets.UTF_8.name()) else null
+    }
+
     private fun resolveCommand(): String? {
         val override = System.getProperty("reader.archive.command")
             ?: System.getenv("READER_ARCHIVE_COMMAND")
@@ -562,6 +608,63 @@ private object DesktopLibarchive {
         }
     }
 
+    /**
+     * Reads one named entry out of an archive without extracting pages. Bounded
+     * so a hostile `ComicInfo.xml` cannot be decompressed into a huge string.
+     */
+    fun readTextEntry(
+        file: File,
+        maxBytes: Int,
+        matches: (String) -> Boolean
+    ): String? {
+        val archive = api.archive_read_new() ?: return null
+        try {
+            checkArchive(api.archive_read_support_filter_all(archive), archive, "enable archive filters")
+            checkArchive(api.archive_read_support_format_all(archive), archive, "enable archive formats")
+            checkArchive(
+                api.archive_read_open_filename(archive, file.absolutePath, BUFFER_SIZE.toLong()),
+                archive,
+                "open ${file.name}"
+            )
+            val entryRef = PointerByReference()
+            while (true) {
+                when (val status = api.archive_read_next_header(archive, entryRef)) {
+                    ARCHIVE_OK -> Unit
+                    ARCHIVE_EOF -> return null
+                    else -> checkArchive(status, archive, "read archive header")
+                }
+                val entry = entryRef.value ?: continue
+                val name = api.archive_entry_pathname_utf8(entry)
+                    ?: api.archive_entry_pathname(entry)
+                    ?: continue
+                if (!matches(name)) {
+                    api.archive_read_data_skip(archive)
+                    continue
+                }
+                val size = api.archive_entry_size(entry)
+                if (size <= 0L || size > maxBytes) return null
+                val collected = ByteArrayOutputStream(size.toInt())
+                val buffer = ByteArray(minOf(size, BUFFER_SIZE.toLong()).toInt())
+                while (true) {
+                    val read = api.archive_read_data(archive, buffer, buffer.size.toLong())
+                    when {
+                        read > 0 -> {
+                            collected.write(buffer, 0, read.toInt())
+                            if (collected.size() > maxBytes) return null
+                        }
+                        read == 0L -> break
+                        else -> checkArchive(read.toInt(), archive, "read $name")
+                    }
+                }
+                return collected.toString(Charsets.UTF_8.name())
+            }
+        } catch (error: Exception) {
+            return null
+        } finally {
+            api.archive_read_free(archive)
+        }
+    }
+
     private val api: LibarchiveLibrary by lazy {
         val overridePath = System.getProperty("reader.libarchive.path")
             ?: System.getenv("READER_LIBARCHIVE_PATH")
@@ -580,8 +683,7 @@ private object DesktopLibarchive {
         )
     }
 
-    private fun checkArchive(status: Int, archive: Pointer, action: String) {
-        if (status >= ARCHIVE_OK) return
+    private fun checkArchive(status: Int, archive: Pointer, action: String) {        if (status >= ARCHIVE_OK) return
         val message = api.archive_error_string(archive).orEmpty()
         error("libarchive could not $action: ${message.ifBlank { "error code $status" }}")
     }
@@ -600,5 +702,6 @@ private object DesktopLibarchive {
         fun archive_entry_pathname_utf8(entry: Pointer): String?
         fun archive_entry_pathname(entry: Pointer): String?
         fun archive_entry_filetype(entry: Pointer): Int
+        fun archive_entry_size(entry: Pointer): Long
     }
 }

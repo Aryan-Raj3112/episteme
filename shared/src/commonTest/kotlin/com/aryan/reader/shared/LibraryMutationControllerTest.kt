@@ -45,6 +45,16 @@ class LibraryMutationControllerTest {
         assertTrue(controller.setTagAssigned(" generated-id ", setOf("a"), assigned = false))
         assertEquals("generated-id" to setOf("a"), store.removedTags.single())
     }
+
+    @Test
+    fun `tag creation reuses an existing tag with the same name ignoring case`() = runTest {
+        assertEquals("generated-id", controller.createAndAssignTag("Favorite", listOf("a")))
+        assertEquals("generated-id", controller.createAndAssignTag("  favorite  ", listOf("b")))
+
+        // A duplicate insert would leave two rows even though newId is stable here.
+        assertEquals(listOf(Tag("generated-id", "Favorite", 123) to 42L), store.tags)
+        assertEquals("generated-id" to setOf("b"), store.assignedTags.last())
+    }
 }
 
 private class RecordingLibraryMutationStore : LibraryMutationStore {
@@ -61,6 +71,8 @@ private class RecordingLibraryMutationStore : LibraryMutationStore {
     override suspend fun renameShelf(shelfId: String, name: String) { renamedShelves += shelfId to name }
     override suspend fun deleteShelf(shelfId: String) { deletedShelves += shelfId }
     override suspend fun removeBooksFromShelf(shelfId: String, bookIds: Set<String>) = Unit
+    override suspend fun findTagByName(name: String): Tag? =
+        tags.map { it.first }.firstOrNull { it.name.equals(name, ignoreCase = true) }
     override suspend fun createTag(tag: Tag, createdAt: Long) { tags += tag to createdAt }
     override suspend fun assignTagToBooks(tagId: String, bookIds: Set<String>) { assignedTags += tagId to bookIds }
     override suspend fun removeTagFromBooks(tagId: String, bookIds: Set<String>) { removedTags += tagId to bookIds }

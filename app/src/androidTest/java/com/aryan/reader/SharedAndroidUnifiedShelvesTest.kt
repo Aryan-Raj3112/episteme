@@ -1,6 +1,7 @@
 package com.aryan.reader
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -62,6 +63,85 @@ class SharedAndroidUnifiedShelvesTest {
 
         composeTestRule.runOnIdle { assertThat(selected).isEqualTo(SortOrder.TITLE_ASC) }
         composeTestRule.onNodeWithText(SortOrder.TITLE_ASC.name).assertIsDisplayed()
+    }
+
+    @Test
+    fun listLayoutRendersBookRowsAndToggleRequestsGrid() {
+        var requested: Boolean? = null
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedAndroidUnifiedShelves(
+                    visibleShelves = listOf("Reading"),
+                    selectedShelf = "Reading",
+                    selectedBooks = listOf("book"),
+                    noShelvesLabel = "No shelves yet",
+                    shelfKey = { it },
+                    shelfName = { it },
+                    shelfBookCountLabel = { "1 book" },
+                    bookKey = { it },
+                    onShelfSelected = {},
+                    bookCard = { Text("CARD:$it") },
+                    bookListItem = { Text("ROW:$it") },
+                    useListView = true,
+                    onListViewChange = { requested = it },
+                    listViewDescription = "List view",
+                    gridViewDescription = "Grid view",
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("ROW:book").assertIsDisplayed()
+        composeTestRule.onNodeWithText("CARD:book").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("ShelfLayoutToggle").performClick()
+        composeTestRule.runOnIdle { assertThat(requested).isFalse() }
+    }
+
+    @Test
+    fun gridLayoutRemainsAvailableWhenHostPrefersIt() {
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedAndroidUnifiedShelves(
+                    visibleShelves = listOf("Reading"),
+                    selectedShelf = "Reading",
+                    selectedBooks = listOf("book"),
+                    noShelvesLabel = "No shelves yet",
+                    shelfKey = { it },
+                    shelfName = { it },
+                    shelfBookCountLabel = { "1 book" },
+                    bookKey = { it },
+                    onShelfSelected = {},
+                    bookCard = { Text("CARD:$it") },
+                    bookListItem = { Text("ROW:$it") },
+                    useListView = false,
+                    onListViewChange = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithText("CARD:book").assertIsDisplayed()
+        composeTestRule.onNodeWithText("ROW:book").assertDoesNotExist()
+    }
+
+    @Test
+    fun layoutToggleIsHiddenWithoutHostPreference() {
+        composeTestRule.setContent {
+            MaterialTheme {
+                SharedAndroidUnifiedShelves(
+                    visibleShelves = listOf("Reading"),
+                    selectedShelf = "Reading",
+                    selectedBooks = listOf("book"),
+                    noShelvesLabel = "No shelves yet",
+                    shelfKey = { it },
+                    shelfName = { it },
+                    shelfBookCountLabel = { "1 book" },
+                    bookKey = { it },
+                    onShelfSelected = {},
+                    bookCard = {},
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("ShelfLayoutToggle").assertDoesNotExist()
     }
 
     @Test

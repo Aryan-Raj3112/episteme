@@ -35,9 +35,15 @@ interface AndroidBookStore {
         coverImagePath: String? = null,
     )
     suspend fun updateHighlights(bookId: String, highlightsJson: String)
-    suspend fun updateEpubReadingPosition(uriString: String, locator: Locator, cfiForWebView: String?, progress: Float)
+    /**
+     * Writes the position row addressed by [bookId] (the Room primary key the caller already holds).
+     * Returns true when a row was updated. Callers must not need a read-back to learn the outcome:
+     * the write path is per page turn, so a verifying `SELECT *` here is a per-turn full-row read.
+     */
+    suspend fun updateEpubReadingPosition(bookId: String, locator: Locator, cfiForWebView: String?, progress: Float): Boolean
     suspend fun updateBookmarks(bookId: String, bookmarksJson: String)
-    suspend fun updatePdfReadingPosition(uriString: String, page: Int, progress: Float)
+    /** Writes the PDF position row addressed by [bookId]; see [updateEpubReadingPosition]. */
+    suspend fun updatePdfReadingPosition(bookId: String, page: Int, progress: Float): Boolean
     suspend fun makeBookAvailable(bookId: String, internalUri: Uri)
     suspend fun markAsNotRecent(bookIds: List<String>)
     suspend fun markAsDeleted(bookIds: List<String>)
@@ -62,8 +68,19 @@ interface AndroidFolderMirrorStore {
 
 interface AndroidBookArtifactStore {
     suspend fun clearAllLocalData()
-    suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri): String?
-    suspend fun saveEmbeddedCoverToCache(bytes: ByteArray, uri: Uri, extension: String): String?
+    /**
+     * Persists a generated thumbnail and returns its path. [previousPath] is the path the row
+     * currently references and is removed once the replacement is written; pass null when unknown.
+     */
+    suspend fun saveCoverToCache(bitmap: Bitmap, uri: Uri, previousPath: String? = null): String?
+    suspend fun saveEmbeddedCoverToCache(
+        bytes: ByteArray,
+        uri: Uri,
+        extension: String,
+        previousPath: String? = null,
+    ): String?
+    /** Deletes cover files no library row references; returns how many were removed. */
+    suspend fun pruneCoverCache(): Int
     suspend fun clearLocalCachesForBook(bookId: String)
 }
 

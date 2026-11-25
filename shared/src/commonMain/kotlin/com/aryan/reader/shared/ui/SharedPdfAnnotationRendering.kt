@@ -70,6 +70,7 @@ import com.aryan.reader.shared.pdf.PdfPagePoint
 import com.aryan.reader.shared.pdf.SharedPdfAnnotation
 import com.aryan.reader.shared.pdf.pdfHighlightLinePath
 import com.aryan.reader.shared.pdf.pdfHighlightLines
+import com.aryan.reader.shared.pdf.pdfHighlightNoteBadgeBoundsForRects
 import com.aryan.reader.shared.pdf.pdfHighlightStrokeStyle
 import com.aryan.reader.shared.pdf.pdfHighlightWavePath
 import com.aryan.reader.shared.pdf.toPdfHighlightRect
@@ -279,6 +280,14 @@ internal fun DrawScope.drawSharedPdfHighlightAnnotation(
             wave = false,
             strikethrough = true,
         )
+    }
+
+    if (!annotation.note.isNullOrBlank()) {
+        // Last, so the mark sits above the fill it belongs to. Its colour is the highlight's own
+        // stored colour rather than the tinted fill colour, which is what a reader recognises as
+        // "this highlight" in the sheet and in the annotation list.
+        pdfHighlightNoteBadgeBoundsForRects(bounds.map { it.toPdfHighlightRect(canvasWidth, canvasHeight) })
+            ?.let { badge -> drawHighlightNoteBadge(badge) }
     }
 }
 

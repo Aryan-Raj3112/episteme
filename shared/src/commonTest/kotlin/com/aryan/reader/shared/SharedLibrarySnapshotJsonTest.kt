@@ -21,7 +21,6 @@ class SharedLibrarySnapshotJsonTest {
     fun `missing settings use android recent and external-file defaults`() {
         val decoded = SharedLibrarySnapshotJson.decodeOrEmpty("""{"schemaVersion":26}""")
 
-        assertEquals(0, decoded.recentFilesLimit)
         assertEquals("ASK", decoded.externalFileBehavior)
         assertFalse(decoded.isFolderSyncEnabled)
         assertEquals(SortOrder.RECENT, decoded.sortOrder)
@@ -29,6 +28,31 @@ class SharedLibrarySnapshotJsonTest {
         assertEquals(0, decoded.mainScreenStartPage)
         assertEquals(0, decoded.libraryScreenStartPage)
         assertFalse(decoded.hideReaderAi)
+    }
+
+    @Test
+    fun `snapshot json round trips both tab sets and defaults the text set when absent`() {
+        val snapshot = SharedLibrarySnapshot(
+            openTabIds = listOf("pdf-a", "pdf-b"),
+            activeTabBookId = "pdf-b",
+            textOpenTabIds = listOf("epub-a"),
+            activeTextTabBookId = "epub-a",
+        )
+
+        val decoded = SharedLibrarySnapshotJson.decodeOrEmpty(SharedLibrarySnapshotJson.encode(snapshot))
+
+        assertEquals(listOf("pdf-a", "pdf-b"), decoded.openTabIds)
+        assertEquals("pdf-b", decoded.activeTabBookId)
+        assertEquals(listOf("epub-a"), decoded.textOpenTabIds)
+        assertEquals("epub-a", decoded.activeTextTabBookId)
+
+        // Snapshots written before text tabs existed only ever had the fixed-layout set.
+        val legacy = SharedLibrarySnapshotJson.decodeOrEmpty(
+            """{"schemaVersion":26,"openTabIds":["pdf-a"],"activeTabBookId":"pdf-a"}"""
+        )
+        assertEquals(listOf("pdf-a"), legacy.openTabIds)
+        assertEquals(emptyList(), legacy.textOpenTabIds)
+        assertEquals(null, legacy.activeTextTabBookId)
     }
 
     @Test
@@ -40,21 +64,6 @@ class SharedLibrarySnapshotJsonTest {
         assertEquals("KEEP", decoded.externalFileBehavior)
     }
 
-    @Test
-    fun `legacy ios recent limits migrate to nearest android option`() {
-        assertEquals(
-            10,
-            SharedLibrarySnapshotJson.decodeOrEmpty(
-                """{"schemaVersion":26,"recentFilesLimit":12}"""
-            ).recentFilesLimit
-        )
-        assertEquals(
-            20,
-            SharedLibrarySnapshotJson.decodeOrEmpty(
-                """{"schemaVersion":26,"recentFilesLimit":24}"""
-            ).recentFilesLimit
-        )
-    }
     @Test
     fun `cloud book tombstones survive snapshot round trip`() {
         val tombstone = CloudBookTombstone(
@@ -219,7 +228,6 @@ class SharedLibrarySnapshotJsonTest {
                 )
             ),
             syncedFolders = listOf(SyncedFolder("C:/Books", "Books", lastScanTime = 12L, allowedFileTypes = setOf(FileType.EPUB, FileType.PDF))),
-            recentFilesLimit = 20,
             isTabsEnabled = true,
             openTabIds = listOf("book"),
             activeTabBookId = "book",

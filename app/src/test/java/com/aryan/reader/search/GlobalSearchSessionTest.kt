@@ -1,6 +1,8 @@
 package com.aryan.reader.search
 
 import com.aryan.reader.shared.search.SharedGlobalSearchCoordinator
+import com.aryan.reader.shared.search.SharedGlobalSearchPersistedBookIndex
+import com.aryan.reader.shared.search.SharedGlobalSearchStorage
 import com.aryan.reader.shared.search.SharedSearchChunk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -63,6 +65,29 @@ class GlobalSearchSessionTest {
     }
 
     @Test
+    fun `sync reads freshness headers and query loads only the payloads it scans`() = runTest {
+        val delegate = GlobalSearchFileStorage.fromFilesDir(temp.root)
+        SharedGlobalSearchCoordinator(delegate).upsertBookChunks(
+            "indexed",
+            "10:20",
+            listOf(SharedSearchChunk(chunkIndex = 0, text = "the harvest festival")),
+        )
+        val counting = CountingGlobalSearchStorage(delegate)
+        val s = GlobalSearchSession(temp.root, counting)
+
+        // Reconciliation used to decode every persisted index just to compare
+        // hashes, which OOMed on a nearly-full heap (docs/crashlytics-triage.md#179).
+        assertEquals(listOf(GlobalSearchSession.Entry("missing", "1:2")), s.syncLibrary(entries()))
+        assertTrue(s.isFresh(entries().first()))
+        assertEquals(0, counting.loadBookCalls)
+
+        // Only books the query actually scans pay a payload read.
+        val indexedOnly = listOf(GlobalSearchSession.Entry("indexed", "10:20"))
+        assertEquals(listOf("indexed"), s.query(indexedOnly, "harvest").map { it.bookId })
+        assertEquals(1, counting.loadBookCalls)
+    }
+
+    @Test
     fun `remove rediscovers the payload until its file is deleted`() = runTest {
         val storage = GlobalSearchFileStorage.fromFilesDir(temp.root)
         SharedGlobalSearchCoordinator(storage).upsertBookChunks(
@@ -80,5 +105,16 @@ class GlobalSearchSessionTest {
         storage.deleteBook("indexed")
         s.remove("indexed")
         assertEquals(entries(), s.syncLibrary(entries()))
+    }
+}
+
+private class CountingGlobalSearchStorage(
+    private val delegate: SharedGlobalSearchStorage,
+) : SharedGlobalSearchStorage by delegate {
+    var loadBookCalls = 0
+
+    override fun loadBook(bookId: String): SharedGlobalSearchPersistedBookIndex? {
+        loadBookCalls++
+        return delegate.loadBook(bookId)
     }
 }

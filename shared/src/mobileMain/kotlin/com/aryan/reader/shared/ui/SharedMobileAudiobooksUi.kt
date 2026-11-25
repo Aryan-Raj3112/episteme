@@ -70,7 +70,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
@@ -852,9 +851,10 @@ private fun SharedMobileTtsRow(
                 )
                 val progressFraction = ((item.progress?.progressPercent ?: 0f) / 100f).coerceIn(0f, 1f)
                 if (progressFraction > 0f) {
-                    LinearProgressIndicator(
-                        progress = { progressFraction },
-                        modifier = Modifier.fillMaxWidth().padding(top = 9.dp).height(4.dp).clip(CircleShape),
+                    SharedProgressBar(
+                        progress = progressFraction,
+                        modifier = Modifier.fillMaxWidth().padding(top = 9.dp),
+                        barHeight = 4.dp,
                     )
                 }
                 Text(
@@ -936,9 +936,10 @@ private fun SharedMobileTtsContinueCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                LinearProgressIndicator(
-                    progress = { ((item.progress?.progressPercent ?: 0f) / 100f).coerceIn(0f, 1f) },
-                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp).height(6.dp).clip(CircleShape),
+                SharedProgressBar(
+                    progress = ((item.progress?.progressPercent ?: 0f) / 100f).coerceIn(0f, 1f),
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    barHeight = 6.dp,
                 )
                 Row(Modifier.fillMaxWidth().padding(top = 7.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("${(((item.progress?.progressPercent ?: 0f) / 100f) * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
@@ -1014,9 +1015,10 @@ private fun SharedMobileAudiobookContinueCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                LinearProgressIndicator(
-                    progress = { audiobook.progressFraction },
-                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp).height(6.dp).clip(CircleShape),
+                SharedProgressBar(
+                    progress = audiobook.progressFraction,
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                    barHeight = 6.dp,
                 )
                 Row(Modifier.fillMaxWidth().padding(top = 7.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("${(audiobook.progressFraction * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
@@ -1090,9 +1092,10 @@ fun SharedMobileAudiobookRow(
                 )
                 Text(audiobook.format, modifier = Modifier.padding(top = 4.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 if (audiobook.progressFraction > 0f) {
-                    LinearProgressIndicator(
-                        progress = { audiobook.progressFraction.coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth().padding(top = 9.dp).height(4.dp).clip(CircleShape),
+                    SharedProgressBar(
+                        progress = audiobook.progressFraction.coerceIn(0f, 1f),
+                        modifier = Modifier.fillMaxWidth().padding(top = 9.dp),
+                        barHeight = 4.dp,
                     )
                 }
                 Text(
@@ -1655,10 +1658,11 @@ fun SharedMobileAudiobookMiniPlayer(
         onClick = onExpand,
     ) {
         Column(Modifier.fillMaxWidth()) {
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier.fillMaxWidth().height(3.dp),
-                color = MaterialTheme.colorScheme.primary,
+            SharedProgressBar(
+                progress = progress,
+                modifier = Modifier.fillMaxWidth(),
+                barHeight = 3.dp,
+                activeColor = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             )
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1745,10 +1749,11 @@ fun SharedMobileAudiobookMiniPlayerFrame(
         onClick = onExpand,
     ) {
         Column(Modifier.fillMaxWidth()) {
-            LinearProgressIndicator(
-                progress = { progress.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(3.dp),
-                color = MaterialTheme.colorScheme.primary,
+            SharedProgressBar(
+                progress = progress.coerceIn(0f, 1f),
+                modifier = Modifier.fillMaxWidth(),
+                barHeight = 3.dp,
+                activeColor = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             )
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -2152,9 +2157,10 @@ fun SharedMobileTtsPlayerSheet(
             } else {
                 readerString("listen_chapter_number", "Chapter %1\$d", playback.chapterIndex + 1)
             }
-            LinearProgressIndicator(
-                progress = { playback.progressPercent.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().padding(top = 24.dp).height(4.dp).clip(CircleShape),
+            SharedProgressBar(
+                progress = playback.progressPercent.coerceIn(0f, 1f),
+                modifier = Modifier.fillMaxWidth().padding(top = 24.dp),
+                barHeight = 4.dp,
             )
             Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("${(playback.progressPercent * 100).toInt()}%", style = MaterialTheme.typography.labelSmall)
@@ -2504,10 +2510,11 @@ fun SharedMobileTtsMiniPlayer(
         onClick = onExpand,
     ) {
         Column(Modifier.fillMaxWidth()) {
-            LinearProgressIndicator(
-                progress = { playback.progressPercent.coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(3.dp),
-                color = MaterialTheme.colorScheme.primary,
+            SharedProgressBar(
+                progress = playback.progressPercent.coerceIn(0f, 1f),
+                modifier = Modifier.fillMaxWidth(),
+                barHeight = 3.dp,
+                activeColor = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
             )
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {

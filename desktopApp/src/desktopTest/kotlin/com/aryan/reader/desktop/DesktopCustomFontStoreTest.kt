@@ -1,6 +1,8 @@
 package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.CustomFontItem
+import com.aryan.reader.shared.googleFontDownloadExtension
+import com.aryan.reader.shared.googleFontDownloadUrlFromCss
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.Test
@@ -67,8 +69,14 @@ class DesktopCustomFontStoreTest {
             }
         """.trimIndent()
 
-        assertEquals("https://fonts.gstatic.com/s/literata/v35/font.ttf", googleFontDownloadUrlFromCss(css))
-        assertEquals("ttf", googleFontFileExtension("https://fonts.gstatic.com/s/literata/v35/font.ttf?foo=bar"))
+        assertEquals(
+            "https://fonts.gstatic.com/s/literata/v35/font.ttf",
+            googleFontDownloadUrlFromCss(css)
+        )
+        assertEquals(
+            "ttf",
+            googleFontDownloadExtension("https://fonts.gstatic.com/s/literata/v35/font.ttf?foo=bar")
+        )
     }
 
     @Test

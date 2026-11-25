@@ -64,6 +64,32 @@ class BookPaginatorThreadingTest {
     }
 
     @Test
+    fun `page cache load is pinned off the caller's dispatcher`() {
+        // The init coroutine (`paginatorScope.launch` in `init`) inherits the reader's
+        // `rememberCoroutineScope()`, so an unpinned cache load resumed on
+        // `AndroidUiDispatcher.Main` and decoded a whole chapter's pages plus rebuilt its runtime
+        // indexes inside a frame (docs/crashlytics-triage.md#139).
+        val source = sourceFile("com/aryan/reader/paginatedreader/BookPaginator.kt").readText()
+        val loadBody = source.substringAfter("private suspend fun loadCachedPagesForChapter")
+            .substringBefore("private suspend fun savePageCache")
+        val pin = loadBody.indexOf("withContext(Dispatchers.IO)")
+
+        assertTrue(
+            "loadCachedPagesForChapter must pin its whole body with withContext(Dispatchers.IO)",
+            pin >= 0
+        )
+        listOf(
+            "chapterContentVersion(chapter)", // CRCs the chapter's backing file
+            "proto.decodeFromByteArray",
+            "applyPageRuntimeIndexes(chapterIndex, pages)",
+        ).forEach { work ->
+            val at = loadBody.indexOf(work)
+            assertTrue("expected $work in loadCachedPagesForChapter", at >= 0)
+            assertTrue("$work must run inside the pinned block", pin < at)
+        }
+    }
+
+    @Test
     fun `trace preview truncates before escaping to stay allocation bounded`() {
         // getBlocksForChapter logs a preview of the full chapter HTML. Escaping first copies
         // multi-MB inputs several times for a 220-char preview and OOMs (see

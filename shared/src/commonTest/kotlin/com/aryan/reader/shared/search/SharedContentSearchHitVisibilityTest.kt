@@ -40,7 +40,7 @@ class SharedContentSearchHitVisibilityTest {
     }
 
     @Test
-    fun `expanded row surfaces distinct locations best-first`() {
+    fun `expanded row keeps the best location first then reads in order`() {
         val result = result(
             hit(chapter = 0, page = 1, score = 2.0, snippet = "p1"),
             hit(chapter = 0, page = 2, score = 7.0, snippet = "p2"),
@@ -50,7 +50,10 @@ class SharedContentSearchHitVisibilityTest {
 
         val expanded = SharedContentSearchHitVisibility.hitsFor(result, expanded = true)
 
-        assertEquals(listOf("p2", "p3", "p1"), expanded.map { it.snippet })
+        // Best hit still leads (expanding never reorders what was visible), but
+        // the rest follows reading order: a list labelled "Chapter 4 / Chapter 2"
+        // reads as a broken result list.
+        assertEquals(listOf("p2", "p1", "p3"), expanded.map { it.snippet })
     }
 
     @Test

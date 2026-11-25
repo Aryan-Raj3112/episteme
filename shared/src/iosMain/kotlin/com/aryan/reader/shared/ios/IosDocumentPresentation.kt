@@ -7,7 +7,8 @@ import com.aryan.reader.shared.parseSharedDocumentXmlMetadata
 import com.aryan.reader.shared.parseSharedFb2Metadata
 
 internal val IosPresentationMetadataTypes = setOf(
-    FileType.PDF, FileType.EPUB, FileType.MOBI, FileType.FB2, FileType.CBZ,
+    FileType.PDF, FileType.EPUB, FileType.MOBI, FileType.FB2,
+    FileType.CBZ, FileType.CBR, FileType.CB7, FileType.CBT,
     FileType.DOCX, FileType.ODT, FileType.FODT, FileType.PPTX,
 )
 

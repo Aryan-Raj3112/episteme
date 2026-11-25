@@ -538,4 +538,58 @@ class CloudLibrarySnapshotMergeTest {
             )
         )
     }
+
+    @Test
+    fun `tags are local only so a remote list cannot resurrect a deleted tag`() {
+        val localTag = Tag(id = "local", name = "Local")
+        val removedTag = Tag(id = "removed", name = "Removed")
+        val local = SharedLibrarySnapshot(
+            books = listOf(book("a", 100L).copy(tags = listOf(localTag))),
+            tags = listOf(localTag),
+        )
+        val remote = SharedLibrarySnapshot(
+            books = listOf(book("a", 100L).copy(tags = listOf(removedTag))),
+            tags = listOf(localTag, removedTag),
+        )
+
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = local,
+            remote = remote,
+            downloadedBookPaths = emptyMap(),
+        )
+
+        assertEquals(listOf(localTag), merged.tags)
+        assertEquals(listOf(localTag), merged.books.single().tags)
+    }
+
+    @Test
+    fun `a book downloaded from the cloud arrives without another device's tags`() {
+        val remoteTag = Tag(id = "remote", name = "Remote")
+        val remoteBook = book("downloaded", 100L).copy(tags = listOf(remoteTag))
+
+        val merged = mergeCloudLibrarySnapshotWithDownloadedBooks(
+            local = SharedLibrarySnapshot(),
+            remote = SharedLibrarySnapshot(books = listOf(remoteBook), tags = listOf(remoteTag)),
+            downloadedBookPaths = mapOf(remoteBook.id to "/local/downloaded.epub"),
+        )
+
+        assertTrue(merged.tags.isEmpty())
+        assertTrue(merged.books.single().tags.isEmpty())
+    }
+
+    @Test
+    fun `outbound snapshots drop tags on books and the tag list`() {
+        val tag = Tag(id = "tag", name = "Tag")
+        val snapshot = SharedLibrarySnapshot(
+            books = listOf(book("a", 100L).copy(tags = listOf(tag))),
+            tags = listOf(tag),
+        )
+
+        val stripped = snapshot.withoutTags()
+
+        assertTrue(stripped.tags.isEmpty())
+        assertTrue(stripped.books.single().tags.isEmpty())
+        // Untouched fields survive so the cloud snapshot is still complete.
+        assertEquals(snapshot.books.single().id, stripped.books.single().id)
+    }
 }

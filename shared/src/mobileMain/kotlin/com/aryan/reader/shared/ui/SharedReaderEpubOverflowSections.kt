@@ -16,8 +16,10 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
@@ -203,6 +205,9 @@ fun SharedReaderEpubOverflowSection(
             // itself is derived from the host's own tool order.
             SharedReaderOverflowExpanderItem(
                 label = labels.hiddenTools,
+                // The wrench-and-screwdriver reads as "the tools you put away", which is exactly
+                // what this list is.
+                leadingIcon = SharedReaderIcons.Handyman,
                 expanded = menuState.hiddenToolsExpanded.value,
                 onClick = { menuState.hiddenToolsExpanded.value = !menuState.hiddenToolsExpanded.value }
             )
@@ -238,6 +243,7 @@ fun SharedReaderEpubOverflowSection(
         EpubOverflowMenuSection.READING_MODE -> {
             SharedReaderOverflowExpanderItem(
                 label = labels.changeReadingMode,
+                leadingIcon = SharedReaderIcons.MenuBook,
                 expanded = menuState.readingModeExpanded.value,
                 onClick = { menuState.readingModeExpanded.value = !menuState.readingModeExpanded.value }
             )
@@ -289,50 +295,39 @@ fun SharedReaderEpubOverflowSection(
             }
         )
 
-        EpubOverflowMenuSection.TAP_TO_TURN -> SharedReaderOverflowItem(
+        EpubOverflowMenuSection.TAP_TO_TURN -> EpubOverflowSwitchItem(
             label = labels.tapToTurnPages,
+            leadingIcon = SharedReaderIcons.TouchApp,
+            checked = state.tapToNavigateEnabled,
             enabled = state.isPaginated,
-            selected = state.tapToNavigateEnabled,
-            selectedContentDescription = labels.enabledContentDescription,
-            onClick = {
-                dismiss()
-                callbacks.onToggleTapToNavigate(!state.tapToNavigateEnabled)
-            }
+            onCheckedChange = callbacks.onToggleTapToNavigate,
         )
 
-        EpubOverflowMenuSection.VOLUME_SCROLL -> SharedReaderOverflowItem(
+        EpubOverflowMenuSection.VOLUME_SCROLL -> EpubOverflowSwitchItem(
             label = if (state.readingMode == ReaderReadingMode.VERTICAL) {
                 labels.volumeButtonScrolling
             } else {
                 labels.volumeButtonPageTurn
             },
-            selected = state.volumeScrollEnabled,
-            selectedContentDescription = labels.enabledContentDescription,
-            onClick = {
-                dismiss()
-                callbacks.onToggleVolumeScroll?.invoke(!state.volumeScrollEnabled)
-            }
+            leadingIcon = SharedReaderIcons.VolumeUp,
+            checked = state.volumeScrollEnabled,
+            enabled = callbacks.onToggleVolumeScroll != null,
+            onCheckedChange = { callbacks.onToggleVolumeScroll?.invoke(it) },
         )
 
-        EpubOverflowMenuSection.PAGE_TURN_ANIM -> SharedReaderOverflowItem(
+        EpubOverflowMenuSection.PAGE_TURN_ANIM -> EpubOverflowSwitchItem(
             label = labels.realisticPageTurns,
+            leadingIcon = SharedReaderIcons.PageTurn,
+            checked = state.pageTurnAnimationEnabled,
             enabled = state.isPaginated,
-            selected = state.pageTurnAnimationEnabled,
-            selectedContentDescription = labels.enabledContentDescription,
-            onClick = {
-                dismiss()
-                callbacks.onTogglePageTurnAnimation(!state.pageTurnAnimationEnabled)
-            }
+            onCheckedChange = callbacks.onTogglePageTurnAnimation,
         )
 
-        EpubOverflowMenuSection.KEEP_SCREEN_ON -> SharedReaderOverflowItem(
+        EpubOverflowMenuSection.KEEP_SCREEN_ON -> EpubOverflowSwitchItem(
             label = labels.keepScreenOn,
-            selected = state.keepScreenOn,
-            selectedContentDescription = labels.enabledContentDescription,
-            onClick = {
-                dismiss()
-                callbacks.onToggleKeepScreenOn(!state.keepScreenOn)
-            }
+            leadingIcon = SharedReaderIcons.KeepScreenOn,
+            checked = state.keepScreenOn,
+            onCheckedChange = callbacks.onToggleKeepScreenOn,
         )
 
         EpubOverflowMenuSection.VISUAL_OPTIONS -> SharedReaderOverflowItem(
@@ -346,6 +341,7 @@ fun SharedReaderEpubOverflowSection(
 
         EpubOverflowMenuSection.AUTO_SCROLL -> SharedReaderOverflowItem(
             label = labels.autoScroll,
+            leadingIcon = SharedReaderIcons.AutoScroll,
             // Android parity (EpubReaderControls, AUTO_SCROLL): needs a scrollable body and an idle
             // narration engine, and the item only ever starts auto-scroll — the surface stops it.
             enabled = !state.isTtsActive && state.readingMode == ReaderReadingMode.VERTICAL,
@@ -476,36 +472,39 @@ private fun SharedReaderOverflowItem(
     selected: Boolean = false,
     selectedContentDescription: String = "",
 ) {
-    val textColor = if (errorColored) MaterialTheme.colorScheme.error else Color.Unspecified
-    val iconTint = if (errorColored) MaterialTheme.colorScheme.error else Color.Unspecified
-    DropdownMenuItem(
-        text = { Text(label, color = textColor) },
-        enabled = enabled,
+    SharedReaderToolSheetRow(
+        title = label,
         onClick = onClick,
-        leadingIcon = if (leadingIcon == null) {
-            null
-        } else {
-            {
-                Icon(
-                    imageVector = leadingIcon,
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        },
-        trailingIcon = if (selected) {
-            {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = selectedContentDescription,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        } else {
-            null
-        },
-        colors = MenuDefaults.itemColors(textColor = textColor)
+        enabled = enabled,
+        icon = leadingIcon,
+        destructive = errorColored,
+        selected = selected,
+        selectedContentDescription = selectedContentDescription,
+    )
+}
+
+/**
+ * A toggle in the tool sheet.
+ *
+ * These rows used to be tap-to-toggle items with a check mark, and toggling one closed the menu.
+ * A switch says what the row does before it is tapped, and the sheet now stays open so a reader can
+ * flip page turns, keep-screen-on and tap-to-turn in one visit instead of reopening the menu three
+ * times.
+ */
+@Composable
+private fun EpubOverflowSwitchItem(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true,
+    leadingIcon: ImageVector? = null,
+) {
+    SharedReaderToolSheetSwitchRow(
+        title = label,
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        icon = leadingIcon,
     )
 }
 
@@ -516,20 +515,16 @@ private fun SharedReaderOverflowExpanderItem(
     onClick: () -> Unit,
     leadingIcon: ImageVector? = null,
 ) {
-    DropdownMenuItem(
-        text = { Text(label) },
+    SharedReaderToolSheetRow(
+        title = label,
         onClick = onClick,
-        leadingIcon = if (leadingIcon == null) {
-            null
-        } else {
-            { Icon(imageVector = leadingIcon, contentDescription = null, modifier = Modifier.size(20.dp)) }
-        },
-        trailingIcon = {
+        icon = leadingIcon,
+        trailing = {
             Icon(
                 imageVector = Icons.Default.ArrowDropDown,
                 contentDescription = null,
                 modifier = Modifier.rotate(if (expanded) 180f else 0f)
             )
-        }
+        },
     )
 }

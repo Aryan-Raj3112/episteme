@@ -457,8 +457,7 @@ class SharedLibraryEditorTest {
             state = state,
             shelfRecords = emptyList(),
             shelfRefs = emptyList(),
-            tagName = " favorite ",
-            nowMillis = 10L
+            tagName = " favorite "
         )
 
         requireNotNull(result)
@@ -528,13 +527,14 @@ class SharedLibraryEditorTest {
             tagId = favorite.id,
             bookIds = state.selectedBookIds,
             assign = true,
-            nowMillis = 20L,
         )
 
         requireNotNull(assigned)
         assertEquals(setOf(favorite, keep), assigned.rawLibraryBooks.first { it.id == "one" }.tags.toSet())
         assertEquals(setOf(favorite, keep), assigned.rawLibraryBooks.first { it.id == "two" }.tags.toSet())
-        assertEquals(20L, assigned.rawLibraryBooks.first { it.id == "one" }.metadataModifiedTimestamp)
+        // Tag edits are device-local and must not stamp cloud metadata, matching Android
+        // (`MainViewModel.toggleTagForBooks` only rewrites the cross-ref table).
+        assertEquals(2L, assigned.rawLibraryBooks.first { it.id == "one" }.metadataModifiedTimestamp)
         assertEquals(3L, assigned.rawLibraryBooks.first { it.id == "two" }.metadataModifiedTimestamp)
         assertEquals(state.selectedBookIds, assigned.selectedBookIds)
         assertTrue(assigned.libraryBooks.all { favorite in it.tags })
@@ -548,13 +548,13 @@ class SharedLibraryEditorTest {
             tagId = favorite.id,
             bookIds = assigned.selectedBookIds,
             assign = false,
-            nowMillis = 30L,
         )
 
         requireNotNull(removed)
         assertTrue(removed.rawLibraryBooks.all { favorite !in it.tags })
         assertTrue(removed.rawLibraryBooks.all { keep in it.tags })
-        assertTrue(removed.rawLibraryBooks.all { it.metadataModifiedTimestamp == 30L })
+        assertEquals(2L, removed.rawLibraryBooks.first { it.id == "one" }.metadataModifiedTimestamp)
+        assertEquals(3L, removed.rawLibraryBooks.first { it.id == "two" }.metadataModifiedTimestamp)
         assertEquals(state.selectedBookIds, removed.selectedBookIds)
     }
 
@@ -577,7 +577,6 @@ class SharedLibraryEditorTest {
             state = state,
             name = "  New Tag  ",
             bookIds = state.selectedBookIds,
-            nowMillis = 40L,
         )
 
         requireNotNull(created)
@@ -589,7 +588,6 @@ class SharedLibraryEditorTest {
         val deleted = SharedLibraryEditor.deleteTagInState(
             state = created,
             tagId = keep.id,
-            nowMillis = 50L,
         )
 
         requireNotNull(deleted)
@@ -598,8 +596,9 @@ class SharedLibraryEditorTest {
         assertTrue(deleted.shelves.none { it.id == "tag_keep" })
         assertTrue(deleted.allTags.none { it.id == keep.id })
         assertTrue(keep.id !in deleted.libraryFilters.tagIds)
-        assertEquals(50L, deleted.rawLibraryBooks.first { it.id == "one" }.metadataModifiedTimestamp)
-        assertEquals("Deleted tag \"Keep\".", deleted.bannerMessage?.message)
+        assertEquals(0L, deleted.rawLibraryBooks.first { it.id == "one" }.metadataModifiedTimestamp)
+        // Android's delete is silent; iOS follows it now.
+        assertNull(deleted.bannerMessage)
     }
 
     @Test

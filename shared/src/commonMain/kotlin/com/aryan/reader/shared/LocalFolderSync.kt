@@ -656,6 +656,8 @@ private fun SharedReaderScreenState.withMigratedBookIds(
         pinnedLibraryBookIds = pinnedLibraryBookIds.migrated(),
         openTabIds = openTabIds.map { it.migrated() }.distinct(),
         activeTabBookId = activeTabBookId?.migrated(),
+        textOpenTabIds = textOpenTabIds.map { it.migrated() }.distinct(),
+        activeTextTabBookId = activeTextTabBookId?.migrated(),
         selectedBookId = selectedBookId?.migrated()
     )
 }
@@ -669,6 +671,8 @@ private fun SharedReaderScreenState.withoutBookIds(bookIds: Set<String>): Shared
         pinnedLibraryBookIds = pinnedLibraryBookIds - bookIds,
         openTabIds = openTabIds.filterNot { it in bookIds },
         activeTabBookId = activeTabBookId?.takeUnless { it in bookIds },
+        textOpenTabIds = textOpenTabIds.filterNot { it in bookIds },
+        activeTextTabBookId = activeTextTabBookId?.takeUnless { it in bookIds },
         selectedBookId = selectedBookId?.takeUnless { it in bookIds }
     )
 }

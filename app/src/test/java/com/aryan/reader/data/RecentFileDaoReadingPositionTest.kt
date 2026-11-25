@@ -110,6 +110,40 @@ class RecentFileDaoReadingPositionTest {
     }
 
     @Test
+    fun `position writes report their affected row count so no caller needs a read-back`() = runTest {
+        dao.insertOrUpdateFile(recentFileEntity())
+
+        val pdfRows = dao.updatePdfReadingPosition(
+            bookId = "book-1",
+            page = 12,
+            progress = 34f,
+            timestamp = 5_000L
+        )
+        val epubRows = dao.updateEpubReadingPosition(
+            bookId = "book-1",
+            cfi = "/3/1:5",
+            chapterIndex = 3,
+            blockIndex = 1,
+            charOffset = 5,
+            progress = 40f,
+            timestamp = 6_000L
+        )
+        val missingPdfRows = dao.updatePdfReadingPosition(
+            bookId = "missing-book",
+            page = 1,
+            progress = 1f,
+            timestamp = 7_000L
+        )
+
+        assertEquals(1, pdfRows)
+        assertEquals(1, epubRows)
+        assertEquals(0, missingPdfRows)
+        val saved = dao.getFileByBookId("book-1")!!
+        assertEquals(12, saved.lastPage)
+        assertEquals(40f, saved.progressPercentage)
+    }
+
+    @Test
     fun `recent file summary exposes persisted cfi and locator fields for reader restore`() = runTest {
         dao.insertOrUpdateFile(recentFileEntity())
         dao.updateEpubReadingPosition(

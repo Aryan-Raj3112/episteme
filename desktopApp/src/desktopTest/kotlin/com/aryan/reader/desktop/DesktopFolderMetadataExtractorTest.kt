@@ -2,6 +2,10 @@ package com.aryan.reader.desktop
 
 import com.aryan.reader.shared.BookItem
 import com.aryan.reader.shared.FileType
+import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry
+import org.apache.commons.compress.archivers.sevenz.SevenZOutputFile
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
 import java.awt.Color
 import java.io.File
 import java.nio.file.Files
@@ -296,6 +300,105 @@ class DesktopFolderMetadataExtractorTest {
     }
 
     @Test
+    fun `comic archive reads comicinfo text metadata`() = withCoverCacheDir { tempDir ->
+        val cbz = File(tempDir, "batman-05.cbz")
+        ZipOutputStream(cbz.outputStream()).use { zip ->
+            zip.putText(
+                "ComicInfo.xml",
+                """
+                    <ComicInfo>
+                      <Title>Court of Owls</Title>
+                      <Series>Batman</Series>
+                      <Number>5</Number>
+                      <Summary>Owls everywhere.</Summary>
+                      <Writer>Scott Snyder</Writer>
+                    </ComicInfo>
+                """.trimIndent()
+            )
+            zip.putBytes("001.png", onePixelPngBytes())
+        }
+        val book = bookFor(cbz, FileType.CBZ)
+
+        val result = DesktopFolderMetadataExtractor.enrichImportedBooks(
+            books = listOf(book),
+            importedBookIds = setOf(book.id)
+        )
+
+        val enriched = result.books.single()
+        assertEquals("Court of Owls", enriched.title)
+        assertEquals("Scott Snyder", enriched.author)
+        assertEquals("Batman", enriched.seriesName)
+        assertEquals(5.0, enriched.seriesIndex)
+        assertEquals("Owls everywhere.", enriched.description)
+        assertEquals("Court of Owls", enriched.originalTitle)
+        assertEquals("Scott Snyder", enriched.originalAuthor)
+        assertTrue(enriched.folderTextMetadataParsed)
+    }
+
+    @Test
+    fun `comic archive reads comicinfo from cb7`() = withCoverCacheDir { tempDir ->
+        val cb7 = File(tempDir, "batman-05.cb7")
+        SevenZOutputFile(cb7).use { archive ->
+            fun put(name: String, bytes: ByteArray) {
+                val entry = SevenZArchiveEntry()
+                entry.name = name
+                entry.size = bytes.size.toLong()
+                archive.putArchiveEntry(entry)
+                archive.write(bytes)
+                archive.closeArchiveEntry()
+            }
+            put("ComicInfo.xml", COMIC_INFO_XML.toByteArray(Charsets.UTF_8))
+            put("001.png", onePixelPngBytes())
+        }
+
+        assertComicInfoExtracted(cb7, FileType.CB7)
+    }
+
+    @Test
+    fun `comic archive reads comicinfo from cbt`() = withCoverCacheDir { tempDir ->
+        val cbt = File(tempDir, "batman-05.cbt")
+        TarArchiveOutputStream(cbt.outputStream()).use { archive ->
+            fun put(name: String, bytes: ByteArray) {
+                val entry = TarArchiveEntry(name)
+                entry.size = bytes.size.toLong()
+                archive.putArchiveEntry(entry)
+                archive.write(bytes)
+                archive.closeArchiveEntry()
+            }
+            put("ComicInfo.xml", COMIC_INFO_XML.toByteArray(Charsets.UTF_8))
+            put("001.png", onePixelPngBytes())
+        }
+
+        assertComicInfoExtracted(cbt, FileType.CBT)
+    }
+
+    @Test
+    fun `comic archive reads comicinfo from cbr`() = withCoverCacheDir { tempDir ->
+        val cbr = File(tempDir, "batman-05.cbr")
+        cbr.writeBytes(Base64.getDecoder().decode(CBR_WITH_COMIC_INFO_FIXTURE))
+
+        assertComicInfoExtracted(cbr, FileType.CBR)
+    }
+
+    private fun assertComicInfoExtracted(archive: File, type: FileType) {
+        val book = bookFor(archive, type)
+
+        val result = DesktopFolderMetadataExtractor.enrichImportedBooks(
+            books = listOf(book),
+            importedBookIds = setOf(book.id)
+        )
+
+        val enriched = result.books.single()
+        assertEquals("Court of Owls", enriched.title)
+        assertEquals("Scott Snyder", enriched.author)
+        assertEquals("Batman", enriched.seriesName)
+        assertEquals(5.0, enriched.seriesIndex)
+        assertEquals("Owls everywhere.", enriched.description)
+        assertEquals("Court of Owls", enriched.originalTitle)
+        assertTrue(enriched.folderTextMetadataParsed)
+    }
+
+    @Test
     fun `opened odt without package thumbnail gets content preview cover`() = withCoverCacheDir { tempDir ->
         val odt = File(tempDir, "opened.odt")
         writeOdt(odt, "Visible ODT content for the thumbnail.")
@@ -445,6 +548,22 @@ class DesktopFolderMetadataExtractorTest {
         putNextEntry(ZipEntry(name))
         write(value)
         closeEntry()
+    }
+
+    private companion object {
+        private const val COMIC_INFO_XML = """
+            <ComicInfo>
+              <Title>Court of Owls</Title>
+              <Series>Batman</Series>
+              <Number>5</Number>
+              <Summary>Owls everywhere.</Summary>
+              <Writer>Scott Snyder</Writer>
+            </ComicInfo>
+        """
+
+        /** RAR5 fixture (ComicInfo.xml + one 1x1 PNG), 484 bytes. */
+        private const val CBR_WITH_COMIC_INFO_FIXTURE =
+            "UmFyIRoHAQDFGjMyAwEAACbRu/0RAwYcBBwARVFAgwAABFJBUlNyYXJzLzAuMTMuMAptYXJrZXItc2NoZW1hPTEKAgcVo0ACAyPUAQTUASDMlT7ZAAANQ29taWNJbmZvLnhtbCICAMBBhC9G3knVh9k+FM8og97ZjcdWiZ0E6z29piKZIY8mPD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0idXRmLTgiPz4KPENvbWljSW5mbz4KICA8VGl0bGU+Q291cnQgb2YgT3dsczwvVGl0bGU+CiAgPFNlcmllcz5CYXRtYW48L1Nlcmllcz4KICA8TnVtYmVyPjU8L051bWJlcj4KICA8U3VtbWFyeT5Pd2xzIGV2ZXJ5d2hlcmUuPC9TdW1tYXJ5PgogIDxXcml0ZXI+U2NvdHQgU255ZGVyPC9Xcml0ZXI+CjwvQ29taWNJbmZvPgqmAVwkOAIDI0QERCBZqVCQAAAHMDAxLnBuZyICAKZ1EE3wvRhp6SYAIaF1Q6sKBxoJoX1XAlnYn5KFApVTiVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYIIZsjo1AwUAAA=="
     }
 
     private fun onePixelPngBytes(): ByteArray {

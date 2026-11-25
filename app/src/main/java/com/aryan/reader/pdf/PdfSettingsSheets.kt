@@ -129,7 +129,7 @@ fun PdfCustomizeToolsSheet(
 private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
     val title = stringResource(tool.titleRes)
     when (tool) {
-        PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.dictionary), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.DICTIONARY -> Icon(painterResource(id = R.drawable.apps), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.SPLIT_VIEW -> Icon(painterResource(id = R.drawable.splitscreen_portrait), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.THEME -> Icon(painterResource(id = R.drawable.palette), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.BRIGHTNESS -> Icon(painterResource(id = R.drawable.contrast), contentDescription = title, modifier = Modifier.size(20.dp))
@@ -143,6 +143,9 @@ private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
         PdfReaderTool.EDIT_MODE -> Icon(Icons.Default.Edit, contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.AUTO_SCROLL -> Icon(painterResource(id = R.drawable.vertical_align_bottom), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.BOOKMARK -> Icon(painterResource(id = R.drawable.bookmark), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.PAGE_MANAGEMENT -> Icon(painterResource(id = R.drawable.draft), contentDescription = title, modifier = Modifier.size(20.dp))
         else -> Icon(Icons.Default.MoreVert, contentDescription = title, modifier = Modifier.size(20.dp))
     }
 }

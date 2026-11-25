@@ -41,12 +41,19 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.aryan.reader.RenderMode
 import com.aryan.reader.SearchNavigationControls
+import com.aryan.reader.applyBookReplacementsToHtmlDocument
+import com.aryan.reader.shared.READER_SEARCH_BLOCK_BOUNDARY_TAGS
+import com.aryan.reader.shared.READER_SEARCH_SKIPPED_TAGS
+import com.aryan.reader.shared.ReaderBookReplacementPreferences
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.SearchResultsPanel
 import com.aryan.reader.shared.ReaderSearchState as SearchState
 import com.aryan.reader.epub.EpubBook
 import com.aryan.reader.epub.contentFilePath
 import com.aryan.reader.paginatedreader.IPaginator
+import com.aryan.reader.paginatedreader.sharedReaderBodyChunks
+import com.aryan.reader.shared.readerSearchMatchQuote
+import com.aryan.reader.shared.readerWordStartMatchOffsets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -64,47 +71,22 @@ private const val EPUB_SEARCH_WINDOW_CHARS = 32_768
 private const val EPUB_SEARCH_SNIPPET_RADIUS = 35
 private const val EPUB_SEARCH_MAX_OVERLAP_CHARS = 4_096
 
-private val epubSearchSkippedTags = setOf("script", "style", "noscript")
-private val epubSearchBlockBoundaryTags = setOf(
-    "address",
-    "article",
-    "aside",
-    "blockquote",
-    "br",
-    "caption",
-    "dd",
-    "div",
-    "dl",
-    "dt",
-    "figcaption",
-    "figure",
-    "footer",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "header",
-    "hr",
-    "li",
-    "main",
-    "nav",
-    "ol",
-    "p",
-    "pre",
-    "section",
-    "table",
-    "td",
-    "th",
-    "tr",
-    "ul"
-)
-
 /**
  * Creates the search implementation for EPUB chapters.
+ *
+ * Chunking and matching come from `shared/` so the hits this produces are in
+ * the reader's own text and chunk spaces: the same chunker that renders the
+ * chapter, the same word-start rule the paginated locator uses, and the same
+ * book replacements the reader applies. Footnote/endnote markup is ordinary
+ * chapter text — what used to break was that each consumer counted occurrences
+ * in a slightly different text, so one extra superscript marker upstream moved
+ * every later hit to a neighbouring page.
  */
-fun createEpubSearcher(epubBook: EpubBook): suspend (String) -> List<SearchResult> = { query ->
+fun createEpubSearcher(
+    epubBook: EpubBook,
+    replacementPreferences: () -> ReaderBookReplacementPreferences = { ReaderBookReplacementPreferences() },
+    replacementFileId: String? = null,
+): suspend (String) -> List<SearchResult> = { query ->
     withContext(Dispatchers.Default) {
         val searchQuery = query.trim()
         if (searchQuery.isBlank()) {
@@ -118,14 +100,24 @@ fun createEpubSearcher(epubBook: EpubBook): suspend (String) -> List<SearchResul
                 if (!htmlFile.exists()) return@forEachIndexed
 
                 val doc = Jsoup.parse(htmlFile, "UTF-8")
-                doc.select("script, style, noscript").remove()
-                val bodyNodes = doc.body().childNodes().toList()
-                val chunks = bodyNodes.chunked(20)
+                // Remove exactly what the reader removes before it chunks the
+                // body, so hit chunk indexes stay in the rendered chunk space.
+                // The skipped tags themselves contribute no text (see
+                // EpubSearchWindow.visit), so they stay for chunk parity.
+                doc.select("script").remove()
+                // The reader renders replacements, so search must see the same
+                // text; otherwise every hit after a replaced phrase is offset.
+                applyBookReplacementsToHtmlDocument(
+                    document = doc,
+                    preferences = replacementPreferences(),
+                    fileId = replacementFileId,
+                )
+                val chunks = sharedReaderBodyChunks(doc.body().childNodes().toList())
                 var occurrenceIndexInChapter = 0
 
-                chunks.forEachIndexed { chunkIndex, chunkNodes ->
+                chunks.forEachIndexed { chunkIndex, chunk ->
                     occurrenceIndexInChapter = appendSearchResultsFromNodes(
-                        nodes = chunkNodes,
+                        nodes = chunk.nodes,
                         query = searchQuery,
                         chapterIndex = chapterIndex,
                         chapterTitle = chapter.title,
@@ -190,7 +182,7 @@ private class EpubSearchWindow(
             is TextNode -> appendNormalizedText(node.wholeText)
             is Element -> {
                 val tagName = node.tagName().lowercase()
-                if (tagName in epubSearchSkippedTags) return
+                if (tagName in READER_SEARCH_SKIPPED_TAGS) return
 
                 if (tagName == "br") {
                     appendNormalizedWhitespace()
@@ -198,7 +190,7 @@ private class EpubSearchWindow(
                 }
 
                 node.childNodes().forEach(::visit)
-                if (tagName in epubSearchBlockBoundaryTags) {
+                if (tagName in READER_SEARCH_BLOCK_BOUNDARY_TAGS) {
                     appendNormalizedWhitespace()
                 }
             }
@@ -245,26 +237,19 @@ private class EpubSearchWindow(
         buffer.delete(0, scanEndExclusive)
     }
 
+    /**
+     * Counts the matches in `[0, scanEndExclusive)` with the shared rule, so the
+     * ordinals recorded here mean the same thing to the paginated locator and
+     * to the WebView painter.
+     */
     private fun scanBuffer(scanEndExclusive: Int) {
-        var searchFrom = 0
-        while (searchFrom < scanEndExclusive) {
-            val matchStart = buffer.indexOfIgnoreCase(query, searchFrom, scanEndExclusive)
-            if (matchStart == -1) break
-
-            if (isWordStart(matchStart)) {
-                addSearchResult(matchStart)
-            }
-            searchFrom = matchStart + 1
-        }
-    }
-
-    private fun isWordStart(matchStart: Int): Boolean {
-        val previousChar = if (matchStart > 0) {
-            buffer[matchStart - 1]
-        } else {
-            previousCharBeforeBuffer
-        }
-        return previousChar == null || !previousChar.isLetterOrDigit()
+        readerWordStartMatchOffsets(
+            text = buffer,
+            query = query,
+            fromIndex = 0,
+            endIndex = scanEndExclusive,
+            charBeforeText = previousCharBeforeBuffer,
+        ).forEach(::addSearchResult)
     }
 
     private fun addSearchResult(matchStart: Int) {
@@ -289,35 +274,46 @@ private class EpubSearchWindow(
                 snippet = annotatedSnippet,
                 query = query,
                 occurrenceIndexInLocation = occurrenceIndex,
-                chunkIndex = chunkIndex
+                chunkIndex = chunkIndex,
+                matchQuote = readerSearchMatchQuote(buffer, matchStart, query.length),
             )
         )
         occurrenceIndex++
     }
 }
 
-private fun CharSequence.indexOfIgnoreCase(
-    query: String,
-    startIndex: Int,
-    matchStartLimitExclusive: Int
-): Int {
-    if (query.isEmpty()) return -1
-    val lastStart = min(length - query.length, matchStartLimitExclusive - 1)
-    if (lastStart < startIndex) return -1
+/**
+ * Paints the query and scrolls to [result]'s own occurrence in the WebView.
+ *
+ * The scroll target is the hit's quote, not only its per-chunk ordinal: the
+ * ordinal is trustworthy only while the searched text and the painted text are
+ * identical, and the quote is what keeps a divergent chapter (footnote/endnote
+ * markup, a replacement, a placeholder) on the intended occurrence.
+ */
+internal fun epubSearchHighlightAndScrollScript(
+    results: List<SearchResult>,
+    result: SearchResult,
+): String {
+    val relativeIndex = results
+        .filter { it.locationInSource == result.locationInSource && it.chunkIndex == result.chunkIndex }
+        .indexOf(result)
+        .coerceAtLeast(0)
 
-    var index = startIndex.coerceAtLeast(0)
-    while (index <= lastStart) {
-        var queryIndex = 0
-        while (
-            queryIndex < query.length &&
-            this[index + queryIndex].equals(query[queryIndex], ignoreCase = true)
-        ) {
-            queryIndex++
+    return buildString {
+        append("javascript:window.CURRENT_SEARCH_QUERY = '")
+        append(escapeJsString(result.query))
+        append("'; window.highlightAllOccurrences(window.CURRENT_SEARCH_QUERY); ")
+        append("window.scrollToChunkOccurrence(")
+        append(result.chunkIndex)
+        append(", ")
+        append(relativeIndex)
+        if (result.matchQuote.isNotBlank()) {
+            append(", '")
+            append(escapeJsString(result.matchQuote))
+            append("'")
         }
-        if (queryIndex == query.length) return index
-        index++
+        append(");")
     }
-    return -1
 }
 
 /**
@@ -349,10 +345,10 @@ fun performSearchResultNavigation(
                 if (result.chunkIndex >= loadedChunkCount) {
                     onVerticalChapterChange(result.locationInSource, result.chunkIndex, result)
                 } else {
-                    webView?.let {
-                        val js = "javascript:window.scrollToOccurrence(${result.occurrenceIndexInLocation});"
-                        it.evaluateJavascript(js, null)
-                    }
+                    webView?.evaluateJavascript(
+                        epubSearchHighlightAndScrollScript(searchState.searchResults, result),
+                        null
+                    )
                     onVerticalScrollToResult(result)
                 }
             }

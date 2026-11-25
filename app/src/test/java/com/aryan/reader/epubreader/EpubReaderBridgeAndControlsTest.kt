@@ -7,6 +7,7 @@ import io.mockk.verify
 import kotlinx.coroutines.CompletableDeferred
 import com.aryan.reader.shared.HighlightStyle
 import com.aryan.reader.shared.ReaderToolbarPreferences
+import com.aryan.reader.shared.ui.SharedMobileEpubToolbarTools
 import com.aryan.reader.shared.ui.SharedToolbarFlatItem
 import com.aryan.reader.shared.ui.SharedToolbarFlatItemType
 import com.aryan.reader.shared.ui.SharedToolbarSection
@@ -281,12 +282,19 @@ class EpubReaderBridgeAndControlsTest {
         assertTrue(ReaderTool.entries.any { it.category == "Overflow Menu" })
         assertEquals("Top Bar", ReaderTool.SCREEN_ORIENTATION.category)
         assertEquals("Top Bar", ReaderTool.BRIGHTNESS.category)
+        // Hidden-by-default reading aid: a bar tool, so a reader can put it in either bar.
+        assertEquals("Top Bar", ReaderTool.PERCEPTION_LINES.category)
+        assertTrue(ReaderTool.PERCEPTION_LINES in SharedMobileEpubToolbarTools)
     }
 
     @Test
     fun `reader toolbar reset defaults match first-run toolbar defaults`() {
         assertEquals(
-            setOf(ReaderTool.SCREEN_ORIENTATION.name, ReaderTool.BRIGHTNESS.name),
+            setOf(
+                ReaderTool.SCREEN_ORIENTATION.name,
+                ReaderTool.BRIGHTNESS.name,
+                ReaderTool.PERCEPTION_LINES.name
+            ),
             defaultReaderHiddenTools()
         )
         assertEquals(ReaderTool.entries.toList(), defaultReaderToolOrder())

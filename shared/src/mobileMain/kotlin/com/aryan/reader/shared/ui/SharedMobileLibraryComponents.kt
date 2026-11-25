@@ -46,7 +46,6 @@ import androidx.compose.material.icons.filled.Book
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderSpecial
@@ -55,9 +54,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.SelectAll
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material3.Button
@@ -68,7 +64,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
@@ -77,11 +73,12 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.InputChip
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
@@ -188,25 +185,23 @@ fun SharedMobileLibraryBookListCardFrame(
     metadata: @Composable RowScope.() -> Unit,
     progress: @Composable () -> Unit,
 ) {
-    ElevatedCard(
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-        elevation = CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 6.dp else 2.dp,
-        ),
+    // Tonal + hairline rather than elevation: the shared visual language (SharedM3Surfaces) keeps
+    // Home, the sections and these rows on one look, and elevation is reserved for things that
+    // actually float.
+    Card(
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = if (isSelected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            sharedCardBorder(0.45f)
+        },
         modifier = modifier
             .fillMaxWidth()
             .graphicsLayer { alpha = if (isAvailable) 1f else 0.8f }
-            .then(
-                if (isSelected) {
-                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                } else {
-                    Modifier
-                },
-            )
-            .clip(MaterialTheme.shapes.large)
+            // Clips the ripple to the card's corners; the Card's own clip sits inside the
+            // clickable in the modifier chain and cannot clip the indication.
+            .clip(sharedCardShape())
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         Row(
@@ -259,24 +254,17 @@ fun SharedMobileShelfListCardFrame(
     modifier: Modifier = Modifier,
     content: @Composable RowScope.() -> Unit,
 ) {
-    ElevatedCard(
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-        elevation = CardDefaults.elevatedCardElevation(
-            defaultElevation = if (isSelected) 8.dp else 2.dp,
-        ),
+    Card(
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = if (isSelected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            sharedCardBorder(0.45f)
+        },
         modifier = modifier
             .fillMaxWidth()
-            .then(
-                if (isSelected) {
-                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large)
-                } else {
-                    Modifier
-                },
-            )
-            .clip(MaterialTheme.shapes.large)
+            .clip(sharedCardShape())
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         Row(
@@ -337,185 +325,6 @@ fun SharedMobileTopBanner(
     }
 }
 
-data class SharedMobileContextualActionLabels(
-    val selectedCount: String,
-    val clearSelection: String,
-    val info: String,
-    val pin: String,
-    val selectAll: String,
-    val delete: String,
-    val moreOptions: String,
-    val tag: String,
-    val addToShelf: String,
-    val save: String,
-    val share: String,
-    val exportAnnotations: String,
-    val clear: String,
-)
-
-@Composable
-fun SharedMobileContextualActionBar(
-    selectedItemCount: Int,
-    labels: SharedMobileContextualActionLabels,
-    onNavigateBack: () -> Unit,
-    onDelete: () -> Unit,
-    compact: Boolean,
-    onInfo: (() -> Unit)? = null,
-    onSave: (() -> Unit)? = null,
-    onShare: (() -> Unit)? = null,
-    onExportAnnotations: (() -> Unit)? = null,
-    onTag: (() -> Unit)? = null,
-    onAddToShelf: (() -> Unit)? = null,
-    onSelectAll: (() -> Unit)? = null,
-    onPin: (() -> Unit)? = null,
-    onClear: (() -> Unit)? = null,
-    tagIcon: @Composable (String?) -> Unit,
-) {
-    SharedMobileTopAppBar(
-        title = {
-            Text(labels.selectedCount, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        },
-        navigationIcon = {
-            IconButton(onClick = onNavigateBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = labels.clearSelection)
-            }
-        },
-        actions = {
-            if (compact) {
-                SharedMobileCompactSelectionActions(
-                    selectedItemCount = selectedItemCount,
-                    labels = labels,
-                    onInfo = onInfo,
-                    onPin = onPin,
-                    onSelectAll = onSelectAll,
-                    onTag = onTag,
-                    onAddToShelf = onAddToShelf,
-                    onSave = onSave,
-                    onShare = onShare,
-                    onExportAnnotations = onExportAnnotations,
-                    onClear = onClear ?: onNavigateBack,
-                    onDelete = onDelete,
-                    tagIcon = tagIcon,
-                )
-            } else {
-                onTag?.let { action ->
-                    IconButton(onClick = action) { tagIcon(labels.tag) }
-                }
-                onPin?.let { action ->
-                    IconButton(onClick = action) {
-                        Icon(Icons.Default.PushPin, contentDescription = labels.pin)
-                    }
-                }
-                if (selectedItemCount == 1) {
-                    onInfo?.let { action ->
-                        IconButton(onClick = action) {
-                            Icon(Icons.Default.Info, contentDescription = labels.info)
-                        }
-                    }
-                    onSave?.let { action ->
-                        IconButton(onClick = action) {
-                            Icon(Icons.Default.Save, contentDescription = labels.save)
-                        }
-                    }
-                    onShare?.let { action ->
-                        IconButton(onClick = action) {
-                            Icon(Icons.Default.Share, contentDescription = labels.share)
-                        }
-                    }
-                }
-                onSelectAll?.let { action ->
-                    IconButton(onClick = action) {
-                        Icon(Icons.Default.SelectAll, contentDescription = labels.selectAll)
-                    }
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = labels.delete)
-                }
-            }
-        },
-    )
-}
-
-@Composable
-internal fun SharedMobileCompactSelectionActions(
-    selectedItemCount: Int,
-    labels: SharedMobileContextualActionLabels,
-    onInfo: (() -> Unit)?,
-    onPin: (() -> Unit)?,
-    onSelectAll: (() -> Unit)?,
-    onTag: (() -> Unit)?,
-    onAddToShelf: (() -> Unit)?,
-    onSave: (() -> Unit)?,
-    onShare: (() -> Unit)?,
-    onExportAnnotations: (() -> Unit)?,
-    onClear: () -> Unit,
-    onDelete: () -> Unit,
-    tagIcon: @Composable (String?) -> Unit,
-) {
-    var showMore by remember { mutableStateOf(false) }
-    if (selectedItemCount == 1) {
-        onInfo?.let { action ->
-            IconButton(onClick = action) { Icon(Icons.Default.Info, contentDescription = labels.info) }
-        }
-    }
-    onPin?.let { action ->
-        IconButton(onClick = action) { Icon(Icons.Default.PushPin, contentDescription = labels.pin) }
-    }
-    onSelectAll?.let { action ->
-        IconButton(onClick = action) { Icon(Icons.Default.SelectAll, contentDescription = labels.selectAll) }
-    }
-    IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = labels.delete) }
-    Box {
-        IconButton(onClick = { showMore = true }) {
-            Icon(Icons.Default.MoreVert, contentDescription = labels.moreOptions)
-        }
-        SharedDropdownMenu(expanded = showMore, onDismissRequest = { showMore = false }) {
-            onTag?.let { action ->
-                DropdownMenuItem(
-                    text = { Text(labels.tag) },
-                    leadingIcon = { tagIcon(null) },
-                    onClick = { showMore = false; action() },
-                )
-            }
-            onAddToShelf?.let { action ->
-                DropdownMenuItem(
-                    text = { Text(labels.addToShelf) },
-                    leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
-                    onClick = { showMore = false; action() },
-                )
-            }
-            if (selectedItemCount == 1) {
-                onSave?.let { action ->
-                    DropdownMenuItem(
-                        text = { Text(labels.save) },
-                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
-                        onClick = { showMore = false; action() },
-                    )
-                }
-                onShare?.let { action ->
-                    DropdownMenuItem(
-                        text = { Text(labels.share) },
-                        leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                        onClick = { showMore = false; action() },
-                    )
-                }
-                onExportAnnotations?.let { action ->
-                    DropdownMenuItem(
-                        text = { Text(labels.exportAnnotations) },
-                        leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
-                        onClick = { showMore = false; action() },
-                    )
-                }
-            }
-            DropdownMenuItem(
-                text = { Text(labels.clear) },
-                leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
-                onClick = { showMore = false; onClear() },
-            )
-        }
-    }
-}
-
 data class SharedMobileLibraryFilterLabels(
     val title: String,
     val fileType: String,
@@ -550,9 +359,12 @@ fun SharedMobileLibraryFilterDialog(
         ) {
             Text(labels.title, style = MaterialTheme.typography.titleLarge)
             Text(labels.fileType, style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            // FlowRow, not a horizontal scroller: a hidden chip is an option the user cannot see
+            // exists. Wrapping shows every file type without a scroll affordance.
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 readableFileTypes.forEach { type ->
                     FilterChip(
@@ -567,9 +379,10 @@ fun SharedMobileLibraryFilterDialog(
                 }
             }
             Text(labels.sourceFolder, style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 FilterChip(
                     selected = IN_APP_STORAGE_SOURCE in currentFilters.sourceFolders,
@@ -593,15 +406,15 @@ fun SharedMobileLibraryFilterDialog(
                 }
             }
             Text(labels.readStatus, style = MaterialTheme.typography.titleMedium)
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ReadStatusFilter.entries.forEach { status ->
-                    FilterChip(
+            // Exclusive choice, so it is a segmented group rather than four toggle-looking chips.
+            val statusOptions = ReadStatusFilter.entries
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                statusOptions.forEachIndexed { index, status ->
+                    SegmentedButton(
                         selected = currentFilters.readStatus == status,
                         onClick = { currentFilters = currentFilters.copy(readStatus = status) },
-                        label = { Text(readStatusLabels[status].orEmpty()) },
+                        shape = SegmentedButtonDefaults.itemShape(index = index, count = statusOptions.size),
+                        label = { Text(readStatusLabels[status].orEmpty(), maxLines = 1) },
                     )
                 }
             }
@@ -625,7 +438,7 @@ fun SharedMobileLibraryFilterDialog(
                             leadingIcon = {
                                 Box(
                                     modifier = Modifier.size(10.dp).background(
-                                        Color(tag.color ?: 0xFF64B5F6.toInt()),
+                                        tag.color?.let(::Color) ?: SharedTagColorFallback,
                                         CircleShape,
                                     ),
                                 )
@@ -660,11 +473,11 @@ internal fun SharedMobileSearchTopBar(
     }
     CenterAlignedTopAppBar(
         title = {
-            OutlinedTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                placeholder = { Text(readerString("action_search", "Search")) },
-                singleLine = true,
+            SharedSearchField(
+                query = query,
+                onQueryChange = onQueryChange,
+                placeholder = readerString("action_search", "Search"),
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                 trailingIcon = {
                     if (query.isNotEmpty()) {
                         IconButton(onClick = { onQueryChange("") }) {
@@ -675,7 +488,6 @@ internal fun SharedMobileSearchTopBar(
                         }
                     }
                 },
-                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
             )
         },
         navigationIcon = {
@@ -684,112 +496,6 @@ internal fun SharedMobileSearchTopBar(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = readerString("content_desc_close_search", "Close search"),
                 )
-            }
-        }
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun SharedMobileContextualTopBar(
-    selectedCount: Int,
-    onClose: () -> Unit,
-    onSelectAll: (() -> Unit)?,
-    onPin: (() -> Unit)?,
-    onAddToShelf: (() -> Unit)? = null,
-    onTag: (() -> Unit)? = null,
-    onRename: (() -> Unit)? = null,
-    onInfo: (() -> Unit)? = null,
-    onSave: (() -> Unit)? = null,
-    onShare: (() -> Unit)? = null,
-    onExportAnnotations: (() -> Unit)? = null,
-    onDelete: (() -> Unit)? = null
-) {
-    var showMoreMenu by remember { mutableStateOf(false) }
-    CenterAlignedTopAppBar(
-        title = { Text(readerString("selected_count", "%1\$d selected", selectedCount)) },
-        navigationIcon = {
-            IconButton(onClick = onClose) {
-                Icon(Icons.Default.Close, contentDescription = "Clear selection")
-            }
-        },
-        actions = {
-            if (onInfo != null && selectedCount == 1) {
-                IconButton(onClick = onInfo) {
-                    Icon(Icons.Default.Info, contentDescription = "Book info")
-                }
-            }
-            if (onPin != null) {
-                IconButton(onClick = onPin) {
-                    Icon(Icons.Default.PushPin, contentDescription = "Pin")
-                }
-            }
-            if (onSelectAll != null) {
-                IconButton(onClick = onSelectAll) {
-                    Icon(Icons.Default.SelectAll, contentDescription = "Select all")
-                }
-            }
-            if (onDelete != null) {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Remove selected")
-                }
-            }
-            Box {
-                IconButton(onClick = { showMoreMenu = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "More actions")
-                }
-                SharedDropdownMenu(
-                    expanded = showMoreMenu,
-                    onDismissRequest = { showMoreMenu = false }
-                ) {
-                    onTag?.let { tag ->
-                        DropdownMenuItem(
-                            text = { Text(readerString("section_tags", "Tags")) },
-                            onClick = { showMoreMenu = false; tag() }
-                        )
-                    }
-                    onAddToShelf?.let { addToShelf ->
-                        DropdownMenuItem(
-                            text = { Text(readerString("desktop_add_to_shelf", "Add to shelf")) },
-                            leadingIcon = { Icon(Icons.Default.Folder, contentDescription = null) },
-                            onClick = { showMoreMenu = false; addToShelf() }
-                        )
-                    }
-                    onRename?.let { rename ->
-                        DropdownMenuItem(
-                            text = { Text(readerString("action_rename", "Rename")) },
-                            onClick = { showMoreMenu = false; rename() }
-                        )
-                    }
-                    if (selectedCount == 1) {
-                        onSave?.let { save ->
-                            DropdownMenuItem(
-                                text = { Text(readerString("action_save_copy_to_device", "Save copy to device")) },
-                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
-                                onClick = { showMoreMenu = false; save() }
-                            )
-                        }
-                        onShare?.let { share ->
-                            DropdownMenuItem(
-                                text = { Text(readerString("action_share_original_file", "Share original file")) },
-                                leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
-                                onClick = { showMoreMenu = false; share() }
-                            )
-                        }
-                        onExportAnnotations?.let { export ->
-                            DropdownMenuItem(
-                                text = { Text(readerString("action_export_annotations", "Export annotations")) },
-                                leadingIcon = { Icon(Icons.Default.Save, contentDescription = null) },
-                                onClick = { showMoreMenu = false; export() }
-                            )
-                        }
-                    }
-                    DropdownMenuItem(
-                        text = { Text(readerString("action_clear", "Clear")) },
-                        leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
-                        onClick = { showMoreMenu = false; onClose() }
-                    )
-                }
             }
         }
     )
@@ -840,54 +546,6 @@ fun SharedMobileLibraryFilterChips(
                 label = { Text(tagsLabel) },
                 trailingIcon = { Icon(Icons.Default.Close, contentDescription = clearContentDescription, modifier = Modifier.size(16.dp)) },
             )
-        }
-    }
-}
-
-@Composable
-internal fun SharedMobileActiveTabs(
-    openTabs: List<BookItem>,
-    onOpenTab: (BookItem) -> Unit,
-    onCloseTab: (BookItem) -> Unit,
-    onCloseAllTabs: () -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("Active tabs", style = MaterialTheme.typography.titleLarge)
-            IconButton(onClick = onCloseAllTabs) {
-                Icon(Icons.Default.Close, contentDescription = "Close all tabs", tint = MaterialTheme.colorScheme.error)
-            }
-        }
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            items(openTabs, key = { "tab_${it.id}" }) { tab ->
-                InputChip(
-                    selected = false,
-                    onClick = { onOpenTab(tab) },
-                    label = {
-                        Text(
-                            text = tab.cardTitle(LocalUsePdfFileNameAsDisplayName.current),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 150.dp)
-                        )
-                    },
-                    trailingIcon = {
-                        IconButton(
-                            onClick = { onCloseTab(tab) },
-                            modifier = Modifier.size(24.dp)
-                        ) {
-                            Icon(Icons.Default.Close, contentDescription = "Close tab", modifier = Modifier.size(16.dp))
-                        }
-                    }
-                )
-            }
         }
     }
 }
@@ -996,15 +654,20 @@ internal fun SharedMobileBookCard(
     onTogglePinned: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    ElevatedCard(
+    Card(
         modifier = modifier
             .graphicsLayer { alpha = if (book.isAvailable) 1f else 0.8f }
-            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large) else Modifier)
-            .clip(MaterialTheme.shapes.large)
+            .clip(sharedCardShape())
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (selected) 6.dp else 2.dp)
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        // Selection is carried by the border and the check badge on the cover; raising the card as
+        // well made a grid of selected cells re-flow visually against unselected ones.
+        border = if (selected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            sharedCardBorder()
+        },
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Box {
@@ -1041,7 +704,6 @@ internal fun SharedMobileBookCard(
                     maxLines = 2,
                     minLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    lineHeight = 20.sp
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -1060,7 +722,7 @@ internal fun SharedMobileBookCard(
 /**
  * Android parity (`BookTagChipsRow` in `SharedComposables.kt`): compact
  * horizontally scrolling tag chips. Tag tint follows the established shared
- * convention (`Color(tag.color ?: 0xFF64B5F6)`).
+ * convention (`SharedTagColorFallback` when a tag stores no colour).
  */
 @Composable
 internal fun SharedMobileBookTagChipsRow(
@@ -1074,7 +736,7 @@ internal fun SharedMobileBookTagChipsRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         tags.forEach { tag ->
-            val tagColor = Color(tag.color ?: 0xFF64B5F6.toInt())
+            val tagColor = tag.color?.let(::Color) ?: SharedTagColorFallback
             Surface(
                 shape = RoundedCornerShape(50),
                 color = tagColor.copy(alpha = 0.14f),
@@ -1113,16 +775,19 @@ internal fun SharedMobileLibraryListItem(
     onLongClick: () -> Unit,
     onTogglePinned: () -> Unit
 ) {
-    ElevatedCard(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer { alpha = if (book.isAvailable) 1f else 0.8f }
-            .then(if (selected) Modifier.border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.large) else Modifier)
-            .clip(MaterialTheme.shapes.large)
+            .clip(sharedCardShape())
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = if (selected) 6.dp else 2.dp),
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        border = if (selected) {
+            BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            sharedCardBorder(0.45f)
+        },
     ) {
         Box {
             Row(
@@ -1253,9 +918,10 @@ internal fun SharedMobileLibraryListItem(
                 // always shows the progress bar + pill, even at 0%. Home grid
                 // keeps the >0f hide rule via the cover badge.
                 val listProgress = (book.progressPercentage ?: 0f).coerceIn(0f, 100f)
-                LinearProgressIndicator(
-                    progress = { listProgress / 100f },
+                SharedProgressBar(
+                    progress = listProgress / 100f,
                     modifier = Modifier.fillMaxWidth(),
+                    barHeight = 4.dp,
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
@@ -1605,9 +1271,11 @@ internal fun SharedMobileFolderCard(
     onRemove: () -> Unit,
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    ElevatedCard(
+    Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = sharedCardShape(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        border = sharedCardBorder(),
     ) {
         Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

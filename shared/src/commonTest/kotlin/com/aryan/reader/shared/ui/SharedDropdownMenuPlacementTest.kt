@@ -76,6 +76,22 @@ class SharedDropdownMenuPlacementTest {
     }
 
     @Test
+    fun keepsMenuOffTheWindowEdgeWhenHorizontalMarginIsSet() {
+        // The tab switcher asks for a 12dp inset, so a flush-left candidate is no longer valid
+        // and placement moves to the window's right edge instead of sitting at x=0.
+        val placement = sharedDropdownMenuPlacement(
+            anchorBounds = rect(0, 200, 100, 240),
+            menuSize = IntSize(300, 300),
+            windowSize = IntSize(1000, 2000),
+            contentOffset = DpOffset(0.dp, 0.dp),
+            density = density,
+            layoutDirection = LayoutDirection.Ltr,
+            horizontalMargin = 12.dp,
+        )
+        assertEquals(IntOffset(1000 - 300 - 24, 240), placement.offset)
+    }
+
+    @Test
     fun mirrorsToAnchorRightEdgeInRtl() {
         // Android benchmark: RTL tries the anchor's right edge first, which lands off-screen
         // (x = 140 - 200 = -60), so it falls back to the anchor's left edge.

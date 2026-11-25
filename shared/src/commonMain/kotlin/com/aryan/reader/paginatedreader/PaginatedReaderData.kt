@@ -41,7 +41,43 @@ import com.aryan.reader.paginatedreader.serialization.TextAlignSerializer
 import com.aryan.reader.paginatedreader.serialization.TextUnitSerializer
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.protobuf.ProtoNumber
+
+/**
+ * Bit set of the box-model properties a rule declared with an explicit reset
+ * (`padding: 0`, `border: none`, `max-width: none`, …).
+ *
+ * The style model stores "unspecified" as `0.dp` / `null` (so an absent value
+ * never overrides an earlier rule during the cascade), which also makes a real
+ * zero indistinguishable from "not declared". These bits restore that
+ * distinction for the properties where a reset is meaningful, without changing
+ * behaviour for styles built before the field existed (mask `0`).
+ */
+object BlockStyleReset {
+    const val MARGIN_TOP = 1L
+    const val MARGIN_RIGHT = 1L shl 1
+    const val MARGIN_BOTTOM = 1L shl 2
+    const val MARGIN_LEFT = 1L shl 3
+    const val PADDING_TOP = 1L shl 4
+    const val PADDING_RIGHT = 1L shl 5
+    const val PADDING_BOTTOM = 1L shl 6
+    const val PADDING_LEFT = 1L shl 7
+    const val BORDER_TOP = 1L shl 8
+    const val BORDER_RIGHT = 1L shl 9
+    const val BORDER_BOTTOM = 1L shl 10
+    const val BORDER_LEFT = 1L shl 11
+    const val RADIUS_TOP_LEFT = 1L shl 12
+    const val RADIUS_TOP_RIGHT = 1L shl 13
+    const val RADIUS_BOTTOM_RIGHT = 1L shl 14
+    const val RADIUS_BOTTOM_LEFT = 1L shl 15
+    const val WIDTH = 1L shl 16
+    const val MAX_WIDTH = 1L shl 17
+    const val MIN_WIDTH = 1L shl 18
+    const val HEIGHT = 1L shl 19
+    const val MAX_HEIGHT = 1L shl 20
+    const val MIN_HEIGHT = 1L shl 21
+}
 
 @Serializable
 data class BlockStyle(
@@ -93,34 +129,64 @@ data class BlockStyle(
     @ProtoNumber(46) val objectPosition: String? = null,
     @ProtoNumber(47) val backgroundImage: String? = null,
     /** Normalized publication `writing-mode` for this block (vertical-rl or null). */
-    @ProtoNumber(48) val writingMode: String? = null
+    @ProtoNumber(48) val writingMode: String? = null,
+    /** Flex `gap` shorthand: space on both axes unless [rowGap]/[columnGap] override it. */
+    @ProtoNumber(49) @Serializable(with = DpSerializer::class) val gap: Dp = Dp.Unspecified,
+    /** Flex `row-gap`: space between items stacked on the block axis. */
+    @ProtoNumber(50) @Serializable(with = DpSerializer::class) val rowGap: Dp = Dp.Unspecified,
+    /** Flex `column-gap`: space between items on the inline axis. */
+    @ProtoNumber(51) @Serializable(with = DpSerializer::class) val columnGap: Dp = Dp.Unspecified,
+    /** Flex `align-self`: this item's cross-axis alignment inside its flex container. */
+    @ProtoNumber(52) val alignSelf: String? = null,
+    /** See [BlockStyleReset]: properties this rule reset to their zero/none value. */
+    @Transient val explicitZero: Long = 0L
 ) {
     fun merge(other: BlockStyle): BlockStyle {
+        // A declared reset wins over an earlier rule even though its value is
+        // also the "unspecified" marker (0.dp / null).
+        fun reset(bit: Long): Boolean = other.explicitZero and bit != 0L
+
+        /** Length whose "not declared" marker is 0, so a reset must be kept. */
+        fun boxed(value: Dp, base: Dp, bit: Long): Dp =
+            if (reset(bit) || value != 0.dp) value else base
+
+        /** Length whose "not declared" marker is [Dp.Unspecified]. */
+        fun sized(value: Dp, base: Dp, bit: Long): Dp =
+            if (reset(bit) || value != Dp.Unspecified) value else base
+
+        /** Length whose "not declared" marker is [Dp.isSpecified] being false. */
+        fun specified(value: Dp, base: Dp, bit: Long): Dp =
+            if (reset(bit) || value.isSpecified) value else base
+
+        /** Optional layer (border): a reset clears it even when it is null. */
+        fun <T> layered(value: T?, base: T?, bit: Long): T? =
+            if (reset(bit)) value else value ?: base
+
         return BlockStyle(
             margin = BoxBorders(
-                top = if (other.margin.top != 0.dp) other.margin.top else this.margin.top,
-                bottom = if (other.margin.bottom != 0.dp) other.margin.bottom else this.margin.bottom,
-                left = if (other.margin.left != 0.dp) other.margin.left else this.margin.left,
-                right = if (other.margin.right != 0.dp) other.margin.right else this.margin.right
+                top = boxed(other.margin.top, margin.top, BlockStyleReset.MARGIN_TOP),
+                bottom = boxed(other.margin.bottom, margin.bottom, BlockStyleReset.MARGIN_BOTTOM),
+                left = boxed(other.margin.left, margin.left, BlockStyleReset.MARGIN_LEFT),
+                right = boxed(other.margin.right, margin.right, BlockStyleReset.MARGIN_RIGHT)
             ),
             padding = BoxBorders(
-                top = if (other.padding.top != 0.dp) other.padding.top else this.padding.top,
-                bottom = if (other.padding.bottom != 0.dp) other.padding.bottom else this.padding.bottom,
-                left = if (other.padding.left != 0.dp) other.padding.left else this.padding.left,
-                right = if (other.padding.right != 0.dp) other.padding.right else this.padding.right
+                top = boxed(other.padding.top, padding.top, BlockStyleReset.PADDING_TOP),
+                bottom = boxed(other.padding.bottom, padding.bottom, BlockStyleReset.PADDING_BOTTOM),
+                left = boxed(other.padding.left, padding.left, BlockStyleReset.PADDING_LEFT),
+                right = boxed(other.padding.right, padding.right, BlockStyleReset.PADDING_RIGHT)
             ),
-            width = if (other.width != Dp.Unspecified) other.width else this.width,
-            maxWidth = if (other.maxWidth != Dp.Unspecified) other.maxWidth else this.maxWidth,
-            height = if (other.height != Dp.Unspecified) other.height else this.height,
+            width = sized(other.width, width, BlockStyleReset.WIDTH),
+            maxWidth = sized(other.maxWidth, maxWidth, BlockStyleReset.MAX_WIDTH),
+            height = sized(other.height, height, BlockStyleReset.HEIGHT),
             backgroundColor = if (other.backgroundColor.isSpecified) other.backgroundColor else this.backgroundColor,
-            borderTop = other.borderTop ?: this.borderTop,
-            borderRight = other.borderRight ?: this.borderRight,
-            borderBottom = other.borderBottom ?: this.borderBottom,
-            borderLeft = other.borderLeft ?: this.borderLeft,
-            borderTopLeftRadius = if (other.borderTopLeftRadius != 0.dp) other.borderTopLeftRadius else this.borderTopLeftRadius,
-            borderTopRightRadius = if (other.borderTopRightRadius != 0.dp) other.borderTopRightRadius else this.borderTopRightRadius,
-            borderBottomRightRadius = if (other.borderBottomRightRadius != 0.dp) other.borderBottomRightRadius else this.borderBottomRightRadius,
-            borderBottomLeftRadius = if (other.borderBottomLeftRadius != 0.dp) other.borderBottomLeftRadius else this.borderBottomLeftRadius,
+            borderTop = layered(other.borderTop, borderTop, BlockStyleReset.BORDER_TOP),
+            borderRight = layered(other.borderRight, borderRight, BlockStyleReset.BORDER_RIGHT),
+            borderBottom = layered(other.borderBottom, borderBottom, BlockStyleReset.BORDER_BOTTOM),
+            borderLeft = layered(other.borderLeft, borderLeft, BlockStyleReset.BORDER_LEFT),
+            borderTopLeftRadius = boxed(other.borderTopLeftRadius, borderTopLeftRadius, BlockStyleReset.RADIUS_TOP_LEFT),
+            borderTopRightRadius = boxed(other.borderTopRightRadius, borderTopRightRadius, BlockStyleReset.RADIUS_TOP_RIGHT),
+            borderBottomRightRadius = boxed(other.borderBottomRightRadius, borderBottomRightRadius, BlockStyleReset.RADIUS_BOTTOM_RIGHT),
+            borderBottomLeftRadius = boxed(other.borderBottomLeftRadius, borderBottomLeftRadius, BlockStyleReset.RADIUS_BOTTOM_LEFT),
             listStyleType = other.listStyleType ?: this.listStyleType,
             listStyleImage = other.listStyleImage ?: this.listStyleImage,
             pageBreakInsideAvoid = this.pageBreakInsideAvoid || other.pageBreakInsideAvoid,
@@ -141,9 +207,9 @@ data class BlockStyle(
             filter = other.filter ?: this.filter,
             borderCollapse = other.borderCollapse ?: this.borderCollapse,
             borderSpacing = if (other.borderSpacing != 0.dp) other.borderSpacing else this.borderSpacing,
-            minWidth = if (other.minWidth.isSpecified) other.minWidth else this.minWidth,
-            minHeight = if (other.minHeight.isSpecified) other.minHeight else this.minHeight,
-            maxHeight = if (other.maxHeight.isSpecified) other.maxHeight else this.maxHeight,
+            minWidth = specified(other.minWidth, minWidth, BlockStyleReset.MIN_WIDTH),
+            minHeight = specified(other.minHeight, minHeight, BlockStyleReset.MIN_HEIGHT),
+            maxHeight = specified(other.maxHeight, maxHeight, BlockStyleReset.MAX_HEIGHT),
             overflow = other.overflow ?: this.overflow,
             breakBefore = other.breakBefore ?: this.breakBefore,
             breakAfter = other.breakAfter ?: this.breakAfter,
@@ -154,7 +220,12 @@ data class BlockStyle(
             objectFit = other.objectFit ?: this.objectFit,
             objectPosition = other.objectPosition ?: this.objectPosition,
             backgroundImage = other.backgroundImage ?: this.backgroundImage,
-            writingMode = other.writingMode ?: this.writingMode
+            writingMode = other.writingMode ?: this.writingMode,
+            gap = if (other.gap.isSpecified) other.gap else this.gap,
+            rowGap = if (other.rowGap.isSpecified) other.rowGap else this.rowGap,
+            columnGap = if (other.columnGap.isSpecified) other.columnGap else this.columnGap,
+            alignSelf = other.alignSelf ?: this.alignSelf,
+            explicitZero = this.explicitZero or other.explicitZero
         )
     }
 }
@@ -372,7 +443,18 @@ data class CssStyle(
     /** Normalized `text-combine-upright` value (`all`, `digits …` or null). Marks tate-chu-yoko runs. */
     @ProtoNumber(21) val textCombine: String? = null,
     /** Normalized `word-break` value (`normal`, `break-all`, … or null). Includes prefixed sources. */
-    @ProtoNumber(22) val wordBreak: String? = null
+    @ProtoNumber(22) val wordBreak: String? = null,
+    /**
+     * Curated CSS declarations of this rule keyed by property name, holding the
+     * CSS-wide keyword that was used (`inherit`, `initial`, `unset`, `revert`)
+     * or null for an ordinary value.
+     *
+     * A keyword cannot be resolved while parsing: it means "whatever the parent
+     * element ended up with", and the parent is only known when the element is
+     * walked. The cascade also needs concrete declarations of the same property
+     * to cancel an earlier keyword, hence the null entries.
+     */
+    @Transient val cascadeDeclarations: Map<String, String?> = emptyMap()
 ) {
     fun merge(other: CssStyle): CssStyle {
         return CssStyle(
@@ -397,10 +479,58 @@ data class CssStyle(
             customProperties = this.customProperties + other.customProperties,
             writingMode = other.writingMode ?: this.writingMode,
             textCombine = other.textCombine ?: this.textCombine,
-            wordBreak = other.wordBreak ?: this.wordBreak
+            wordBreak = other.wordBreak ?: this.wordBreak,
+            cascadeDeclarations = when {
+                other.cascadeDeclarations.isEmpty() -> this.cascadeDeclarations
+                this.cascadeDeclarations.isEmpty() -> other.cascadeDeclarations
+                else -> this.cascadeDeclarations + other.cascadeDeclarations
+            }
         )
     }
 }
+
+/**
+ * True when this box lays its children out with flex semantics: a CSS flex
+ * container, or one of the chant flow boxes the parser builds, whose `display`
+ * carries a `reader-chant-*` marker instead of `flex` (the renderers also match
+ * that marker to recognise a chant score). Every other block box is normal flow,
+ * and `flex-direction` on it is ignored, exactly as a browser ignores it.
+ */
+val BlockStyle.isFlexContainer: Boolean
+    get() {
+        val value = display?.trim()?.lowercase() ?: return false
+        return value == "flex" || value == "inline-flex" || value.startsWith("reader-chant-")
+    }
+
+/**
+ * CSS `flex-direction` with its initial value applied. `display: flex` without an
+ * explicit `flex-direction` is a row, but renderers tested the raw value for
+ * `"row"` and therefore stacked every default flex container as a column.
+ */
+val BlockStyle.resolvedFlexDirection: String
+    get() = flexDirection?.trim()?.lowercase() ?: "row"
+
+/**
+ * Flex spacing along the container's main axis: [rowGap] between stacked items,
+ * [columnGap] between items in a row, each falling back to the [gap] shorthand.
+ */
+val BlockStyle.flexMainAxisGap: Dp
+    get() {
+        val explicit = if (isFlexRow) columnGap else rowGap
+        return if (explicit.isSpecified) explicit else gap
+    }
+
+/** True when this flex container lays its items out along the inline axis. */
+val BlockStyle.isFlexRow: Boolean
+    get() = isFlexContainer && (resolvedFlexDirection == "row" || resolvedFlexDirection == "row-reverse")
+
+/**
+ * True when CSS `visibility` hides this box while keeping its space
+ * (`hidden` and `collapse`). Block containers honor it with an alpha layer;
+ * inline boxes need it applied to their text style, since a hidden icon span
+ * still occupies its glyph cell.
+ */
+fun BlockStyle.isVisuallyHidden(): Boolean = visibility == "hidden" || visibility == "collapse"
 
 /** True when this style requests vertical Japanese layout (`vertical-rl` / `vertical-lr`). */
 fun CssStyle.isVerticalWriting(): Boolean =

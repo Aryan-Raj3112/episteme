@@ -398,6 +398,7 @@ object SharedLibraryEditor {
         if (folderBookIds.isEmpty()) return null
         val rootSourceFolder = folder.books.firstNotNullOfOrNull { it.sourceFolder }
         val remainingTabs = state.openTabIds.filterNot { it in folderBookIds }
+        val remainingTextTabs = state.textOpenTabIds.filterNot { it in folderBookIds }
         return SharedLibraryMutationResult(
             state = state.copy(
                 rawLibraryBooks = state.rawLibraryBooks.filterNot { it.id in folderBookIds },
@@ -406,6 +407,8 @@ object SharedLibraryEditor {
                 pinnedLibraryBookIds = state.pinnedLibraryBookIds - folderBookIds,
                 openTabIds = remainingTabs,
                 activeTabBookId = state.activeTabBookId?.takeUnless { it in folderBookIds },
+                textOpenTabIds = remainingTextTabs,
+                activeTextTabBookId = state.activeTextTabBookId?.takeUnless { it in folderBookIds },
                 syncedFolders = if (folder.parentShelfId == null && rootSourceFolder != null) {
                     state.syncedFolders.filterNot { it.uriString == rootSourceFolder }
                 } else {
@@ -532,25 +535,25 @@ object SharedLibraryEditor {
         state: SharedReaderScreenState,
         name: String,
         bookIds: Iterable<String>,
-        nowMillis: Long = currentTimestamp(),
+        newTagId: () -> String = LibraryTagPolicy::newTagId,
+        selectTagColor: () -> Int = { LibraryTagPolicy.selectTagColor() },
     ): SharedReaderScreenState? {
         val selectedIds = cleanBookIds(bookIds)
         val trimmed = cleanTagName(name) ?: return null
         if (selectedIds.isEmpty()) return null
         val tag = state.allTags.firstOrNull { it.name.equals(trimmed, ignoreCase = true) }
             ?: Tag(
-                id = trimmed.toStableTagId("tag_$nowMillis"),
+                id = newTagId(),
                 name = trimmed,
-                color = 0xFF64B5F6.toInt(),
+                color = selectTagColor(),
             )
         return setTagAssignmentInState(
             state = state.copy(
-                allTags = (state.allTags + tag).distinctBy { it.id }.sortedWith(compareByNatural { it.name })
+                allTags = LibraryTagPolicy.sortTags((state.allTags + tag).distinctBy { it.id })
             ),
             tag = tag,
             bookIds = selectedIds,
             assign = true,
-            nowMillis = nowMillis,
         )
     }
 
@@ -559,7 +562,6 @@ object SharedLibraryEditor {
         tagId: String,
         bookIds: Iterable<String>,
         assign: Boolean,
-        nowMillis: Long = currentTimestamp(),
     ): SharedReaderScreenState? {
         val cleanTagId = tagId.trim().takeIf(String::isNotBlank) ?: return null
         val tag = state.allTags.firstOrNull { it.id == cleanTagId }
@@ -569,29 +571,24 @@ object SharedLibraryEditor {
             ?: return null
         val selectedIds = cleanBookIds(bookIds)
         if (selectedIds.isEmpty()) return null
-        return setTagAssignmentInState(state, tag, selectedIds, assign, nowMillis)
+        return setTagAssignmentInState(state, tag, selectedIds, assign)
     }
 
     fun deleteTagInState(
         state: SharedReaderScreenState,
         tagId: String,
-        nowMillis: Long = currentTimestamp(),
     ): SharedReaderScreenState? {
         val cleanTagId = tagId.trim().takeIf(String::isNotBlank) ?: return null
-        val tag = state.allTags.firstOrNull { it.id == cleanTagId }
-            ?: state.rawLibraryBooks.asSequence()
-                .flatMap { it.tags.asSequence() }
-                .firstOrNull { it.id == cleanTagId }
-            ?: return null
+        // The tag may only exist on a book (stale `allTags`); treat that as deletable.
+        val tagExists = state.allTags.any { it.id == cleanTagId } ||
+            state.rawLibraryBooks.any { book -> book.tags.any { it.id == cleanTagId } }
+        if (!tagExists) return null
         val affectedIds = state.rawLibraryBooks
             .filter { book -> book.tags.any { it.id == cleanTagId } }
             .mapTo(mutableSetOf()) { it.id }
         fun List<BookItem>.updated(): List<BookItem> = map { book ->
             if (book.id in affectedIds) {
-                book.copy(
-                    tags = book.tags.filterNot { it.id == cleanTagId },
-                    metadataModifiedTimestamp = maxOf(book.metadataModifiedTimestamp, nowMillis),
-                )
+                book.copy(tags = book.tags.filterNot { it.id == cleanTagId })
             } else {
                 book
             }
@@ -610,12 +607,9 @@ object SharedLibraryEditor {
                     )
                 },
             allTags = state.allTags.filterNot { it.id == cleanTagId },
+            // Android's `MainViewModel.deleteTag` is silent; keep the iOS sheet
+            // dismissal as the only feedback so both platforms behave the same.
             libraryFilters = state.libraryFilters.copy(tagIds = state.libraryFilters.tagIds - cleanTagId),
-            bannerMessage = BannerMessage.string(
-                "banner_tag_deleted",
-                "Deleted tag \"%1\$s\".",
-                tag.name,
-            ),
         )
     }
 
@@ -624,19 +618,15 @@ object SharedLibraryEditor {
         tag: Tag,
         bookIds: Set<String>,
         assign: Boolean,
-        nowMillis: Long,
     ): SharedReaderScreenState {
         fun BookItem.updated(): BookItem {
             if (id !in bookIds) return this
             val nextTags = if (assign) {
-                (tags + tag).distinctBy { it.id }.sortedWith(compareByNatural { it.name })
+                LibraryTagPolicy.sortTags((tags + tag).distinctBy { it.id })
             } else {
                 tags.filterNot { it.id == tag.id }
             }
-            return if (nextTags == tags) this else copy(
-                tags = nextTags,
-                metadataModifiedTimestamp = maxOf(metadataModifiedTimestamp, nowMillis),
-            )
+            return if (nextTags == tags) this else copy(tags = nextTags)
         }
         fun List<BookItem>.updated(): List<BookItem> = map { it.updated() }
         return state.copy(
@@ -735,21 +725,20 @@ object SharedLibraryEditor {
         shelfRecords: List<ShelfRecord>,
         shelfRefs: List<BookShelfRef>,
         tagName: String,
-        nowMillis: Long = currentTimestamp()
     ): SharedLibraryMutationResult? {
         val selected = cleanBookIds(state.selectedBookIds)
         val trimmed = cleanTagName(tagName) ?: return null
         if (selected.isEmpty()) return null
         val existingTag = state.allTags.firstOrNull { it.name.equals(trimmed, ignoreCase = true) }
         val tag = existingTag ?: Tag(
-            id = trimmed.toStableTagId("tag_$nowMillis"),
+            id = LibraryTagPolicy.newTagId(),
             name = trimmed,
-            color = 0xFF64B5F6.toInt()
+            color = LibraryTagPolicy.selectTagColor()
         )
-        val allTags = (state.allTags + tag).distinctBy { it.id }.sortedWith(compareByNatural { it.name })
+        val allTags = LibraryTagPolicy.sortTags((state.allTags + tag).distinctBy { it.id })
         val books = state.rawLibraryBooks.map { book ->
             if (book.id in selected && book.tags.none { it.id == tag.id }) {
-                book.copy(tags = (book.tags + tag).sortedWith(compareByNatural { it.name }))
+                book.copy(tags = LibraryTagPolicy.sortTags(book.tags + tag))
             } else {
                 book
             }
@@ -841,21 +830,23 @@ object SharedLibraryEditor {
     }
 }
 
-fun parseTagList(input: String, knownTags: List<Tag>, nowMillis: Long = currentTimestamp()): List<Tag> {
+/**
+ * Parses the comma-separated tag field used by the desktop metadata editor.
+ *
+ * Existing tags are reused case-insensitively; new ones get an opaque UUID id so two
+ * different names can never collide on the same name-derived slug.
+ */
+fun parseTagList(input: String, knownTags: List<Tag>): List<Tag> {
     return input.split(',')
         .map { it.trim() }
         .filter { it.isNotBlank() }
         .distinctBy { it.lowercase() }
-        .mapIndexed { index, name ->
+        .map { name ->
             knownTags.firstOrNull { it.name.equals(name, ignoreCase = true) }
                 ?: Tag(
-                    id = name.toStableTagId("tag_${nowMillis + index}"),
+                    id = LibraryTagPolicy.newTagId(),
                     name = name,
                     color = 0xFF64B5F6.toInt()
                 )
         }
-}
-
-private fun String.toStableTagId(fallback: String): String {
-    return lowercase().replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { fallback }
 }

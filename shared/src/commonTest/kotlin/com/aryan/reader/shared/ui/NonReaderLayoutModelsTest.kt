@@ -164,12 +164,52 @@ class NonReaderLayoutModelsTest {
     }
 
     @Test
-    fun `unified continue reading prefers most recently positioned active book`() {
+    fun `unified library keeps pinned books first without disturbing the sort`() {
+        val alpha = book("alpha", title = "Alpha")
+        val beta = book("beta", title = "Beta")
+        val gamma = book("gamma", title = "Gamma")
+
+        val visible = mobileUnifiedLibraryBooks(
+            books = listOf(beta, gamma, alpha),
+            filter = MobileUnifiedLibraryFilter.ALL,
+            query = "",
+            sortOrder = SortOrder.TITLE_ASC,
+            pinnedBookIds = setOf("gamma"),
+        )
+
+        assertEquals(listOf("gamma", "alpha", "beta"), visible.map { it.id })
+        assertEquals(
+            listOf("alpha", "beta", "gamma"),
+            mobileUnifiedLibraryBooks(
+                books = listOf(beta, gamma, alpha),
+                filter = MobileUnifiedLibraryFilter.ALL,
+                query = "",
+                sortOrder = SortOrder.TITLE_ASC,
+            ).map { it.id },
+            "an empty pin set must leave the sort untouched",
+        )
+    }
+
+    @Test
+    fun `unified continue reading follows the last opened book whatever its progress`() {
         val older = book(id = "older", displayName = "Older.epub", progress = 20f, positionModified = 20L)
         val newer = book(id = "newer", displayName = "Newer.epub", progress = 80f, positionModified = 40L)
         val finished = book(id = "finished", displayName = "Finished.epub", progress = 100f, positionModified = 80L)
 
-        assertEquals(newer, mobileUnifiedContinueReadingBook(listOf(older, newer, finished)))
+        assertEquals(finished, mobileUnifiedContinueReadingBook(listOf(older, newer, finished)))
+    }
+
+    @Test
+    fun `unified continue reading picks a book opened at zero progress over an older one in progress`() {
+        val partway = book(id = "partway", displayName = "Partway.epub", progress = 42f, positionModified = 20L)
+        val justOpened = book(
+            id = "just-opened",
+            displayName = "JustOpened.epub",
+            progress = 0f,
+            positionModified = 90L,
+        )
+
+        assertEquals(justOpened, mobileUnifiedContinueReadingBook(listOf(partway, justOpened)))
     }
 
     @Test
@@ -580,15 +620,6 @@ class NonReaderLayoutModelsTest {
             SharedReaderScreenState(
                 rawLibraryBooks = listOf(activeTab.copy(isRecent = false), inProgress, pinned, recent),
                 pinnedHomeBookIds = setOf(pinned.id),
-            ).mobileRecentBooks().map { it.id },
-        )
-        assertEquals(
-            listOf(pinned.id, inProgress.id),
-            SharedReaderScreenState(
-                rawLibraryBooks = listOf(activeTab.copy(isRecent = false), inProgress, pinned, recent),
-                recentBooks = listOf(inProgress, pinned, recent),
-                pinnedHomeBookIds = setOf(pinned.id),
-                recentFilesLimit = 2,
             ).mobileRecentBooks().map { it.id },
         )
         assertEquals(listOf(recent.id), layout.selectedBooks.map { it.id })

@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.File
 
 class GlobalSearchFileStorageTest {
 
@@ -49,6 +50,47 @@ class GlobalSearchFileStorageTest {
         store.fileFor("bad").writeText("{not json")
         assertNull(store.loadBook("bad"))
         assertTrue(store.fileFor("bad").exists().not())
+    }
+
+    @Test
+    fun `storedBookIds lists every saved sidecar and skips corrupt files`() {
+        val store = storage()
+        store.saveBook(persisted("one"))
+        store.saveBook(persisted("two"))
+        store.fileFor("broken").writeText("{not json")
+
+        assertEquals(setOf("one", "two"), store.storedBookIds())
+    }
+
+    @Test
+    fun `metadata outlives a damaged payload and is deleted with the book`() {
+        val store = storage()
+        store.saveBook(persisted("book-1"))
+        store.fileFor("book-1").writeText("{not json")
+
+        // The header sidecar answers freshness without touching the payload.
+        assertEquals("h1", store.loadMetadata("book-1")!!.contentHash)
+        assertEquals(setOf("book-1"), store.storedBookIds())
+
+        store.deleteBook("book-1")
+        assertNull(store.loadMetadata("book-1"))
+        assertTrue(store.storedBookIds().isEmpty())
+        assertTrue(store.loadBook("book-1") == null)
+    }
+
+    @Test
+    fun `payload without a metadata sidecar still lists and gains one`() {
+        val store = storage()
+        store.saveBook(persisted("legacy"))
+        val metaFiles = File(temp.root, GlobalSearchFileStorage.INDEX_DIR_NAME)
+            .listFiles { file -> file.name.endsWith(GlobalSearchFileStorage.META_SUFFIX) }
+            .orEmpty()
+        assertEquals(1, metaFiles.size)
+        metaFiles.forEach { it.delete() }
+
+        assertEquals(setOf("legacy"), store.storedBookIds())
+        assertEquals("h1", store.loadMetadata("legacy")!!.contentHash)
+        assertTrue(store.fileFor("legacy").exists())
     }
 
     @Test

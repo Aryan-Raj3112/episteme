@@ -202,6 +202,30 @@ class SharedGlobalSearchPolicyTest {
     }
 }
 
+/** Mirrors file stores: metadata is a header read, never a payload decode. */
+private class MetadataRecordingStorage : SharedGlobalSearchStorage {
+    val books = mutableMapOf<String, SharedGlobalSearchPersistedBookIndex>()
+    var loadBookCalls = 0
+
+    override fun saveBook(index: SharedGlobalSearchPersistedBookIndex) {
+        books[index.bookId] = index
+    }
+
+    override fun loadBook(bookId: String): SharedGlobalSearchPersistedBookIndex? {
+        loadBookCalls++
+        return books[bookId]
+    }
+
+    override fun loadMetadata(bookId: String): SharedGlobalSearchPersistedMetadata? =
+        books[bookId]?.toMetadata()
+
+    override fun deleteBook(bookId: String) {
+        books.remove(bookId)
+    }
+
+    override fun storedBookIds(): Set<String> = books.keys.toSet()
+}
+
 class SharedGlobalSearchCoordinatorTest {
 
     @Test
@@ -272,6 +296,44 @@ class SharedGlobalSearchCoordinatorTest {
         val result = coordinator.search("history").single()
         assertEquals(2, result.matchingChunkCount)
         assertEquals(listOf(0, 2), result.hits.mapNotNull { it.pageIndex }.sorted())
+    }
+
+    @Test
+    fun `resident set stays inside budget and reloads evicted books for a query`() {
+        val storage = InMemorySharedGlobalSearchStorage()
+        // Each book holds 10 chars, so a 20-char budget fits exactly two.
+        val coordinator = SharedGlobalSearchCoordinator(storage, maxResidentChars = 20)
+        val ids = listOf("b1", "b2", "b3")
+        ids.forEach { id ->
+            coordinator.upsertBookChunks(id, "h1", listOf(chunk("harvest123")))
+        }
+        assertEquals(2, coordinator.bookCount())
+        assertTrue(coordinator.residentCharCount() <= 20)
+        // Resident-only search cannot see the evicted book...
+        assertEquals(2, coordinator.search("harvest").size)
+        // ...but a library scan reloads it from storage without breaking the budget.
+        val results = coordinator.searchAcrossLibrary("harvest", ids)
+        assertEquals(ids, results.map { it.bookId }.sorted())
+        assertEquals(2, coordinator.bookCount())
+        assertTrue(coordinator.residentCharCount() <= 20)
+    }
+
+    @Test
+    fun `freshness checks read metadata instead of payloads`() {
+        val storage = MetadataRecordingStorage()
+        val coordinator = SharedGlobalSearchCoordinator(storage)
+        coordinator.upsertBookChunks("b1", "h1", listOf(chunk("hello world")))
+        coordinator.forget("b1")
+        assertEquals(0, storage.loadBookCalls)
+
+        assertFalse(coordinator.needsIndex("b1", "h1"))
+        assertEquals("h1", coordinator.metadataOf("b1")?.contentHash)
+        assertEquals(0, storage.loadBookCalls)
+        assertTrue(coordinator.needsIndex("b1", "h2"))
+
+        // The query path is the only one allowed to build a payload.
+        assertEquals(1, coordinator.searchAcrossLibrary("hello", listOf("b1")).size)
+        assertEquals(1, storage.loadBookCalls)
     }
 
     @Test

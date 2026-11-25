@@ -11,7 +11,7 @@ import com.aryan.reader.shared.pdf.SharedPdfHighlighterPalette
 import com.aryan.reader.shared.reader.ReaderPageSpreadMode
 import com.aryan.reader.shared.reader.ReaderReadingMode
 import com.aryan.reader.shared.reader.ReaderSettings
-import com.aryan.reader.shared.reader.readerFontFamilyCss
+import com.aryan.reader.shared.reader.readerWebFontCss
 import com.aryan.reader.shared.reader.SharedReaderTextAlign
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -90,16 +90,22 @@ class ReaderAppearanceModelsTest {
         // FormatSettings maps to "Serif"/"Sans"/"Mono". readerFontFamilyCss
         // only matched the canonical names, so Original->Lora stayed on
         // system-ui in the WebView while the native preview changed.
-        val serif = ReaderSettings(fontFamily = "Serif").readerFontFamilyCss()
-        assertEquals(serif, ReaderSettings(fontFamily = "Merriweather").readerFontFamilyCss())
-        assertEquals(serif, ReaderSettings(fontFamily = "Lora").readerFontFamilyCss())
-        val sans = ReaderSettings(fontFamily = "Sans").readerFontFamilyCss()
-        assertEquals(sans, ReaderSettings(fontFamily = "Lato").readerFontFamilyCss())
-        assertEquals(sans, ReaderSettings(fontFamily = "Lexend").readerFontFamilyCss())
-        val mono = ReaderSettings(fontFamily = "Mono").readerFontFamilyCss()
-        assertEquals(mono, ReaderSettings(fontFamily = "Roboto Mono").readerFontFamilyCss())
-        val default = ReaderSettings(fontFamily = "Default").readerFontFamilyCss()
-        assertEquals(default, ReaderSettings(fontFamily = "Original").readerFontFamilyCss())
+        // source = null exercises the no-file fallback identically on every
+        // platform; a platform that can supply the bundled face uses
+        // 'ReaderBundledFont' instead (see ReaderWebFontCssTest).
+        fun family(fontFamily: String) = ReaderSettings(fontFamily = fontFamily)
+            .readerWebFontCss(source = null)
+            .familyCss
+        val serif = family("Serif")
+        assertEquals(serif, family("Merriweather"))
+        assertEquals(serif, family("Lora"))
+        val sans = family("Sans")
+        assertEquals(sans, family("Lato"))
+        assertEquals(sans, family("Lexend"))
+        val mono = family("Mono")
+        assertEquals(mono, family("Roboto Mono"))
+        val default = family("Default")
+        assertEquals(default, family("Original"))
         assertTrue(serif.contains("Georgia"))
         assertTrue(sans.contains("Inter"))
         assertTrue(mono.contains("Roboto Mono"))

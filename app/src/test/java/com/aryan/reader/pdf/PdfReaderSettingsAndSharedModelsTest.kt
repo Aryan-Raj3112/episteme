@@ -214,6 +214,34 @@ class PdfReaderSettingsAndSharedModelsTest {
         )
     }
 
+    /**
+     * `PdfAnnotationLayer`'s `drawData` runs for every annotation on every frame. Building the
+     * `Stroke` there allocated a 32 B spec per annotation per frame; the spec only depends on the
+     * annotation, so it is built once with the render data and reused
+     * (docs/crashlytics-triage.md#163).
+     */
+    @Test
+    fun `annotation layer does not build a stroke on the per-frame draw path`() {
+        val rendering = normalizeWhitespace(readSourceFile("src/main/java/com/aryan/reader/pdf/PdfPageRendering.kt"))
+        val drawData = rendering
+            .substringAfter("fun drawData(data: AnnotationRenderData)")
+            .substringBefore("staticRenderData.forEach")
+
+        assertFalse(
+            "drawData runs per annotation per frame and must not allocate a Stroke",
+            drawData.contains("Stroke(")
+        )
+        assertTrue(drawData.contains("style = data.stroke"))
+
+        val resources = normalizeWhitespace(readSourceFile("src/main/java/com/aryan/reader/pdf/PdfPageRenderResources.kt"))
+        assertTrue(
+            "Standard must own its stroke so construction builds it once",
+            resources.contains(
+                "val stroke: Stroke = Stroke(width = strokeWidth, cap = cap, join = StrokeJoin.Round)"
+            )
+        )
+    }
+
     private fun normalizeWhitespace(source: String): String =
         source.replace(Regex("\\s+"), " ")
 

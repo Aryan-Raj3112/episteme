@@ -45,7 +45,11 @@ class MobiParser(private val context: Context) {
         val title: String?,
         val author: String?,
         val publisher: String?,
-        val rawHtmlContent: String?, // This is the full HTML of the book
+        // Mutable so the importer can drop the whole-book HTML as soon as it has encoded it:
+        // the String is a full copy of the book and stayed reachable through the entire chapter
+        // loop, where a chapter's serialization already lost a small allocation on a 256 MB heap
+        // (docs/crashlytics-triage.md#162).
+        var rawHtmlContent: String?, // This is the full HTML of the book
         val resources: Array<ParsedMobiResource>,
         val toc: Array<ParsedMobiTocEntry>?,
         val coverImageResourceUid: Int // Use -1 if not found
@@ -218,53 +222,45 @@ class MobiParser(private val context: Context) {
             }
 
         // --- CHAPTER SPLITTING LOGIC ---
-        // Only the chapter list below consumes this, so a metadata-only import skips it entirely.
-        val chapterHtmlParts = if (parseContent) {
-            val rawHtml = parsedData.rawHtmlContent
+        // Only the chapter list below consumes the whole-book HTML, so a metadata-only import
+        // skips all of it. While the chapters are being built, though, the book must not stay
+        // resident as a String: that is a second full copy of the text, and every chapter used to
+        // be decoded up front as a third one. Serializing a chapter with all of that still alive
+        // is what lost a 40-byte allocation on a 256 MB heap (docs/crashlytics-triage.md#162).
+        // Both branches therefore drop the book as soon as they have the bytes (or parts) they
+        // need, and decode one chapter at a time.
+        val epubChapters = if (parseContent) {
             val sortedToc = parsedData.toc?.sorted()
             if (!sortedToc.isNullOrEmpty()) {
                 Timber.d("Splitting content using TOC (${sortedToc.size} entries).")
-                splitMobiChaptersByFilePosition(rawHtml, sortedToc)
+                val rawHtmlBytes = parsedData.takeRawHtmlBytes()
+                splitMobiChapterSlices(sortedToc, rawHtmlBytes.size).mapIndexedNotNull { index, slice ->
+                    // Decoded here rather than inside buildMobiChapter's try: a TOC position past
+                    // the end of the flow must fail the import, as the old split did, instead of
+                    // silently dropping chapters.
+                    buildMobiChapter(
+                        chapterIndex = index,
+                        chapterHtml = slice.decode(rawHtmlBytes),
+                        title = slice.title,
+                        extractionDir = extractionDir,
+                        cssFlowMap = cssFlowMap,
+                        sequentialImageMap = sequentialImageMap
+                    )
+                }
             } else {
                 Timber.d("No TOC found. Falling back to splitting by <mbp:pagebreak/>.")
-                // String-side split, so a book without a TOC never encodes its HTML at all.
-                rawHtml.split("(?i)<mbp:pagebreak\\s*/>".toRegex())
-                    .mapIndexedNotNull { index, html ->
-                        html.takeIf(String::isNotBlank)?.let { it to "Chapter ${index + 1}" }
-                    }
+                buildMobiChaptersWithoutToc(
+                    rawHtml = parsedData.takeRawHtml(),
+                    extractionDir = extractionDir,
+                    cssFlowMap = cssFlowMap,
+                    sequentialImageMap = sequentialImageMap
+                )
             }
         } else {
             emptyList()
         }
 
-        Timber.d("Successfully split content into ${chapterHtmlParts.size} chapters.")
-
-        val epubChapters = if (parseContent) {
-            chapterHtmlParts.mapIndexedNotNull { index, (chapterHtml, title) ->
-                try {
-                    // One DOM per chapter: it is serialized once for the chapter file, and the
-                    // plain text comes from the same tree. The old code re-parsed the string it had
-                    // just serialized, building a second full DOM per chapter for nothing
-                    // (docs/crashlytics-triage.md#116).
-                    val doc = rewriteMobiChapterDocument(chapterHtml, cssFlowMap, sequentialImageMap)
-                    val rewrittenHtml = doc.outerHtml()
-                    val chapterFileName = "chapter_$index.html"
-                    val chapterFile = File(extractionDir, chapterFileName)
-                    chapterFile.writeText(rewrittenHtml)
-                    EpubChapter(
-                        chapterId = "mobi_chapter_$index",
-                        title = title,
-                        absPath = chapterFileName,
-                        htmlFilePath = chapterFileName,
-                        htmlContent = rewrittenHtml,
-                        plainTextContent = doc.text()
-                    )
-                } catch (e: Exception) {
-                    Timber.e(e, "Failed to process split chapter $index")
-                    null
-                }
-            }
-        } else emptyList()
+        Timber.d("Successfully built ${epubChapters.size} chapters.")
 
         val images = parsedData.resources
             .filter { it.mediaType.startsWith("image/") }
@@ -302,17 +298,23 @@ class MobiParser(private val context: Context) {
         Timber.d("Final EpubBook created. CSS map size: ${finalBook.css.size}, Image count: ${finalBook.images.size}")
         return@withContext finalBook
     }
+
+    /**
+     * Returns the concatenated flow and clears it from [ParsedMobiData] first, so the parsed-data
+     * object stops retaining the book for the rest of the import. Callers therefore keep only the
+     * representation they still need: the encoded bytes for the TOC split, or this String for the
+     * pagebreak fallback (docs/crashlytics-triage.md#162).
+     */
+    private fun ParsedMobiData.takeRawHtml(): String {
+        val html = rawHtmlContent ?: error("MOBI parser returned no HTML content")
+        rawHtmlContent = null
+        return html
+    }
+
+    /** UTF-8 bytes of the concatenated flow, with the source String released by [takeRawHtml]. */
+    private fun ParsedMobiData.takeRawHtmlBytes(): ByteArray = takeRawHtml().toByteArray(Charsets.UTF_8)
 }
 
-/**
- * Splits the concatenated MOBI flow into chapters at the NCX file positions, which are byte offsets
- * into that flow (not character offsets, so the text has to be encoded once).
- *
- * The encode is deliberately scoped to this call: it is a second full copy of the book's HTML — a
- * 15 MB array for a 15 MB book — and it must not stay reachable while the chapters are rewritten
- * and parsed afterwards (docs/crashlytics-triage.md#91). Decoding each chapter straight out of the
- * array also drops the per-chapter `sliceArray` copy the split used to make.
- */
 /**
  * Parses one chapter and rewrites its asset references to the paths used after extraction.
  *
@@ -363,15 +365,106 @@ internal fun rewriteMobiChapterDocument(
     return doc
 }
 
-internal fun splitMobiChaptersByFilePosition(
-    rawHtml: String,
-    sortedToc: List<MobiParser.ParsedMobiTocEntry>
-): List<Pair<String, String>> {
-    val rawHtmlBytes = rawHtml.toByteArray(Charsets.UTF_8)
-    return sortedToc.mapIndexedNotNull { index, entry ->
-        val startByte = entry.filePosition
-        val endByte = if (index + 1 < sortedToc.size) sortedToc[index + 1].filePosition else rawHtmlBytes.size
-        if (startByte >= endByte) return@mapIndexedNotNull null
-        String(rawHtmlBytes, startByte, endByte - startByte, Charsets.UTF_8) to entry.title
+/**
+ * Parses one chapter, writes its rewritten HTML next to the other extracted files, and returns
+ * the in-memory chapter the reader uses.
+ *
+ * One DOM per chapter: it is serialized once for the chapter file, and the plain text comes from
+ * the same tree (docs/crashlytics-triage.md#116).
+ */
+private fun buildMobiChapter(
+    chapterIndex: Int,
+    chapterHtml: String,
+    title: String,
+    extractionDir: File,
+    cssFlowMap: Map<String, String>,
+    sequentialImageMap: Map<Int, String>
+): EpubChapter? {
+    return try {
+        val doc = rewriteMobiChapterDocument(chapterHtml, cssFlowMap, sequentialImageMap)
+        val rewrittenHtml = doc.outerHtml()
+        val chapterFileName = "chapter_$chapterIndex.html"
+        File(extractionDir, chapterFileName).writeText(rewrittenHtml)
+        EpubChapter(
+            chapterId = "mobi_chapter_$chapterIndex",
+            title = title,
+            absPath = chapterFileName,
+            htmlFilePath = chapterFileName,
+            htmlContent = rewrittenHtml,
+            plainTextContent = doc.text()
+        )
+    } catch (e: Exception) {
+        Timber.e(e, "Failed to process split chapter $chapterIndex")
+        null
     }
 }
+
+private val mobiPagebreakRegex = Regex("(?i)<mbp:pagebreak\\s*/>")
+
+/**
+ * Splits a TOC-less flow on `<mbp:pagebreak/>` and builds the chapters one at a time.
+ *
+ * The old `rawHtml.split(regex).mapIndexedNotNull` materialized every chapter before the first
+ * DOM was built; only one decoded chapter is alive here (docs/crashlytics-triage.md#162). Titles
+ * still use the position in the split (blank parts included) while file names use the kept-chapter
+ * position — the numbering the old two-pass shape produced.
+ */
+internal fun buildMobiChaptersWithoutToc(
+    rawHtml: String,
+    extractionDir: File,
+    cssFlowMap: Map<String, String>,
+    sequentialImageMap: Map<Int, String>
+): List<EpubChapter> {
+    val chapters = mutableListOf<EpubChapter>()
+    var partIndex = 0
+    var chapterIndex = 0
+
+    fun addPart(chapterHtml: String) {
+        if (chapterHtml.isNotBlank()) {
+            buildMobiChapter(
+                chapterIndex = chapterIndex,
+                chapterHtml = chapterHtml,
+                title = "Chapter ${partIndex + 1}",
+                extractionDir = extractionDir,
+                cssFlowMap = cssFlowMap,
+                sequentialImageMap = sequentialImageMap
+            )?.let(chapters::add)
+            chapterIndex++
+        }
+        partIndex++
+    }
+
+    // `split` always yields the text before the first marker and after the last one, even when
+    // the flow has no marker at all; the trailing part is added after the loop.
+    var partStart = 0
+    for (match in mobiPagebreakRegex.findAll(rawHtml)) {
+        addPart(rawHtml.substring(partStart, match.range.first))
+        partStart = match.range.last + 1
+    }
+    addPart(rawHtml.substring(partStart))
+    return chapters
+}
+
+/**
+ * One chapter of the concatenated flow, addressed by its byte range.
+ *
+ * Byte offsets are what the NCX carries, so the flow has to be encoded once; keeping the slices
+ * separate from the encoded array lets the caller release the whole-book String and decode one
+ * chapter at a time (docs/crashlytics-triage.md#91, #162).
+ */
+internal data class MobiChapterSlice(val title: String, val startByte: Int, val length: Int)
+
+/** Maps the TOC's byte positions to the chapter slices they delimit. */
+internal fun splitMobiChapterSlices(
+    sortedToc: List<MobiParser.ParsedMobiTocEntry>,
+    totalByteCount: Int
+): List<MobiChapterSlice> = sortedToc.mapIndexedNotNull { index, entry ->
+    val startByte = entry.filePosition
+    val endByte = if (index + 1 < sortedToc.size) sortedToc[index + 1].filePosition else totalByteCount
+    if (startByte >= endByte) return@mapIndexedNotNull null
+    MobiChapterSlice(entry.title, startByte, endByte - startByte)
+}
+
+/** Decodes just this chapter out of the flow's UTF-8 bytes. */
+internal fun MobiChapterSlice.decode(bytes: ByteArray): String =
+    String(bytes, startByte, length, Charsets.UTF_8)

@@ -14,6 +14,7 @@ private val DefaultReaderHiddenToolIds: Set<String>
     get() = setOf(
         ReaderTool.BRIGHTNESS.id,
         ReaderTool.SCREEN_ORIENTATION.id,
+        ReaderTool.PERCEPTION_LINES.id,
     )
 
 private val LegacyReaderBottomToolIdsWithoutTts: Set<String>
@@ -30,13 +31,17 @@ private val LegacyReaderBottomToolIdsWithTts: Set<String>
 private val LegacyReaderBottomToolIdsWithAi: Set<String>
     get() = LegacyReaderBottomToolIdsWithoutTts + ReaderTool.AI_FEATURES.id
 
-/** Android benchmark (`EpubReaderPreferences.kt`): hidden-defaults version. v1 added screen orientation, v2 added brightness. */
-const val ReaderHiddenToolsDefaultsVersion: Int = 2
+/**
+ * Android benchmark (`EpubReaderPreferences.kt`): hidden-defaults version. v1 added screen
+ * orientation, v2 added brightness, v3 added perception lines.
+ */
+const val ReaderHiddenToolsDefaultsVersion: Int = 3
 
 /** Android benchmark (`readerHiddenToolsIntroducedAfter`): hidden tools introduced after [defaultsVersion]. */
 fun readerHiddenToolsIntroducedAfter(defaultsVersion: Int): Set<String> = buildSet {
     if (defaultsVersion < 1) add(ReaderTool.SCREEN_ORIENTATION.id)
     if (defaultsVersion < 2) add(ReaderTool.BRIGHTNESS.id)
+    if (defaultsVersion < 3) add(ReaderTool.PERCEPTION_LINES.id)
 }
 
 /** Android benchmark: upgrade uncustomized legacy bottom sets to the 6-tool default; custom layouts pass through untouched. */
@@ -75,6 +80,10 @@ enum class ReaderTool(
     KEEP_SCREEN_ON("keep_screen_on", "Keep Screen On", "Overflow Menu"),
     VISUAL_OPTIONS("visual_options", "Visual Options", "Overflow Menu"),
     SCREEN_ORIENTATION("screen_orientation", "Screen Orientation", "Top Bar"),
+    // Reading aid, hidden by default like Android's other opt-in visual tools: it draws over
+    // the page, so nobody should meet it without asking for it. Users add it to either bar
+    // from Customize Toolbar.
+    PERCEPTION_LINES("perception_lines", "Perception Lines", "Top Bar"),
     AUTO_SCROLL("auto_scroll", "Auto Scroll", "Overflow Menu"),
     BOOK_REPLACEMENTS("book_replacements", "Book Word Replacements", "Overflow Menu"),
     TTS_SETTINGS("tts_settings", "TTS Voice Settings", "Overflow Menu"),

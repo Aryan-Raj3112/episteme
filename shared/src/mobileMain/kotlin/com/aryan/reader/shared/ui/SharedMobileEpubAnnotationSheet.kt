@@ -4,6 +4,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,6 +17,8 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,6 +46,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,6 +55,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -177,7 +184,15 @@ fun SharedMobileEpubHighlightStyleRow(
 @Composable
 fun SharedMobileEpubHighlightColorRow(
     palette: ReaderHighlightPalette,
-    selectedColorArgb: Int,
+    /**
+     * The colour to mark as current, or null when nothing is current.
+     *
+     * Null is a real state, not a missing argument: the row is also the *chooser* shown when text is
+     * selected, and there the host has no colour yet. Marking the first slot in that case claimed a
+     * colour the user never picked — and it read as "this text is already yellow" over text that was
+     * not highlighted at all.
+     */
+    selectedColorArgb: Int?,
     onColorSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
     onOpenPaletteManager: (() -> Unit)? = null,
@@ -262,6 +277,11 @@ fun SharedMobileEpubHighlightColorRow(
  *   other, so it stays host policy rather than becoming a platform branch in the sheet.
  * - **preferred style persistence.** Same reasoning as Android's own call site: the sheet reports
  *   the choice, the host remembers it.
+ *
+ * The note itself is the one thing the sheet commits on its own: [onSave] is "persist this text",
+ * not "persist and close", and the sheet reports the draft through it well before the user presses
+ * Save (see [SharedReaderNoteAutosave]). Dismissing the sheet after either path is the sheet's job,
+ * through [onDismiss].
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -286,8 +306,37 @@ fun SharedMobileEpubAnnotationSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var noteText by remember(highlight.id) { mutableStateOf(highlight.note.orEmpty()) }
 
+    // The draft is committed by the sheet, not only by the Save button. Before this, every
+    // dismissal path took the note with it: a scrim tap, a back press, and — because a body with
+    // nothing to scroll hands the drag to the sheet — the swipe-down gesture the reporter hit by
+    // accident. `rememberUpdatedState` keeps the autosave pointed at the host's current callback
+    // even though the instance itself is keyed on the highlight id.
+    val scope = rememberCoroutineScope()
+    val commitNote by rememberUpdatedState(onSave)
+    val autosave = remember(highlight.id) {
+        SharedReaderNoteAutosave(
+            scope = scope,
+            initialText = highlight.note.orEmpty(),
+            commit = { commitNote(it) }
+        )
+    }
+    val dismissWithFlush: () -> Unit = {
+        autosave.flush(noteText)
+        onDismiss()
+    }
+    // What the keyboard may take away is deliberately narrow: only the Delete/Save row, see
+    // `sharedMobileAnnotationSheetLayout`. The styling rows, the snippet, the tools, the drag handle
+    // and the note field itself keep their resting layout — collapsing the editor to the field alone
+    // is what made the input cover the whole sheet.
+    //
+    // `WindowInsets.isImeVisible` is Android-only in this Compose version, so visibility comes from a
+    // non-zero IME inset instead: equivalent for open/closed, and gracefully false where IME insets
+    // are unsupported.
+    val isImeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    val annotationLayout = sharedMobileAnnotationSheetLayout(isImeVisible)
+
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = dismissWithFlush,
         sheetState = sheetState,
         containerColor = effectiveBg, // Matches user theme
         contentColor = effectiveText,
@@ -296,105 +345,128 @@ fun SharedMobileEpubAnnotationSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 24.dp)
+                // Safety net rather than the mechanism: Material3's sheet already pads its own
+                // window for the IME and consumes that inset, so this is a no-op there. It is what
+                // keeps the editor honest on a host whose sheet does not, and if a Material3
+                // change ever drops it.
+                .imePadding()
         ) {
-            // Top: Highlight Style + Colors
-            SharedMobileEpubHighlightStyleRow(
-                selectedStyle = highlight.style,
-                effectiveText = effectiveText,
-                onStyleSelect = onStyleChange,
-                modifier = Modifier.padding(bottom = 10.dp)
-            )
-            SharedMobileEpubHighlightColorRow(
-                palette = palette,
-                selectedColorArgb = highlight.effectiveArgb,
-                onColorSelect = onColorChange,
-                onOpenPaletteManager = onOpenPaletteManager,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
+            // The styling/tools header scrolls, the note field does not: a Column measures its
+            // children with the height that is left, so keeping everything in one body is exactly
+            // what let the keyboard squeeze the field and then the Save button to nothing. The
+            // header stays while typing — the policy says the keyboard takes nothing but the action
+            // row — and gives the field room by scrolling.
+            if (annotationLayout.editorChromeVisible) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp)
+                ) {
+                    // Top: Highlight Style + Colors
+                    SharedMobileEpubHighlightStyleRow(
+                        selectedStyle = highlight.style,
+                        effectiveText = effectiveText,
+                        onStyleSelect = onStyleChange,
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
+                    SharedMobileEpubHighlightColorRow(
+                        palette = palette,
+                        selectedColorArgb = highlight.effectiveArgb,
+                        onColorSelect = onColorChange,
+                        onOpenPaletteManager = onOpenPaletteManager,
+                        modifier = Modifier.padding(bottom = 16.dp)
+                    )
 
-            // Middle: Elegant Highlight Snippet Card
-            Surface(
-                color = highlight.effectiveColor.copy(alpha = 0.1f),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, highlight.effectiveColor.copy(alpha = 0.3f)),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(modifier = Modifier.height(IntrinsicSize.Min)) {
-                    // Left colored accent bar
-                    Box(
-                        modifier = Modifier
-                            .width(6.dp)
-                            .fillMaxHeight()
-                            .background(highlight.effectiveColor)
-                    )
-                    Text(
-                        text = "\"${highlight.text}\"",
-                        style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis,
-                        color = effectiveText.copy(alpha = 0.9f),
-                        modifier = Modifier.padding(16.dp)
-                    )
+                    // Middle: Elegant Highlight Snippet Card
+                    Surface(
+                        color = highlight.effectiveColor.copy(alpha = 0.1f),
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, highlight.effectiveColor.copy(alpha = 0.3f)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(modifier = Modifier.height(IntrinsicSize.Min)) {
+                            // Left colored accent bar
+                            Box(
+                                modifier = Modifier
+                                    .width(6.dp)
+                                    .fillMaxHeight()
+                                    .background(highlight.effectiveColor)
+                            )
+                            Text(
+                                text = "\"${highlight.text}\"",
+                                style = MaterialTheme.typography.bodyMedium.copy(fontStyle = FontStyle.Italic),
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                                color = effectiveText.copy(alpha = 0.9f),
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // Action Tools Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        SharedMobileEpubAnnotationToolButton(
+                            icon = Res.drawable.copy,
+                            label = labels.copy,
+                            onClick = onCopy,
+                            effectiveText = effectiveText
+                        )
+                        // Android's benchmark row has exactly four actions and no read-aloud, because its
+                        // speak entry lives in the selection menu. iOS keeps the affordance here, so it is a
+                        // slot the host may leave null — on Android it does, and the row is unchanged.
+                        onSpeak?.let { speak ->
+                            SharedMobileEpubAnnotationToolButton(
+                                imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                                label = labels.speak,
+                                onClick = speak,
+                                effectiveText = effectiveText
+                            )
+                        }
+                        SharedMobileEpubAnnotationToolButton(
+                            icon = Res.drawable.dictionary,
+                            label = labels.dictionary,
+                            onClick = onDictionary,
+                            effectiveText = effectiveText
+                        )
+                        SharedMobileEpubAnnotationToolButton(
+                            icon = Res.drawable.translate,
+                            label = labels.translate,
+                            onClick = onTranslate,
+                            effectiveText = effectiveText
+                        )
+                        SharedMobileEpubAnnotationToolButton(
+                            icon = Res.drawable.search,
+                            label = labels.search,
+                            onClick = onSearch,
+                            effectiveText = effectiveText
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-
-            // Action Tools Row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                SharedMobileEpubAnnotationToolButton(
-                    icon = Res.drawable.copy,
-                    label = labels.copy,
-                    onClick = onCopy,
-                    effectiveText = effectiveText
-                )
-                // Android's benchmark row has exactly four actions and no read-aloud, because its
-                // speak entry lives in the selection menu. iOS keeps the affordance here, so it is a
-                // slot the host may leave null — on Android it does, and the row is unchanged.
-                onSpeak?.let { speak ->
-                    SharedMobileEpubAnnotationToolButton(
-                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                        label = labels.speak,
-                        onClick = speak,
-                        effectiveText = effectiveText
-                    )
-                }
-                SharedMobileEpubAnnotationToolButton(
-                    icon = Res.drawable.dictionary,
-                    label = labels.dictionary,
-                    onClick = onDictionary,
-                    effectiveText = effectiveText
-                )
-                SharedMobileEpubAnnotationToolButton(
-                    icon = Res.drawable.translate,
-                    label = labels.translate,
-                    onClick = onTranslate,
-                    effectiveText = effectiveText
-                )
-                SharedMobileEpubAnnotationToolButton(
-                    icon = Res.drawable.search,
-                    label = labels.search,
-                    onClick = onSearch,
-                    effectiveText = effectiveText
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // Note TextField
+            // Note field. Outside the scrolling header so it can never be the row that gets measured
+            // away, and the same height with or without a keyboard: growing it past these five lines
+            // is what let the input cover the rest of the editor.
             OutlinedTextField(
                 value = noteText,
-                onValueChange = { noteText = it },
+                onValueChange = {
+                    noteText = it
+                    autosave.onTextChanged(it)
+                },
                 placeholder = { Text(labels.notePlaceholder, color = effectiveText.copy(alpha = 0.5f)) },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
                     .heightIn(min = 100.dp),
-                maxLines = 5,
+                maxLines = annotationLayout.noteFieldMaxLines,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
                     unfocusedContainerColor = Color.Transparent,
@@ -406,34 +478,49 @@ fun SharedMobileEpubAnnotationSheet(
                 shape = RoundedCornerShape(12.dp)
             )
 
-            Spacer(Modifier.height(24.dp))
-
-            // Bottom Actions
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Button(
-                    onClick = onDelete,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
+            // Bottom Actions. Outside the scrolling region on purpose: with the keyboard up, Save
+            // sitting at the bottom of a scrolling body is a Save the user has to scroll to. While
+            // the keyboard is actually open the row is hidden outright — the one thing the keyboard
+            // takes away (see `sharedMobileAnnotationSheetLayout`).
+            if (annotationLayout.bottomActionsVisible) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 24.dp)
+                        .padding(top = 16.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(labels.delete)
+                    Button(
+                        onClick = {
+                            // Drop the draft first: a pending commit would write the note back onto
+                            // an id this button just deleted.
+                            autosave.discard()
+                            onDelete()
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(labels.delete)
+                    }
+                    Button(
+                        onClick = dismissWithFlush,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        Text(labels.saveNote)
+                    }
                 }
-                Button(
-                    onClick = { onSave(noteText) },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
-                    )
-                ) {
-                    Text(labels.saveNote)
-                }
+            } else {
+                // The action row stepped aside, but the field keeps the same gap below it instead of
+                // sitting flush against the keyboard.
+                Spacer(Modifier.height(16.dp))
             }
         }
     }

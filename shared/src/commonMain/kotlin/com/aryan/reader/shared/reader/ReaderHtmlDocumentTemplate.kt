@@ -21,8 +21,18 @@ internal fun document(
 ): String {
     val appearance = settings.toDocumentAppearanceCss(textureDataUri)
     val align = settings.readerTextAlignCss()
-    val customFontCss = settings.readerCustomFontFaceCss()
-    val family = settings.readerFontFamilyCss()
+    val webFontCss = settings.readerWebFontCss()
+    val family = webFontCss.familyCss
+    // The dynamic appearance script owns this exact element: it updates the
+    // face and force rule in place, or removes the element when the reader
+    // returns to Original. Keeping the same markup in the initial document
+    // means the first paint is correct and a later Original choice can
+    // actually clear the override (a rule baked into the main <style> could
+    // never be removed by the script).
+    val fontStyleTag = webFontCss.documentCss
+        .takeIf { it.isNotBlank() }
+        ?.let { "<style id=\"reader-custom-font-style\">$it</style>" }
+        .orEmpty()
     val highlightButtons = if (highlightActionsEnabled) highlightPalette.toSelectionPaletteButtons() else ""
     val highlightStyleButtons = if (highlightActionsEnabled) readerSelectionStyleButtons() else ""
     val noteButton = if (highlightActionsEnabled) {
@@ -55,7 +65,6 @@ internal fun document(
     val styles = readerDocumentStyles(
         settings = settings,
         bookCss = bookCss,
-        customFontCss = customFontCss,
         appearance = appearance,
         align = align,
         family = family,
@@ -70,6 +79,7 @@ internal fun document(
           <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
           <title>${title.escapeHtml()}</title>
           $styles
+          $fontStyleTag
         </head>
         <body class="${if (settings.readingMode == ReaderReadingMode.PAGINATED) "reader-paginated" else "reader-vertical"}" data-search="${searchQuery.escapeHtml()}"$navigationAttributes>
           $body

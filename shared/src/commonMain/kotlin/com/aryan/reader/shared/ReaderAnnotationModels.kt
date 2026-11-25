@@ -156,6 +156,19 @@ data class ReaderLocator(
             return startOffset == other.startOffset && endOffset == other.endOffset
         }
 
+        // Neither side describes its characters, so *where* they are has to be settled before *how
+        // much* they cover means anything. A page number and a length are not a position: every
+        // equally long passage on the page answers to them, so a highlight on one sentence was
+        // rewritten by a selection on another, taking its colour and note with it. Both sides of a
+        // paginated selection carry the block and a CFI whose start is the DOM position the range
+        // begins at, so compare those first; they are cheap and they disagree exactly when the two
+        // ranges begin somewhere else.
+        val sameBlock = blockIndex == null || other.blockIndex == null || blockIndex == other.blockIndex
+        if (!sameBlock) return false
+        val startHere = cfi?.substringBefore('|')
+        val startThere = other.cfi?.substringBefore('|')
+        if (startHere != null && startThere != null && startHere != startThere) return false
+
         if (pageIndex != null && other.pageIndex != null) {
             // Same guard as above: comparing two unknown extents would be null == null, which reads as
             // "the same stretch" and would make a page number alone enough to overwrite a highlight.

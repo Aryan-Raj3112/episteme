@@ -148,6 +148,10 @@ import com.aryan.reader.BookWordReplacementsSheet
 import com.aryan.reader.BuiltInThemes
 import com.aryan.reader.MainViewModel
 import com.aryan.reader.R
+import com.aryan.reader.cardTitle
+import com.aryan.reader.shared.ReaderTabKind
+import com.aryan.reader.shared.isDerivedReflowBookId
+import com.aryan.reader.shared.readerTabKind
 import com.aryan.reader.ReaderBrightnessEffect
 import com.aryan.reader.ReaderFileInfoDialogs
 import com.aryan.reader.ReaderBrightnessSheet
@@ -158,6 +162,7 @@ import com.aryan.reader.RenderMode
 import com.aryan.reader.audiobook.ACTION_AUDIOBOOK_STOP
 import com.aryan.reader.audiobook.AudiobookPlaybackService
 import com.aryan.reader.shared.SearchResult
+import com.aryan.reader.shared.recordedJumpQuote
 import com.aryan.reader.shared.search.bestReaderResultForLibraryHit
 import com.aryan.reader.shared.search.navigationQuote
 import com.aryan.reader.shared.SummarizationResult
@@ -262,14 +267,18 @@ import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 import kotlinx.serialization.protobuf.ProtoBuf
 import org.jsoup.Jsoup
 import com.aryan.reader.shared.ui.SharedMobileReaderDrawer
 import com.aryan.reader.shared.ui.SharedMobileReaderScaffold
 import com.aryan.reader.shared.ui.SharedMobileReaderRecoveryGate
 import com.aryan.reader.shared.ui.rememberReaderMotionPolicy
+import com.aryan.reader.shared.ui.SharedPerceptionLinesOverlay
+import com.aryan.reader.shared.ui.SharedPerceptionLinesSheet
 import com.aryan.reader.shared.ui.SharedReaderPageInfoBarRow
 import com.aryan.reader.shared.ui.SharedReaderPageInfoBarSidePadding
 import com.aryan.reader.shared.ui.sharedMobileEpubBottomChromePadding
@@ -281,6 +290,7 @@ import com.aryan.reader.shared.reader.MobileEpubReaderBackAction
 import com.aryan.reader.shared.reader.selectMobileEpubReaderBackAction
 import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import timber.log.Timber
 import java.io.File
 import kotlin.math.ceil
@@ -461,6 +471,18 @@ fun EpubReaderHost(
     var readerBrightnessSettings by remember { mutableStateOf(loadReaderBrightnessSettings(context)) }
     var showBrightnessSheet by remember { mutableStateOf(false) }
     ReaderBrightnessEffect(window, readerBrightnessSettings)
+
+    // Perception lines: a global, host-persisted overlay preference (not a format setting), so the
+    // reader can flip it per page without touching a single pagination key.
+    var perceptionLines by remember { mutableStateOf(loadPerceptionLinesSettings(context)) }
+    var showPerceptionLinesSheet by remember { mutableStateOf(false) }
+    val updatePerceptionLines: (ReaderPerceptionLinesSettings) -> Unit = { settings ->
+        val sanitized = settings.sanitized()
+        if (sanitized != perceptionLines) {
+            perceptionLines = sanitized
+            savePerceptionLinesSettings(context, sanitized)
+        }
+    }
 
     val updateReaderBrightness: (com.aryan.reader.ReaderBrightnessSettings) -> Unit = { settings ->
         readerBrightnessSettings = settings
@@ -834,9 +856,23 @@ fun EpubReaderHost(
     val isRequestingRecapCfiState = remember { mutableStateOf(false) }
     var isRequestingRecapCfi by isRequestingRecapCfiState
 
-    val epubSearcher = remember(epubBook) { createEpubSearcher(epubBook) }
+    // Declared before the searcher: search must scan the text the reader
+    // actually renders, replacements included, or every occurrence ordinal
+    // after a replaced phrase points at a neighbouring hit.
+    val bookReplacementPreferencesState = remember { mutableStateOf(loadBookReplacementPreferences(context)) }
+    var bookReplacementPreferences by bookReplacementPreferencesState
+    val epubSearcher = remember(epubBook) {
+        createEpubSearcher(
+            epubBook = epubBook,
+            replacementPreferences = { bookReplacementPreferences },
+            replacementFileId = bookId,
+        )
+    }
 
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    // A reflowed PDF is a reading mode of a fixed-layout document, not a book of its own: neither
+    // the drawer nor the tab strip may offer or own a text tab while one is open.
+    val reflowSession = uiState.selectedBookId?.isDerivedReflowBookId() == true
     val showBarsState = remember { mutableStateOf(false) }
     var showBars by showBarsState
     val chapters = remember(epubBook.chapters) { epubBook.chapters }
@@ -1072,6 +1108,8 @@ fun EpubReaderHost(
 
     var showFontSelectionSheet by remember { mutableStateOf(false) }
     val fontSheetState = rememberModalBottomSheetState()
+    var showNewTabSheet by remember { mutableStateOf(false) }
+    val newTabSheetState = rememberModalBottomSheetState()
 
     LaunchedEffect(format.currentFontSizeEm, format.currentLineHeight, format.currentParagraphGap, format.currentImageSize, format.currentHorizontalMargin, format.currentVerticalMargin, format.currentFontFamily, format.currentCustomFontPath, format.currentTextAlign, format.currentFontWeight, format.currentLetterSpacing, format.currentSpreadGapDp, isFormatLocal) {
         if (isFormatLocal) {
@@ -1250,8 +1288,6 @@ fun EpubReaderHost(
         ttsReplacementPreferences = next
         saveTtsReplacementPreferences(context, next)
     }
-    val bookReplacementPreferencesState = remember { mutableStateOf(loadBookReplacementPreferences(context)) }
-    var bookReplacementPreferences by bookReplacementPreferencesState
     val updateBookReplacementPreferences: (ReaderBookReplacementPreferences) -> Unit = { next ->
         bookReplacementPreferences = next
         saveBookReplacementPreferences(context, next)
@@ -1464,6 +1500,137 @@ fun EpubReaderHost(
             "flush reason=$reason locator=$locator progress=$progress"
         )
         emitReadingPosition(locator, cfiForFlushedLocator, progress)
+    }
+
+    /**
+     * Persists the paginated surface's current spread, resolving its locator and character
+     * progress from the paginator. Returns false when the paginator cannot answer, so the caller
+     * can fall back to the in-memory flush instead of inventing a position.
+     */
+    fun savePaginatedPositionAt(spreadIndex: Int, spreadPageCount: Int): Boolean {
+        val bookPaginator = paginator as? BookPaginator ?: return false
+        val bookPage = spreadToBookPage(spreadIndex)
+        val locator = bookPaginator.getLocatorForPage(bookPage)
+        val chapterIndex = bookPaginator.findChapterIndexForPage(bookPage)
+        if (locator == null || chapterIndex == null) {
+            Timber.w("Could not auto-save paginated position. Locator or chapterIndex was null.")
+            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).w(
+                "save_failed page=$bookPage locator=$locator chapter=$chapterIndex"
+            )
+            return false
+        }
+        lastKnownLocator = locator
+        val progress = if (totalBookLengthChars > 0) {
+            val completedCharsInPreviousChapters =
+                chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
+            val currentPageInChapter =
+                (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { bookPage - it }
+            val charsScrolledInCurrentChapter =
+                bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
+            mobileEpubCharacterProgress(
+                totalBookCharacters = totalBookLengthChars,
+                completedChapterCharacters = completedCharsInPreviousChapters,
+                currentChapterOffset = charsScrolledInCurrentChapter,
+                isAtEndOfBook = spreadIndex == spreadPageCount - 1,
+            )
+        } else {
+            0f
+        }
+        Timber.d("Auto-saving paginated position. Page: $spreadIndex, Locator: $locator, Progress: $progress%")
+        Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
+            "save_position page=$spreadIndex locator=$locator chapter=$chapterIndex progress=$progress"
+        )
+        emitReadingPosition(locator, null, progress)
+        return true
+    }
+
+    /**
+     * Persists the *live* reading position, the one a tab switch must not lose.
+     *
+     * The in-memory flush is built for lifecycle events, where a WebView round trip cannot be
+     * waited on. A tab switch is the opposite situation: the reader is about to be torn down while
+     * its host reads the stored row, so the position has to be both current and already written.
+     * The flush alone fails both ways in the WebView renderer — its locator is whatever the
+     * debounced save last resolved (1.5s after scrolling settles), and the write races the reopen's
+     * row read. This resolves the live position instead: native surfaces already know it on the
+     * main thread, paginated surfaces derive it from the pager, and the WebView is asked for its
+     * current CFI and waited on. If the round trip fails or takes too long, the flush is the
+     * fallback and the pending-write join before reopen still guarantees ordering.
+     */
+    suspend fun captureLiveReadingPosition(reason: String): Boolean {
+        when {
+            currentRenderMode == RenderMode.VERTICAL_SCROLL && isNativeVerticalMode -> {
+                val locator = currentNativeVerticalLocator()
+                if (locator == null) {
+                    flushInMemoryReadingPosition(reason)
+                    return false
+                }
+                saveResolvedLocatorPosition(locator, null)
+                return true
+            }
+
+            currentRenderMode == RenderMode.PAGINATED -> {
+                // The pager is not a source of truth until it has restored its page: querying it
+                // mid-restore reports spread 0 and would persist the chapter start over the
+                // position the user left the tab at.
+                val spread = paginatedPagerState.currentPage
+                val canSave = shouldSavePaginatedOpenPosition(
+                    isPaginatedMode = true,
+                    hasPaginator = paginator != null,
+                    isPagerInitialized = isPagerInitialized,
+                    isReconfigurationRestoring = navigation.isPaginatedReconfigurationRestoring,
+                    pageCount = paginatedPagerState.pageCount,
+                    pageToSave = spread,
+                )
+                if (!canSave || !savePaginatedPositionAt(spread, paginatedPagerState.pageCount)) {
+                    flushInMemoryReadingPosition(reason)
+                    return false
+                }
+                return true
+            }
+
+            else -> {
+                val webView = webViewRefForTts
+                if (webView == null) {
+                    flushInMemoryReadingPosition(reason)
+                    return false
+                }
+                // A settled restore must not be re-saved from a half-laid-out page: getCurrentCfi
+                // answers from whatever is currently under the viewport, so a page still restoring
+                // would answer with its target, not where the user is.
+                if (!isVerticalRestoreSettled) {
+                    flushInMemoryReadingPosition(reason)
+                    return false
+                }
+                val rawResponse = withTimeoutOrNull(CAPTURE_LIVE_POSITION_TIMEOUT_MS) {
+                    suspendCancellableCoroutine { continuation ->
+                        // A teardown can destroy the WebView between the tap and this call; the
+                        // flush fallback is the right answer then, not a crash.
+                        runCatching {
+                            webView.evaluateJavascript(
+                                "javascript:window.getCurrentCfi();",
+                            ) { result -> continuation.resume(result) }
+                        }.onFailure {
+                            if (continuation.isActive) continuation.resume(null)
+                        }
+                    }
+                }
+                val cfi = readingPositionCfiFromJavascriptResult(rawResponse)
+                val locator = cfi?.let { locatorConverter.getLocatorFromCfi(epubBook, currentChapterIndex, it) }
+                if (locator == null) {
+                    Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                        "capture_live_miss reason=$reason cfi=${cfi?.take(48) ?: "timeout"}"
+                    )
+                    flushInMemoryReadingPosition(reason)
+                    return false
+                }
+                Timber.tag(TAG_EPUB_VERTICAL_OPEN_DIAG).d(
+                    "capture_live reason=$reason locator=$locator cfi=${cfi?.take(48)}"
+                )
+                saveResolvedLocatorPosition(locator, cfi)
+                return true
+            }
+        }
     }
 
     fun ensureVerticalChunksLoaded(targetChunk: Int) {
@@ -2901,41 +3068,7 @@ fun EpubReaderHost(
             return@LaunchedEffect
         }
 
-        val bookPageToSave = spreadToBookPage(pageToSave)
-        val locator = (paginator as? BookPaginator)?.getLocatorForPage(bookPageToSave)
-        val chapterIndex = paginator!!.findChapterIndexForPage(bookPageToSave)
-
-        if (locator != null && chapterIndex != null) {
-            lastKnownLocator = locator
-            val bookPaginator = paginator as? BookPaginator
-            val progress = if (totalBookLengthChars > 0 && bookPaginator != null) {
-                val completedCharsInPreviousChapters = chapters.take(chapterIndex).sumOf { it.plainTextCharacterCount().toLong() }
-                val currentPageInChapter = (bookPaginator.chapterStartPageIndices[chapterIndex] ?: 0).let { bookPageToSave - it }
-                val charsScrolledInCurrentChapter = bookPaginator.getCharactersScrolledInChapter(chapterIndex, currentPageInChapter)
-                val isLastPageOfBook = pageToSave == paginatedPagerState.pageCount - 1
-                mobileEpubCharacterProgress(
-                    totalBookCharacters = totalBookLengthChars,
-                    completedChapterCharacters = completedCharsInPreviousChapters,
-                    currentChapterOffset = charsScrolledInCurrentChapter,
-                    isAtEndOfBook = isLastPageOfBook
-                )
-
-            } else {
-                0f
-            }
-
-            Timber.d("Auto-saving paginated position. Page: $pageToSave, Locator: $locator, Progress: $progress%"
-            )
-            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).d(
-                "save_position page=$pageToSave locator=$locator chapter=$chapterIndex progress=$progress"
-            )
-            emitReadingPosition(locator, null, progress)
-        } else {
-            Timber.w("Could not auto-save paginated position. Locator or chapterIndex was null.")
-            Timber.tag(TAG_EPUB_PAGINATED_OPEN_DIAG).w(
-                "save_failed page=$pageToSave locator=$locator chapter=$chapterIndex"
-            )
-        }
+        savePaginatedPositionAt(pageToSave, paginatedPagerState.pageCount)
     }
 
     val pageInfoBarContentHeight = sharedMobileEpubPageInfoBarContentHeight()
@@ -3584,22 +3717,37 @@ fun EpubReaderHost(
                             val targetChunk = parts.getOrNull(1)?.toIntOrNull() ?: 0
                             val occurrence = parts.getOrNull(2)?.toIntOrNull() ?: 0
                             initialScrollTargetForChapter = null
+                            val targetResult = searchState.searchResults.firstOrNull {
+                                it.locationInSource == chapterIndex &&
+                                    it.chunkIndex == targetChunk &&
+                                    it.occurrenceIndexInLocation == occurrence
+                            }
                             if (chapterIndex != null && chapterIndex != currentChapterIndex) {
                                 navigation.chunkTargetOverride = targetChunk.coerceAtLeast(0)
-                                searchHighlightTarget = searchState.searchResults.firstOrNull {
-                                    it.locationInSource == chapterIndex &&
-                                        it.chunkIndex == targetChunk &&
-                                        it.occurrenceIndexInLocation == occurrence
-                                }
+                                searchHighlightTarget = targetResult
                                 currentScrollYPosition = 0
                                 currentScrollHeightValue = 0
                                 currentChapterIndex = chapterIndex
                             } else {
                                 injectVerticalChunksThrough(targetChunk)
-                                webViewRefForTts?.evaluateJavascript(
-                                    "javascript:window.scrollToOccurrence($occurrence);",
-                                    null
-                                )
+                                webViewRefForTts?.let { webView ->
+                                    if (targetResult != null) {
+                                        webView.evaluateJavascript(
+                                            epubSearchHighlightAndScrollScript(
+                                                searchState.searchResults,
+                                                targetResult
+                                            ),
+                                            null
+                                        )
+                                    } else {
+                                        // Results were cleared (process death, new
+                                        // query): the chunk is still the best landing.
+                                        webView.evaluateJavascript(
+                                            "javascript:window.scrollToChunkOccurrence($targetChunk, 0);",
+                                            null
+                                        )
+                                    }
+                                }
                             }
                         }
                         cfi.startsWith("android-locator:") -> {
@@ -3731,7 +3879,7 @@ fun EpubReaderHost(
                     if (recordHistory) {
                         recordEpubJump(
                             scrollLocator.toEpubJumpLocator(pageIndex = pageIdx)
-                                .copy(textQuote = targetResult.snippet.text)
+                                .copy(textQuote = targetResult.recordedJumpQuote())
                         )
                     }
                     requestNativeVerticalLocatorScroll(
@@ -3749,7 +3897,7 @@ fun EpubReaderHost(
                     SharedReaderLocator(
                         chapterIndex = targetResult.locationInSource,
                         cfi = "android-search:${targetResult.chunkIndex}:${targetResult.occurrenceIndexInLocation}",
-                        textQuote = targetResult.snippet.text
+                        textQuote = targetResult.recordedJumpQuote()
                     )
                 )
             }
@@ -3765,7 +3913,7 @@ fun EpubReaderHost(
                     val targetLocator = bookPaginator.getLocatorForPage(pageIdx)
                     if (recordHistory) {
                         paginatedJumpLocatorForPage(pageIdx, targetLocator)
-                            ?.copy(textQuote = targetResult.snippet.text)
+                            ?.copy(textQuote = targetResult.recordedJumpQuote())
                             ?.let { recordEpubJump(it) }
                     }
                     scrollPaginatedToJumpPage(pageIdx, targetLocator)
@@ -3919,6 +4067,22 @@ fun EpubReaderHost(
                 onOpenPaletteManager = { showPaletteManager = true },
                 onHighlightColorChange = onHighlightColorChange,
                 onExportAnnotations = { showAnnotationExportDialog = true },
+                textTabs = if (uiState.isTabsEnabled && !reflowSession) uiState.textOpenTabs else emptyList(),
+                activeTextTabBookId = uiState.activeTextTabBookId,
+                useFileNameAsDisplayName = uiState.usePdfFileNameAsDisplayName,
+                onTextTabSelected = { tabBookId ->
+                    if (tabBookId != uiState.selectedBookId) {
+                        // Same rule as the strip: the live WebView position is the only record of
+                        // where this tab was left, so capture it before reopening the target.
+                        scope.launch {
+                            captureLiveReadingPosition("tab_switch")
+                            viewModel.switchTab(tabBookId)
+                        }
+                    }
+                    scope.launch { drawerState.close() }
+                },
+                onTextTabClosed = { tabBookId -> viewModel.closeTab(tabBookId) },
+                onNewTextTab = { showNewTabSheet = true },
                 onNavigateToImage = { image ->
                     scope.launch {
                         drawerState.close()
@@ -5094,8 +5258,18 @@ fun EpubReaderHost(
                     onTranslateLookupFn = { p0 -> onTranslateLookup(p0) },
                     onDictionaryLookupFn = { p0 -> onDictionaryLookup(p0) },
                     onUpdateHighlightPaletteFn = { p0, p1 -> onUpdateHighlightPalette(p0, p1) },
+                    onHighlightColorChangeFn = onHighlightColorChange,
+                    onHighlightStyleChangeFn = onHighlightStyleChange,
                     runRecapFn = { p0, p1 -> runRecap(p0, p1) },
                     onBookmarksUserEdited = { bookmarksDirty = true }
+                )
+
+                // Perception lines sit above both render surfaces (WebView scroll and the Compose
+                // paginator) and below the chrome that follows in this Box, so the rails never cover
+                // the page-info bar or a toolbar. It is an overlay only: no layout, no reflow.
+                SharedPerceptionLinesOverlay(
+                    settings = perceptionLines,
+                    modifier = Modifier.fillMaxSize()
                 )
 
                 val isBookmarked: Boolean
@@ -5576,6 +5750,45 @@ fun EpubReaderHost(
 
                 EpubReaderNavBarScrims(MaterialTheme.colorScheme.surface)
 
+                // Only the reflow reader's own tab set, and never for a reflow view (see reflowSession).
+                val textTabStrip: (@Composable () -> Unit)? = if (
+                    uiState.isTabsEnabled && uiState.textOpenTabs.isNotEmpty() && !reflowSession
+                ) {
+                    {
+                        com.aryan.reader.shared.ui.SharedReaderTabStrip(
+                            tabs = remember(uiState.textOpenTabs, uiState.usePdfFileNameAsDisplayName) {
+                                uiState.textOpenTabs.map { tab ->
+                                    com.aryan.reader.shared.ui.SharedReaderTab(
+                                        bookId = tab.bookId,
+                                        title = tab.cardTitle(uiState.usePdfFileNameAsDisplayName),
+                                    )
+                                }
+                            },
+                            activeBookId = uiState.activeTextTabBookId,
+                            onSelect = { tabBookId ->
+                                if (tabBookId != uiState.selectedBookId) {
+                                    scope.launch {
+                                        // Capture first, then reopen: the WebView's live position is
+                                        // the only record of where this tab was left, and the reopen
+                                        // resolves it from the stored row, so the write has to win
+                                        // that race rather than meet it.
+                                        captureLiveReadingPosition("tab_switch")
+                                        viewModel.switchTab(tabBookId)
+                                    }
+                                }
+                            },
+                            onClose = { tabBookId -> viewModel.closeTab(tabBookId) },
+                            onNewTab = { showNewTabSheet = true },
+                            // The bar already paints the chrome surface; a second fill would stack.
+                            onSurface = true,
+                            newTabContentDescription = stringResource(R.string.content_desc_new_tab),
+                            closeTabContentDescription = stringResource(R.string.close_tab),
+                        )
+                    }
+                } else {
+                    null
+                }
+
                 // Animated Top Bar
                 EpubReaderTopBar(
                     isVisible = showBars,
@@ -5804,6 +6017,8 @@ fun EpubReaderHost(
                     onOpenBrightness = { showBrightnessSheet = true },
                     onOpenVisualOptions = { prefs.showVisualOptionsSheet = true },
                     onOpenScreenOrientation = { prefs.showScreenOrientationSheet = true },
+                    onOpenPerceptionLines = { showPerceptionLinesSheet = true },
+                    perceptionLinesVisible = perceptionLines.enabled,
                     onOpenAiHub = { showAiHubSheet = true },
                     onOpenSlider = ::toggleEpubPageSlider,
                     onOpenDrawer = {
@@ -5862,6 +6077,7 @@ fun EpubReaderHost(
                     onDeleteReflow = onDeleteReflow,
                     onExportAnnotations = { showAnnotationExportDialog = true },
                     readerMotionPolicy = motionPolicy,
+                    tabStrip = textTabStrip,
                 )
 
                 val autoScrollPadding by animateDpAsState(
@@ -6146,6 +6362,8 @@ fun EpubReaderHost(
                         }
                     },
                     onOpenScreenOrientation = { prefs.showScreenOrientationSheet = true },
+                    onOpenPerceptionLines = { showPerceptionLinesSheet = true },
+                    perceptionLinesVisible = perceptionLines.enabled,
                     onToggleFormat = {
                         navigation.showFormatAdjustmentBars = !navigation.showFormatAdjustmentBars
                         if (navigation.showFormatAdjustmentBars) {
@@ -6614,6 +6832,14 @@ fun EpubReaderHost(
             )
         }
 
+        if (showPerceptionLinesSheet) {
+            SharedPerceptionLinesSheet(
+                settings = perceptionLines,
+                onSettingsChange = updatePerceptionLines,
+                onDismiss = { showPerceptionLinesSheet = false },
+            )
+        }
+
         if (prefs.showScreenOrientationSheet) {
             ReaderScreenOrientationSheet(
                 selectedMode = prefs.screenOrientationMode,
@@ -6623,6 +6849,48 @@ fun EpubReaderHost(
                 },
                 onDismiss = { prefs.showScreenOrientationSheet = false }
             )
+        }
+
+        if (showNewTabSheet) {
+            val openIds = remember(uiState.textOpenTabIds) { uiState.textOpenTabIds.toSet() }
+            val candidates = remember(uiState.rawLibraryFiles, openIds, uiState.usePdfFileNameAsDisplayName) {
+                uiState.rawLibraryFiles
+                    .filter { file ->
+                        file.type.readerTabKind() == ReaderTabKind.TEXT &&
+                            file.bookId !in openIds &&
+                            !file.bookId.isDerivedReflowBookId()
+                    }
+                    .sortedByDescending { it.timestamp }
+                    .map { file ->
+                        com.aryan.reader.shared.ui.SharedReaderNewTabCandidate(
+                            bookId = file.bookId,
+                            title = file.cardTitle(uiState.usePdfFileNameAsDisplayName),
+                            subtitle = file.author,
+                        )
+                    }
+            }
+            ModalBottomSheet(
+                onDismissRequest = { showNewTabSheet = false },
+                sheetState = newTabSheetState,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentWindowInsets = { WindowInsets.navigationBars },
+            ) {
+                com.aryan.reader.shared.ui.SharedReaderNewTabSheetContent(
+                    title = stringResource(R.string.title_add_book_to_tab),
+                    emptyMessage = stringResource(R.string.msg_no_other_books_found),
+                    candidates = candidates,
+                    onPick = { tabBookId ->
+                        scope.launch {
+                            newTabSheetState.hide()
+                            showNewTabSheet = false
+                            // Picking another book leaves this one as a tab: its live position has
+                            // to be written before the sheet's reopen reads the stored row.
+                            captureLiveReadingPosition("new_tab")
+                            viewModel.switchTab(tabBookId)
+                        }
+                    },
+                )
+            }
         }
 
         if (showFontSelectionSheet) {

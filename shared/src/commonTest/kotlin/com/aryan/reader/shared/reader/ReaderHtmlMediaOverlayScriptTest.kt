@@ -1,5 +1,6 @@
 package com.aryan.reader.shared.reader
 
+import com.aryan.reader.shared.READER_SEARCH_BLOCK_BOUNDARY_TAGS
 import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -40,7 +41,6 @@ class ReaderHtmlMediaOverlayScriptTest {
     private val styles: String = readerDocumentStyles(
         settings = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.SINGLE),
         bookCss = "",
-        customFontCss = "",
         appearance = ReaderSettings(pageSpreadMode = ReaderPageSpreadMode.SINGLE)
             .toDocumentAppearanceCss(textureDataUri = null),
         align = "left",
@@ -231,11 +231,55 @@ class ReaderHtmlMediaOverlayScriptTest {
         assertTrue(
             styles.contains(
                 "$chapterContentBodyChildSelector:not(.reader-selection-handle)" +
-                    ":not(#reader-tts-highlight-layer):not(#reader-media-overlay-highlight-layer)" +
-                    ":not(script):not(style)"
+                    ":not(#reader-tts-highlight-layer):not(#reader-note-badge-layer)" +
+                    ":not(#reader-media-overlay-highlight-layer):not(script):not(style)"
             ),
-            "both playback layers are reader chrome and belong in the exclusion list together"
+            "every layer the reader owns is chrome and belongs in the exclusion list together; " +
+                "the note marks are the newest, and being laid out as chapter content would pin " +
+                "them into the flowing text"
         )
+    }
+
+    /**
+     * The search painter block only: the k-th mark has to be the k-th result.
+     *
+     * The painter used to mark substrings, so "reader" produced two marks and
+     * every ordinal after it pointed one mark earlier than the results list
+     * meant — the same class of desync as the footnote/endnote hits.
+     */
+    private val searchPaintBlock: String = run {
+        val start = script.indexOf("window.readerApplySearchHighlights = function")
+        assertTrue(start > 0, "the search painter is missing from the annotation script")
+        val end = script.indexOf("var readerTtsLocator = null;", start)
+        assertTrue(end > start, "the search painter block has no end, so the extraction is wrong")
+        script.substring(start, end)
+    }
+
+    @Test
+    fun `the search painter matches word starts only`() {
+        assertTrue(searchPaintBlock.contains("wordChar"), "the painter has no word-start rule")
+        assertTrue(
+            searchPaintBlock.contains("found === 0 ? lastChar : value.charAt(found - 1)"),
+            "the word-start rule does not consult the character before the text node"
+        )
+    }
+
+    @Test
+    fun `the search painter flattens block boundaries like the scanner`() {
+        val boundaryTags = searchPaintBlock
+            .substringAfter("var boundary = {")
+            .substringBefore("};")
+            .split(',')
+            .mapNotNull { entry -> entry.substringBefore(':').trim().takeIf { it.isNotEmpty() } }
+            .toSet()
+        assertTrue(
+            boundaryTags.containsAll(READER_SEARCH_BLOCK_BOUNDARY_TAGS),
+            "the painter is missing boundary tags: " +
+                (READER_SEARCH_BLOCK_BOUNDARY_TAGS - boundaryTags)
+        )
+        // Marks are cleared before painting and never walked into.
+        assertTrue(searchPaintBlock.contains("mark.reader-search-all"))
+        assertTrue(searchPaintBlock.contains("mark: 1"))
     }
 
     private companion object {

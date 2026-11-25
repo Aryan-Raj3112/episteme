@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
@@ -48,7 +47,7 @@ fun <T> SharedMobileSingleChoiceDialog(
                 if (firstRunMessage != null) {
                     Surface(
                         color = MaterialTheme.colorScheme.secondaryContainer,
-                        shape = RoundedCornerShape(8.dp),
+                        shape = MaterialTheme.shapes.small,
                         modifier = Modifier.padding(bottom = 16.dp),
                     ) {
                         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {

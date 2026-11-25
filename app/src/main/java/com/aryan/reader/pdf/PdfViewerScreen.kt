@@ -238,7 +238,9 @@ import com.aryan.reader.ReaderScreenOrientationSheet
 import com.aryan.reader.ReaderThemePanel
 import com.aryan.reader.shared.SearchResult
 import com.aryan.reader.shared.ReaderSearchState
+import com.aryan.reader.shared.ReaderTabKind
 import com.aryan.reader.shared.ReaderTheme
+import com.aryan.reader.shared.readerTabKind
 import com.aryan.reader.shared.SummarizationResult
 import com.aryan.reader.shared.formatSpendGuardCountdown
 import com.aryan.reader.shared.hasSpendableBalance
@@ -5368,6 +5370,9 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                 },
                 onDismiss = { highlightToNoteId = null },
                 onSave = { noteText, comments ->
+                    // Persist only. The sheet autosaves the draft through this callback and closes
+                    // itself via `onDismiss`, so clearing `highlightToNoteId` here would dismiss the
+                    // editor on the first autosave.
                     val index =
                         userHighlights.indexOfFirst { it.id == targetHighlight.id }
                     if (index != -1) {
@@ -5377,7 +5382,6 @@ private fun PdfViewerScreenOverlays(surfaceState: PdfViewerSurfaceState) {
                                 comments = comments
                             )
                     }
-                    highlightToNoteId = null
                 },
                 onUpdate = { noteText, comments ->
                     val index =
@@ -5806,7 +5810,10 @@ private fun PdfViewerDocumentSetup(
     val isTabsEnabled = !isSplitPane && uiState.isTabsEnabled
     val openTabs = if (isSplitPane) emptyList() else uiState.openTabs
     val activeTabBookId = if (isSplitPane) null else uiState.activeTabBookId
-    val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() && effectiveFileType == FileType.PDF
+    // Every fixed-layout format gets tabs now (comics and paged office documents open in this same
+    // renderer), so eligibility follows the tab kind rather than the literal PDF type.
+    val canShowPdfTabs = isTabsEnabled && openTabs.isNotEmpty() &&
+        effectiveFileType.readerTabKind() == ReaderTabKind.FIXED_LAYOUT
     val isPdfTabStripVisible = canShowPdfTabs && showTopTabStrip
     val originalFileName by remember(uiState.allRecentFiles, uiState.rawLibraryFiles, uiState.recentFiles, selectedBookIdForPane, effectivePdfUri) {
         derivedStateOf {
@@ -8471,6 +8478,18 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     PdfViewerChromeTts(surfaceState)
 }
 
+/**
+ * Enter/exit motion for the PDF chrome's transient notices (OCR language download, bubble-zoom
+ * download progress). These are constant specs - [slideInVertically]/[fadeIn] and their exit
+ * counterparts capture nothing from composition - so they are hoisted out of the composable instead
+ * of being rebuilt on every recomposition. That matters because the surrounding
+ * `PdfViewerChromeMusicianAndIndicators` recomposes per frame while a musician-mode hold updates
+ * `rightHoldProgress` (~16 ms loop), and each pass used to allocate a fresh `Slide`/`Fade`/
+ * `EnterTransitionImpl` pair per `AnimatedVisibility`.
+ */
+private val pdfChromeNoticeEnter = slideInVertically() + fadeIn()
+private val pdfChromeNoticeExit = slideOutVertically() + fadeOut()
+
 @Composable
 private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewerChromeMusicianAndIndicators(
     surfaceState: PdfViewerSurfaceState,
@@ -8654,8 +8673,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
     // OCR language download indicator
     AnimatedVisibility(
         visible = isOcrModelDownloading,
-        enter = slideInVertically() + fadeIn(),
-        exit = slideOutVertically() + fadeOut(),
+        enter = pdfChromeNoticeEnter,
+        exit = pdfChromeNoticeExit,
         modifier = Modifier
             .align(Alignment.TopCenter)
             .fillMaxWidth()
@@ -8694,8 +8713,8 @@ private fun androidx.compose.foundation.layout.BoxWithConstraintsScope.PdfViewer
 
     AnimatedVisibility(
         visible = bubbleZoomDownloadProgress != null,
-        enter = slideInVertically() + fadeIn(),
-        exit = slideOutVertically() + fadeOut(),
+        enter = pdfChromeNoticeEnter,
+        exit = pdfChromeNoticeExit,
         modifier = Modifier
             .align(Alignment.TopCenter)
             .fillMaxWidth()
@@ -11715,12 +11734,14 @@ private fun PdfViewerPaginationPage(
         pagerPageIndex,
         totalDisplayPages,
         pdfSpreadSettings.pageSpreadMode,
-        pdfSpreadSettings.pdfFirstPageStandaloneInSpread
+        pdfSpreadSettings.pdfFirstPageStandaloneInSpread,
+        rightToLeftPagination
     ) {
-        PdfSpreadLayout.visiblePageIndices(
+        PdfSpreadLayout.visiblePageIndicesForDisplay(
             pageIndex = paginationDisplayPageForPagerPage(pagerPageIndex),
             pageCount = totalDisplayPages,
-            settings = pdfSpreadSettings
+            settings = pdfSpreadSettings,
+            isRightToLeft = rightToLeftPagination
         )
     }
     val isVisiblePage = remember(pagerState.currentPage, pagerPageIndex) {

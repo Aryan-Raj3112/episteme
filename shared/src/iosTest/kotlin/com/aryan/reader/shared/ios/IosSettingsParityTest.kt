@@ -4,6 +4,7 @@ import com.aryan.reader.shared.CloudSyncSetupIntent
 import com.aryan.reader.shared.CloudSyncSetupRoute
 import com.aryan.reader.shared.SharedSettingsAction
 import com.aryan.reader.shared.SharedSettingsHubInput
+import com.aryan.reader.shared.SharedSettingsHubModel
 import com.aryan.reader.shared.SharedSettingsPlatform
 import com.aryan.reader.shared.cloudSyncSetupRoute
 import com.aryan.reader.shared.sharedSettingsHubModel
@@ -77,7 +78,7 @@ class IosSettingsParityTest {
                 includeDiagnosticLogExport = true,
                 isDebugBuild = false,
             )
-        ).sections.flatMap { it.items }
+        ).allVisibleItems()
         val actions = items.map { it.action }.toSet()
 
         assertTrue(SharedSettingsAction.EXPORT_LOGS in actions)
@@ -98,7 +99,7 @@ class IosSettingsParityTest {
                 includeCloudLocalDataClear = true,
                 includeHideReaderAi = true,
             )
-        ).sections.flatMap { it.items }
+        ).allVisibleItems()
         val actions = items.map { it.action }.toSet()
 
         assertTrue(SharedSettingsAction.DEVICE_MANAGEMENT in actions)
@@ -127,4 +128,8 @@ class IosSettingsParityTest {
             cloudSyncSetupRoute(CloudSyncSetupIntent.NEEDS_DRIVE_AUTH),
         )
     }
+}
+
+private fun SharedSettingsHubModel.allVisibleItems() = rootCategories.flatMap { category ->
+    page(category.destination).items
 }
