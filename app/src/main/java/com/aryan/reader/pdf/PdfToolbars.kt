@@ -566,7 +566,7 @@ internal fun PdfTopBar(
                                                 enabled = !isTtsSessionActive && displayMode == DisplayMode.VERTICAL_SCROLL,
                                                 onClick = { showMoreMenu = false; onStartAutoScroll() },
                                                 leadingIcon = {
-                                                    Icon(com.aryan.reader.shared.ui.SharedReaderIcons.AutoScroll, contentDescription = null, modifier = Modifier.size(20.dp))
+                                                    Icon(painterResource(id = R.drawable.vertical_align_bottom), contentDescription = null, modifier = Modifier.size(20.dp))
                                                 }
                                             )
                                         }
@@ -604,18 +604,27 @@ internal fun PdfTopBar(
                                         PdfOverflowMenuSection.BOOKMARK -> {
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
                                                 text = { Text(if (isBookmarked) stringResource(R.string.menu_remove_bookmark) else stringResource(R.string.menu_bookmark_this_page)) },
-                                                onClick = { showMoreMenu = false; onToggleBookmark() }
+                                                onClick = { showMoreMenu = false; onToggleBookmark() },
+                                                leadingIcon = {
+                                                    Icon(painterResource(id = R.drawable.bookmark), contentDescription = null, modifier = Modifier.size(20.dp))
+                                                }
                                             )
                                         }
                                         PdfOverflowMenuSection.PAGE_MANAGEMENT -> {
                                             com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
                                                 text = { Text(stringResource(R.string.menu_insert_blank_page)) },
-                                                onClick = { showMoreMenu = false; onInsertPage() }
+                                                onClick = { showMoreMenu = false; onInsertPage() },
+                                                leadingIcon = {
+                                                    Icon(painterResource(id = R.drawable.draft), contentDescription = null, modifier = Modifier.size(20.dp))
+                                                }
                                             )
                                             if (canDeletePage) {
                                                 com.aryan.reader.shared.ui.SharedReaderToolSheetRowItem(
                                                     text = { Text(stringResource(R.string.menu_delete_page)) },
                                                     onClick = { showMoreMenu = false; onDeletePage() },
+                                                    leadingIcon = {
+                                                        Icon(painterResource(id = R.drawable.delete), contentDescription = null, modifier = Modifier.size(20.dp))
+                                                    },
                                                     colors = MenuDefaults.itemColors(textColor = MaterialTheme.colorScheme.error)
                                                 )
                                             }

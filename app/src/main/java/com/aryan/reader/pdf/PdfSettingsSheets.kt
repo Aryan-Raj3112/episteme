@@ -143,6 +143,9 @@ private fun PdfToolPreviewIcon(tool: PdfReaderTool) {
         PdfReaderTool.EDIT_MODE -> Icon(Icons.Default.Edit, contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.TTS_CONTROLS -> Icon(painterResource(id = R.drawable.text_to_speech), contentDescription = title, modifier = Modifier.size(20.dp))
         PdfReaderTool.SCREEN_ORIENTATION -> Icon(Icons.Default.ScreenRotation, contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.AUTO_SCROLL -> Icon(painterResource(id = R.drawable.vertical_align_bottom), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.BOOKMARK -> Icon(painterResource(id = R.drawable.bookmark), contentDescription = title, modifier = Modifier.size(20.dp))
+        PdfReaderTool.PAGE_MANAGEMENT -> Icon(painterResource(id = R.drawable.draft), contentDescription = title, modifier = Modifier.size(20.dp))
         else -> Icon(Icons.Default.MoreVert, contentDescription = title, modifier = Modifier.size(20.dp))
     }
 }
